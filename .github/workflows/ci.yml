@@ -1,0 +1,65 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://idx_migration@127.0.0.1:55432/idx_demo
+      RUNTIME_DATABASE_URL: postgresql://idx_runtime@127.0.0.1:55432/idx_demo
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: |
+          node --version
+          npm ci
+      - name: Lint contract with no errors or warnings
+        run: npm run contract:lint
+      - name: Generate client and compatibility types
+        run: |
+          npm run contract:generate
+          npm run contract:compat
+      - name: Save generated client for inspection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: generated-client
+          path: packages/client/src/generated.ts
+      - name: Check generated output is committed and unchanged
+        run: |
+          git ls-files --error-unmatch packages/client/src/generated.ts
+          git diff --exit-code -- packages/client/src/generated.ts
+      - name: Typecheck both generated outputs and consumers
+        run: npm run typecheck
+      - name: Create disposable PostgreSQL 16 cluster
+        run: |
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          postgres --version
+          postgres --version | grep -E '^postgres \(PostgreSQL\) 16\.'
+          initdb -D "$RUNNER_TEMP/idx11-pg" --auth=trust --username=postgres --locale=C --encoding=UTF8
+          pg_ctl -D "$RUNNER_TEMP/idx11-pg" -l "$RUNNER_TEMP/idx11-pg.log" -o "-h 127.0.0.1 -p 55432 -k $RUNNER_TEMP" -w start
+          psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE idx_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+          CREATE ROLE idx_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+          CREATE DATABASE idx_demo OWNER idx_migration;
+          SQL
+          psql -h 127.0.0.1 -p 55432 -U postgres -d idx_demo -v ON_ERROR_STOP=1 -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
+      - name: Prove database acceptance and command entry points
+        run: |
+          npm test
+          npm run demo:db:migrate
+          npm run demo:seed
+      - name: Stop only the task cluster
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/idx11-pg/postmaster.pid" ]; then
+            /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
+          fi

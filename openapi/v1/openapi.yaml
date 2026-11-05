@@ -1,0 +1,852 @@
+openapi: 3.2.1
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: IDX Kit first-demo API
+  version: 1.0.0
+  summary: AI-made first-demo contract; unreleased implementation baseline.
+  description: AI-made technical choices revised under the lead's review decisions. Core names Secret key,
+    Data license and landingPagePath are owner-approved 2026-11-05; a guide is website content. The owner-approved outcome is
+    a synthetic guide-to-search-to-property-to-inquiry journey using only this API. Public means documented and
+    authorized, not unrestricted data access. RESO is a standard, not a data license. All examples are invented.
+    No runtime or deployment is claimed. Responses are open for extension; clients ignore unfamiliar members and handle any array/string length
+    unless a bound is explicitly promised. Unknown request members and duplicate query keys are rejected. Every
+    business call specifies /api/v1. All operations return Request-Id. S01 has no limiter, conditional requests,
+    CORS headers, browser keys, sync or external delivery. Business operations reserve 429 plus Retry-After for
+    later enforcement.
+  contact: {name: IDX Kit repository maintainers, url: 'https://github.com/IDX-Kit/idx-kit'}
+  license: {name: FSL-1.1-ALv2, url: 'https://github.com/IDX-Kit/idx-kit/blob/main/LICENSE.md'}
+servers:
+- {url: 'http://127.0.0.1:8787', description: Planned loopback-only demo engine; not currently running.}
+- {url: 'https://engine.example.invalid', description: Synthetic production-shaped origin; no deployment exists.}
+tags:
+- {name: Discovery, description: Public bootstrap and the installed release's contract.}
+- {name: Listings, description: Authorized display reads with mandatory display rules metadata.}
+- {name: Inquiries, description: 'Durable intake receipts, distinct from downstream delivery.'}
+security:
+- secretKey: []
+paths:
+  /api:
+    get:
+      operationId: discoverServer
+      tags: [Discovery]
+      summary: Discover implemented API versions and capabilities
+      description: Static bootstrap with engine release, supported majors, contract versions and implemented capability
+        names only. No permissions or customer/feed inventory. The demo site reads it at startup and fails clearly
+        if v1 is absent. Optional future features must be advertised before callers rely on them; no negotiation
+        lifecycle.
+      security: []
+      responses:
+        '200':
+          description: Actual supported versions and implemented capabilities.
+          headers:
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DiscoveryResponse'}
+              examples:
+                demo:
+                  value:
+                    data:
+                      engineVersion: 0.1.0
+                      supportedVersions:
+                      - major: v1
+                        contractVersion: 1.0.0
+                        capabilities: [listingSearch, listingDetail, inquiryCreate, inquiryReceipt, displayRulesV1]
+                    meta: {}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/v1/openapi.json:
+    get:
+      operationId: getContract
+      tags: [Discovery]
+      summary: Read the installed release's exact v1 contract
+      description: 'A JSON conversion of the release''s canonical YAML, never a copy of a later
+
+        repository head. This machine artifact is exempt from the success envelope.
+
+        No credentials, customer data or runtime secrets may enter the document.
+
+        '
+      security: []
+      responses:
+        '200':
+          description: Installed OpenAPI document.
+          headers:
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [openapi, info, paths]
+                properties:
+                  openapi: {type: string, const: 3.2.1}
+                  info: {type: object}
+                  paths: {type: object}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/v1/listings:
+    get:
+      operationId: searchListings
+      tags: [Listings]
+      summary: Search display-permitted listings
+      description: Requires listings:read. AND combines filters; unknown/duplicate parameters, malformed values
+        and minPrice greater than maxPrice return 400. City is trimmed case-insensitive exact match. Numeric price
+        filters compare the demo's USD major-unit values, exclude nulls and do not convert currencies. Later currency
+        handling is optional input preserving this default. Effective limit is min(requested, 50). ID ascending breaks price ties; null prices
+        sort last in either direction. Live keyset continuation uses the last price/ID tuple and normalized search/site
+        context. Results can shift between pages as records change; this is not a snapshot or exhaustive download.
+        Each page rechecks visibility. The opaque cursor has no dataset revision, time expiry, signature or traversal
+        count in S01; clients never parse or construct it. Malformed/mismatched cursors return 400 cursor_invalid
+        and tell the client to restart. Signing may be added later without a wire change. No limiter is implemented.
+        A future 429 search_window_exceeded requires narrowing the search. Query string maximum is 2 KiB.
+      x-required-scopes: ['listings:read']
+      parameters:
+      - name: city
+        in: query
+        description: Exact synthetic city name after trim/case folding.
+        schema: {type: string, minLength: 1, maxLength: 100}
+        example: Example Springs
+      - name: minPrice
+        in: query
+        description: Inclusive minimum USD price in major units.
+        schema: {$ref: '#/components/schemas/DecimalAmount'}
+        example: '300000.00'
+      - name: maxPrice
+        in: query
+        description: Inclusive maximum USD price in major units.
+        schema: {$ref: '#/components/schemas/DecimalAmount'}
+        example: '600000.00'
+      - name: minBedrooms
+        in: query
+        description: Inclusive minimum known bedroom count.
+        schema: {type: integer, minimum: 0, maximum: 100}
+        example: 3
+      - name: sort
+        in: query
+        description: Price ascending or descending, then ID ascending; null prices last.
+        schema:
+          type: string
+          enum: [price, -price]
+          default: price
+      - name: limit
+        in: query
+        description: Positive integer; values above 50 are coerced to 50. Zero is invalid.
+        schema: {type: integer, minimum: 1, maximum: 9007199254740991, default: 20}
+        example: 20
+      - name: after
+        in: query
+        description: Opaque nextCursor from the previous page with the same filters, sort and effective page size.
+          Invalid/mismatched means restart.
+        schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Authorized page, including mandatory display metadata.
+          headers:
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/ListingCache'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchResponse'}
+              examples:
+                oneSyntheticResult: {$ref: '#/components/examples/Search'}
+                closed: {$ref: '#/components/examples/ClosedSearch'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/v1/listings/{listingId}:
+    parameters:
+    - {$ref: '#/components/parameters/ListingId'}
+    get:
+      operationId: getListing
+      tags: [Listings]
+      summary: Read a display-permitted listing
+      description: Requires listings:read. Listings that are unknown, outside the data license or entirely withdrawn
+        return the same generic 404. Every listing fact is present; a fact the engine cannot show is null. withheldFields names facts null
+        because of display rules; null without that name means unknown. A withheld address appears nowhere else
+        in response text or media. Visibility and freshness are checked on every request; expired data returns 503.
+        A page shows what was permitted when served; withdrawal takes effect on the next request.
+      x-required-scopes: ['listings:read']
+      responses:
+        '200':
+          description: Listing and required display instructions.
+          headers:
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/ListingCache'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ListingResponse'}
+              examples:
+                synthetic: {$ref: '#/components/examples/Detail'}
+                withheldAddress: {$ref: '#/components/examples/WithheldDetail'}
+                closed: {$ref: '#/components/examples/ClosedDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/v1/inquiries:
+    post:
+      operationId: createInquiry
+      tags: [Inquiries]
+      summary: Durably receive an inquiry with retry protection
+      description: 'Requires inquiries:write. Maximum request body is 16 KiB. One transaction commits the inquiry
+        before 201; receipt means accepted, never delivered. The row holds its idempotency key and SHA-256 hash of
+        canonical validated JSON, with a unique constraint on Site plus key, independent of the API key. No separate
+        replay record or response body is saved. Same key/body rebuilds the original 201 and Location from id and
+        receivedAt for as long as the inquiry is retained, without a time limit. Changed body returns 422
+        idempotency_mismatch. Concurrent duplicates wait for the transaction, then a separate Read Committed SELECT
+        reads and compares the row; no in-progress 409. Database wait/timeout failures use 503. Failures with no
+        commit create no accepted inquiry. After authentication/authorization, existing-row lookup precedes new-inquiry
+        domain/listing checks and any future quota charge. A lost response is resolved with the same key/body.
+        The random key and hashed fingerprint are not personal data. Retention/deletion and retries after deletion
+        must be settled with real-lead retention before real people; synthetic rows remain until explicit reset.
+        Each fresh empty form gets a new key; failure re-renders preserve key and entered values. Confirmation
+        offers a fresh form. An old form with changed body gets 422, then the site preserves values, supplies a new
+        key and asks the visitor to send again. Form/result pages are no-store. Direct property entry is valid:
+        context.landingPagePath is optional. Bodies, visitor details, keys and fingerprints never enter routine logs.'
+      x-required-scopes: ['inquiries:write']
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: A new UUIDv4 per logical action, as a quoted Structured Field string.
+        schema: {type: string, pattern: '^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$'}
+        example: '"4de8a43c-b73d-41a4-9237-32f8e1556c09"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InquiryInput'}
+            examples:
+              synthetic:
+                value:
+                  listingId: lst_demo_0001
+                  message: This is a synthetic inquiry. Is a demo showing available?
+                  context: {pagePath: /properties/lst_demo_0001, landingPagePath: /guides/example-springs, campaign: demo,
+                    source: guide, medium: internal}
+                  visitor: {name: Synthetic Visitor, email: visitor@example.invalid}
+              directEntry:
+                value:
+                  listingId: lst_demo_0001
+                  visitor: {name: Synthetic Direct Visitor, email: direct@example.invalid}
+                  message: This is a synthetic direct-entry inquiry.
+                  context: {pagePath: /properties/lst_demo_0001}
+      responses:
+        '201':
+          description: Durably received or original successful response replayed; not a delivery claim.
+          headers:
+            Location:
+              description: Authorized same-site receipt path, never a public capability URL.
+              required: true
+              schema: {type: string, format: uri-reference}
+              example: /api/v1/inquiries/inq_demo_0001
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReceiptResponse'}
+              examples:
+                received: {$ref: '#/components/examples/Receipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        default: {$ref: '#/components/responses/Problem'}
+  /api/v1/inquiries/{inquiryId}:
+    get:
+      operationId: getInquiryReceipt
+      tags: [Inquiries]
+      summary: Read a durable receipt without personal data
+      description: Requires inquiries:read for the inquiry's site. A different site or missing ID returns generic
+        404. This is not an inquiry list or visitor-details endpoint. The receipt is only id and receivedAt; it
+        means accepted, never delivered. Optional delivery fields can be added later. The inquiry row also retains
+        its idempotency key and hashed body fingerprint; retention/deletion rules are settled before real people.
+      x-required-scopes: ['inquiries:read']
+      parameters:
+      - name: inquiryId
+        in: path
+        required: true
+        description: Opaque receipt identifier from a successful creation.
+        schema: {$ref: '#/components/schemas/OpaqueId'}
+        example: inq_demo_0001
+      responses:
+        '200':
+          description: Current receipt; visitor details and message are deliberately absent.
+          headers:
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReceiptResponse'}
+              examples:
+                received: {$ref: '#/components/examples/Receipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '405': {$ref: '#/components/responses/MethodNotAllowed'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+        default: {$ref: '#/components/responses/Problem'}
+components:
+  securitySchemes:
+    secretKey: {type: http, scheme: bearer, bearerFormat: Opaque site-scoped server secret, description: 'Explicit
+        listings:read, inquiries:write and/or inquiries:read grants resolved
+
+        server-side. Not OAuth. No key in URLs or browser code. Origin-bearing calls
+
+        are refused. Browser keys are not implemented or accepted by this demo.
+
+        '}
+  parameters:
+    ListingId:
+      name: listingId
+      in: path
+      required: true
+      description: Opaque source-record identity within this engine, never an address.
+      schema: {$ref: '#/components/schemas/OpaqueId'}
+      example: lst_demo_0001
+  headers:
+    RequestId:
+      description: Fresh opaque server-generated request ID, including replay and errors.
+      required: true
+      schema: {type: string, minLength: 1}
+      example: req_demo_0001
+    NoStore:
+      description: Do not store the response.
+      required: true
+      schema: {type: string, const: no-store}
+    ListingCache:
+      description: Private response; no storage or conditional read in S01.
+      required: true
+      schema: {type: string, const: 'private, no-store'}
+    RetryAfter:
+      description: Minimum delay in seconds before retry; mandatory on 429.
+      required: true
+      schema: {type: integer, minimum: 1, maximum: 9007199254740991}
+      example: 60
+  responses:
+    Problem:
+      description: 'RFC 9457 problem; HTTP status equals body status. No raw request values or
+
+        provider/database internals. Default also covers 406, 500,
+
+        unknown paths and version errors. Known retired major is 410; missing major
+
+        business path is 400; unknown major is 404. Not an error inside a 200 envelope.
+
+        '
+      headers:
+        Request-Id: {$ref: '#/components/headers/RequestId'}
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    BadRequest:
+      description: Invalid request; the example is used only under HTTP 400.
+      headers:
+        Request-Id: {$ref: '#/components/headers/RequestId'}
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          examples:
+            invalidQuery:
+              value:
+                type: about:blank
+                title: Bad Request
+                status: 400
+                detail: A query parameter is not supported.
+                code: invalid_query
+                requestId: req_demo_0003
+                errors:
+                - {parameter: fields, detail: Field selection is not supported.}
+    MethodNotAllowed:
+      description: Unsupported method on this path. Allow is GET on read paths and POST on /api/v1/inquiries.
+      headers:
+        Request-Id: {$ref: '#/components/headers/RequestId'}
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        Allow:
+          description: Comma-separated methods supported on this path; checked against the resource in API tests.
+          required: true
+          schema: {type: string, minLength: 1}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Unauthorized:
+      description: Missing, invalid or revoked key; no resource existence disclosed.
+      headers:
+        Request-Id: {$ref: '#/components/headers/RequestId'}
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        WWW-Authenticate:
+          description: Bearer authentication challenge.
+          required: true
+          schema: {type: string, const: Bearer}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    RateLimited:
+      description: Reserved for future limits, including search_window_exceeded. No limiter is implemented in S01.
+        Retry-After is required; narrow a search instead of retrying the same window-limited cursor.
+      headers:
+        Request-Id: {$ref: '#/components/headers/RequestId'}
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        Retry-After: {$ref: '#/components/headers/RetryAfter'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Unavailable:
+      description: Known database/freshness failure; never claims a receipt before durable commit.
+      headers:
+        Request-Id: {$ref: '#/components/headers/RequestId'}
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    OpaqueId: {type: string, minLength: 1, pattern: '^[A-Za-z0-9_-]+$', description: 'Treat as opaque; do not parse,
+        enumerate or derive source/customer identity.'}
+    UtcTimestamp:
+      type: string
+      format: date-time
+      pattern: Z$
+      description: RFC 3339 UTC timestamp; never a date-only value.
+      examples: ['2026-11-02T14:00:00Z']
+    DecimalAmount:
+      type: string
+      pattern: ^(0|[1-9][0-9]*)(\.[0-9]+)?$
+      description: Nonnegative decimal major-unit amount; optional fraction, no exponent or fixed two-digit scale.
+      examples: ['425000.00']
+    Money:
+      type: object
+      additionalProperties: true
+      required: [amount, currency]
+      properties:
+        amount: {$ref: '#/components/schemas/DecimalAmount'}
+        currency: {type: string, pattern: '^[A-Z]{3}$', description: Open ISO 4217 alphabetic currency code. Format
+            the amount using this currency and its minor units; demo values are USD., examples: [USD]}
+    EmptyMeta: {type: object, additionalProperties: true, description: Empty today; clients must accept future metadata
+        members.}
+    DiscoveryResponse:
+      type: object
+      additionalProperties: true
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+          required: [engineVersion, supportedVersions]
+          properties:
+            engineVersion: {type: string, description: 'Release identifier, not feature negotiation.'}
+            supportedVersions:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                required: [major, contractVersion, capabilities]
+                properties:
+                  major:
+                    type: string
+                    examples: [v1]
+                  contractVersion:
+                    type: string
+                    examples: [1.0.0]
+                  capabilities:
+                    type: array
+                    uniqueItems: true
+                    items: {type: string}
+        meta: {$ref: '#/components/schemas/EmptyMeta'}
+    Freshness:
+      type: object
+      additionalProperties: true
+      required: [sourceUpdatedAt, ingestedAt, refreshedAt, expiresAt]
+      description: Source time and ingest time are separate. refreshedAt is verified feed refresh, never a read
+        timestamp. expiresAt limits whether a new request may show data. A served page is not actively withdrawn.
+        Unknown sourceUpdatedAt is null; it is metadata, not a listing fact.
+      properties:
+        sourceUpdatedAt:
+          anyOf:
+          - {$ref: '#/components/schemas/UtcTimestamp'}
+          - {type: 'null'}
+        ingestedAt: {$ref: '#/components/schemas/UtcTimestamp'}
+        refreshedAt: {$ref: '#/components/schemas/UtcTimestamp'}
+        expiresAt: {$ref: '#/components/schemas/UtcTimestamp'}
+    DisplayBlock:
+      type: object
+      additionalProperties: true
+      required: [id, text, placement, prominence]
+      description: Plain text escaped on rendering. Unknown placement/prominence suppresses display.
+      properties:
+        id: {$ref: '#/components/schemas/OpaqueId'}
+        text: {type: string, minLength: 1}
+        placement:
+          type: string
+          description: Mandatory semantics; adjacent, afterListing, or pageFooter in display rules v1.
+          examples: [adjacent, afterListing, pageFooter]
+        prominence:
+          type: string
+          description: Mandatory semantics; normal, medianListingText, or largestListingText.
+          examples: [normal, medianListingText, largestListingText]
+        image:
+          type: object
+          additionalProperties: true
+          required: [url, alt]
+          properties:
+            url: {type: string, format: uri-reference}
+            alt: {type: string, minLength: 1}
+    Display:
+      type: object
+      additionalProperties: true
+      required: [rulesVersion, blocks, freshness, siteChromeOutsideListingBody]
+      description: Required display rules, ordered by context. Not field-selectable. Unknown rulesVersion/placement/prominence
+        suppresses rendering. Requirements older renderers cannot understand need a new major or explicit client
+        opt-in that leaves non-opted clients unchanged. Capability advertisement alone cannot change required rendering.
+        Clients handle any number of blocks.
+      properties:
+        blocks:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/DisplayBlock'}
+        freshness: {$ref: '#/components/schemas/Freshness'}
+        siteChromeOutsideListingBody: {type: boolean, const: true, description: Site brokerage identity and inquiry
+            CTA are outside listing data's rectangle.}
+        rulesVersion: {type: string, const: '1'}
+    Listing:
+      type: object
+      additionalProperties: true
+      required: [id, synthetic, status, price, address, bedrooms, images, withheldFields, display]
+      description: 'Every defined listing fact is present: status, price, address, bedrooms and images. A fact the
+        engine cannot show is null. withheldFields names null facts denied by display rules; null not listed means
+        unknown. Neutral display is Not available, never false, zero or empty. A newly introduced fact may be absent
+        on an older server; clients ignore unfamiliar fields and withheld fact names. Whole-listing withdrawal is
+        excluded/404. Clients accept any image array length; no photo-count bound is promised.'
+      properties:
+        id: {$ref: '#/components/schemas/OpaqueId'}
+        synthetic: {type: boolean, description: True for every demo fixture; false only with authorized live data.}
+        status:
+          type: [string, 'null']
+          description: Open output vocabulary; examples are indicative, not a complete enum.
+          examples: [active, pending, closed, null]
+        price:
+          anyOf:
+          - {$ref: '#/components/schemas/Money'}
+          - {type: 'null'}
+        address:
+          anyOf:
+          - type: object
+            required: [line1, city, region, postalCode, country]
+            properties:
+              line1: {type: string}
+              city: {type: string}
+              region: {type: string}
+              postalCode: {type: string}
+              country: {type: string, pattern: '^[A-Z]{2}$', description: Open ISO 3166-1 alpha-2 country code., examples: [US]}
+          - {type: 'null'}
+        bedrooms:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 9007199254740991
+        images:
+          anyOf:
+          - type: array
+            items:
+              type: object
+              additionalProperties: true
+              required: [url, alt]
+              properties:
+                url: {type: string, format: uri-reference}
+                alt: {type: string, minLength: 1}
+          - {type: 'null'}
+        display: {$ref: '#/components/schemas/Display'}
+        withheldFields:
+          type: array
+          items: {type: string}
+          description: Open fact names, for example address. Each named fact must be null. No hidden values/reasons.
+            No JSON Pointer grammar. Clients ignore unfamiliar names.
+    SearchResponse:
+      type: object
+      additionalProperties: true
+      required: [data, meta, display]
+      properties:
+        data:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/Listing'}
+          description: At most 50 results per page; this is a promised bound. Other response arrays have no count
+            promise.
+        meta:
+          type: object
+          additionalProperties: true
+          required: [page]
+          properties:
+            page:
+              type: object
+              additionalProperties: true
+              required: [limit, nextCursor, hasMore]
+              properties:
+                limit: {type: integer, minimum: 1, maximum: 50}
+                nextCursor:
+                  type: [string, 'null']
+                hasMore: {type: boolean, description: True exactly when nextCursor is non-null.}
+        display: {$ref: '#/components/schemas/Display'}
+    ListingResponse:
+      type: object
+      additionalProperties: true
+      required: [data, meta, display]
+      properties:
+        data: {$ref: '#/components/schemas/Listing'}
+        meta: {$ref: '#/components/schemas/EmptyMeta'}
+        display: {$ref: '#/components/schemas/Display', description: Page-context instructions in addition to the
+            listing's inline blocks.}
+    InquiryInput:
+      type: object
+      additionalProperties: false
+      required: [listingId, visitor, message, context]
+      properties:
+        listingId: {$ref: '#/components/schemas/OpaqueId'}
+        message: {type: string, minLength: 1, maxLength: 4000}
+        context:
+          type: object
+          additionalProperties: false
+          required: [pagePath]
+          properties:
+            pagePath: {$ref: '#/components/schemas/SitePath'}
+            landingPagePath: {$ref: '#/components/schemas/SitePath', description: Optional first page of the visit. May be omitted on
+                direct property entry.}
+            campaign: {$ref: '#/components/schemas/AttributionToken'}
+            source: {$ref: '#/components/schemas/AttributionToken'}
+            medium: {$ref: '#/components/schemas/AttributionToken'}
+        visitor:
+          type: object
+          additionalProperties: false
+          required: [name, email]
+          properties:
+            name: {type: string, minLength: 1, maxLength: 100}
+            email: {type: string, format: email, minLength: 3, maxLength: 254}
+    SitePath: {type: string, minLength: 1, maxLength: 256, pattern: '^/[A-Za-z0-9/_-]*$', description: 'Site-allowlisted
+        path only; no query, fragment, hostname or personal data.'}
+    AttributionToken: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9_-]+$', description: Configured
+        nonpersonal campaign vocabulary; never arbitrary referrer or UTM text.}
+    ReceiptResponse:
+      type: object
+      additionalProperties: true
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+          required: [id, receivedAt]
+          properties:
+            id: {$ref: '#/components/schemas/OpaqueId'}
+            receivedAt: {$ref: '#/components/schemas/UtcTimestamp'}
+          description: Durable acceptance only, never delivery. No visitor details or message echo. Optional delivery
+            information may be added later.
+        meta: {$ref: '#/components/schemas/EmptyMeta'}
+    Problem:
+      type: object
+      additionalProperties: true
+      required: [type, title, status, detail, code, requestId]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          examples: ['about:blank']
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string, description: Safe occurrence explanation; do not parse for decisions.}
+        instance: {type: string, format: uri-reference}
+        code: {type: string, description: Open machine vocabulary; unknown codes fall back to HTTP status.}
+        requestId: {type: string}
+        discoveryPath: {type: string, format: uri-reference}
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required: [detail]
+            properties:
+              detail: {type: string}
+              pointer: {type: string}
+              parameter: {type: string}
+              header: {type: string}
+  examples:
+    Detail:
+      summary: Entirely fictional property and illustration; no MLS or real person.
+      value:
+        data:
+          id: lst_demo_0001
+          synthetic: true
+          status: active
+          price: {amount: '425000.00', currency: USD}
+          address: {line1: 101 Synthetic Lane, city: Example Springs, region: NC, postalCode: '00000', country: US}
+          bedrooms: 3
+          images:
+          - {url: 'https://demo.example.invalid/media/synthetic-house-001.svg', alt: 'Synthetic house illustration,
+              not a real property'}
+          display:
+            blocks:
+            - {id: synthetic_attribution, text: Synthetic Example Brokerage. Demonstration data only., placement: afterListing,
+              prominence: largestListingText}
+            freshness: {sourceUpdatedAt: '2026-11-02T13:50:00Z', ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+              expiresAt: '2026-11-02T15:00:00Z'}
+            siteChromeOutsideListingBody: true
+            rulesVersion: '1'
+          withheldFields: []
+        meta: {}
+        display:
+          blocks:
+          - {id: demo_notice, text: 'All listings, people and illustrations are synthetic. No message will be sent.',
+            placement: pageFooter, prominence: normal}
+          freshness: {sourceUpdatedAt: null, ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+            expiresAt: '2026-11-02T15:00:00Z'}
+          siteChromeOutsideListingBody: true
+          rulesVersion: '1'
+    WithheldDetail:
+      summary: Withheld address is null and named; unknown bedrooms is null and not named.
+      value:
+        data:
+          id: lst_demo_0002
+          synthetic: true
+          status: active
+          price: {amount: '510000.00', currency: USD}
+          bedrooms: null
+          images: []
+          display:
+            blocks:
+            - {id: synthetic_attribution, text: Synthetic Example Brokerage. Address withheld in this test., placement: afterListing,
+              prominence: largestListingText}
+            freshness: {sourceUpdatedAt: '2026-11-02T13:50:00Z', ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+              expiresAt: '2026-11-02T15:00:00Z'}
+            siteChromeOutsideListingBody: true
+            rulesVersion: '1'
+          withheldFields: [address]
+          address: null
+        meta: {}
+        display:
+          blocks:
+          - {id: demo_notice, text: Synthetic data only., placement: pageFooter, prominence: normal}
+          freshness: {sourceUpdatedAt: null, ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+            expiresAt: '2026-11-02T15:00:00Z'}
+          siteChromeOutsideListingBody: true
+          rulesVersion: '1'
+    Search:
+      summary: One fictional result, an explicit end cursor and mandatory page notice.
+      value:
+        data:
+        - id: lst_demo_0001
+          synthetic: true
+          status: active
+          price: {amount: '425000.00', currency: USD}
+          address: {line1: 101 Synthetic Lane, city: Example Springs, region: NC, postalCode: '00000', country: US}
+          bedrooms: 3
+          images:
+          - {url: 'https://demo.example.invalid/media/synthetic-house-001.svg', alt: Synthetic house illustration}
+          display:
+            blocks:
+            - {id: synthetic_attribution, text: Synthetic Example Brokerage. Demonstration data only., placement: adjacent,
+              prominence: medianListingText}
+            freshness: {sourceUpdatedAt: '2026-11-02T13:50:00Z', ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+              expiresAt: '2026-11-02T15:00:00Z'}
+            siteChromeOutsideListingBody: true
+            rulesVersion: '1'
+          withheldFields: []
+        meta:
+          page: {limit: 20, nextCursor: null, hasMore: false}
+        display:
+          blocks:
+          - {id: demo_notice, text: Synthetic data only. Search is for demonstration use., placement: pageFooter,
+            prominence: normal}
+          freshness: {sourceUpdatedAt: null, ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+            expiresAt: '2026-11-02T15:00:00Z'}
+          siteChromeOutsideListingBody: true
+          rulesVersion: '1'
+    Receipt:
+      summary: Durable receipt, not email or CRM delivery.
+      value:
+        data: {id: inq_demo_0001, receivedAt: '2026-11-02T14:05:00Z'}
+        meta: {}
+    ClosedDetail:
+      summary: Synthetic closed listing with sold-page informational-use disclaimer.
+      value:
+        data:
+          id: lst_demo_0003
+          synthetic: true
+          status: closed
+          price: {amount: '425000.00', currency: USD}
+          address: {line1: 101 Synthetic Lane, city: Example Springs, region: NC, postalCode: '00000', country: US}
+          bedrooms: 3
+          images:
+          - {url: 'https://demo.example.invalid/media/synthetic-house-001.svg', alt: 'Synthetic house illustration,
+              not a real property'}
+          display:
+            blocks:
+            - {id: synthetic_attribution, text: Synthetic Example Brokerage. Demonstration data only., placement: afterListing,
+              prominence: largestListingText}
+            freshness: {sourceUpdatedAt: '2026-11-02T13:50:00Z', ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+              expiresAt: '2026-11-02T15:00:00Z'}
+            siteChromeOutsideListingBody: true
+            rulesVersion: '1'
+          withheldFields: []
+        meta: {}
+        display:
+          blocks:
+          - {id: demo_notice, text: 'All listings, people and illustrations are synthetic. No message will be sent.',
+            placement: pageFooter, prominence: normal}
+          - {id: sold_information, text: Synthetic sale data is for informational purposes only and is not a market
+              analysis or appraisal., placement: pageFooter, prominence: normal}
+          freshness: {sourceUpdatedAt: null, ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+            expiresAt: '2026-11-02T15:00:00Z'}
+          siteChromeOutsideListingBody: true
+          rulesVersion: '1'
+    ClosedSearch:
+      summary: Synthetic closed result requires a sold-page disclaimer in search too.
+      value:
+        data:
+        - id: lst_demo_0003
+          synthetic: true
+          status: closed
+          price: {amount: '425000.00', currency: USD}
+          address: {line1: 101 Synthetic Lane, city: Example Springs, region: NC, postalCode: '00000', country: US}
+          bedrooms: 3
+          images:
+          - {url: 'https://demo.example.invalid/media/synthetic-house-001.svg', alt: 'Synthetic house illustration,
+              not a real property'}
+          display:
+            blocks:
+            - {id: synthetic_attribution, text: Synthetic Example Brokerage. Demonstration data only., placement: afterListing,
+              prominence: largestListingText}
+            freshness: {sourceUpdatedAt: '2026-11-02T13:50:00Z', ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+              expiresAt: '2026-11-02T15:00:00Z'}
+            siteChromeOutsideListingBody: true
+            rulesVersion: '1'
+          withheldFields: []
+        meta:
+          page: {limit: 20, nextCursor: null, hasMore: false}
+        display:
+          blocks:
+          - {id: demo_notice, text: Synthetic data only. Search is for demonstration use., placement: pageFooter,
+            prominence: normal}
+          - {id: sold_information, text: Synthetic sale data is for informational purposes only and is not a market
+              analysis or appraisal., placement: pageFooter, prominence: normal}
+          freshness: {sourceUpdatedAt: null, ingestedAt: '2026-11-02T13:55:00Z', refreshedAt: '2026-11-02T14:00:00Z',
+            expiresAt: '2026-11-02T15:00:00Z'}
+          siteChromeOutsideListingBody: true
+          rulesVersion: '1'

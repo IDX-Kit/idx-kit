@@ -1,0 +1,23 @@
+{
+  "name": "idx-kit",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/engine", "packages/client"],
+  "engines": {"node": "24.14.1"},
+  "scripts": {
+    "contract:lint": "redocly lint openapi/v1/openapi.yaml --extends recommended --max-problems 1000 --format json > contract-lint.json && node scripts/check-lint.mjs",
+    "contract:generate": "redocly generate-client openapi/v1/openapi.yaml --output packages/client/src/generated.ts",
+    "contract:compat": "openapi-typescript openapi/v1/openapi.yaml --output .generated/compat.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "demo:db:migrate": "node packages/engine/src/db/migrate.ts",
+    "demo:seed": "node packages/engine/src/db/seed.ts"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.72.1",
+    "@types/node": "24.10.0",
+    "@types/pg": "8.15.6",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

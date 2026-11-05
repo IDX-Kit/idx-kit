@@ -1,0 +1,30 @@
+[
+  {
+    "id": "feed_demo_primary",
+    "refreshedAt": "2026-11-01T00:00:00Z",
+    "expiresAt": "2099-11-01T12:00:00Z",
+    "rulesVersion": "1",
+    "blocks": [
+      {
+        "id": "synthetic_notice",
+        "text": "Original synthetic data for IDX Kit. These properties do not exist.",
+        "placement": "pageFooter",
+        "prominence": "normal"
+      }
+    ]
+  },
+  {
+    "id": "feed_demo_expired",
+    "refreshedAt": "2000-01-01T00:00:00Z",
+    "expiresAt": "2000-01-01T12:00:00Z",
+    "rulesVersion": "1",
+    "blocks": [
+      {
+        "id": "synthetic_notice",
+        "text": "Expired synthetic feed. These properties do not exist.",
+        "placement": "pageFooter",
+        "prominence": "normal"
+      }
+    ]
+  }
+]

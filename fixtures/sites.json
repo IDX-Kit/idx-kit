@@ -1,0 +1,14 @@
+[
+  {
+    "id": "site_demo_primary",
+    "feedIds": [
+      "feed_demo_primary"
+    ]
+  },
+  {
+    "id": "site_demo_other",
+    "feedIds": [
+      "feed_demo_expired"
+    ]
+  }
+]

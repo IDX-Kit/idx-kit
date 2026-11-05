@@ -1,0 +1,897 @@
+[
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0001",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0001 ",
+      "StandardStatus": "active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "101 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0002",
+    "synthetic": true,
+    "sourceUpdatedAt": null,
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0002 ",
+      "StandardStatus": "active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": null,
+      "Address": {
+        "line1": "102 Hidden Stardust Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": false,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0003",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [
+      {
+        "id": "closed_information",
+        "text": "Synthetic sale data is for informational use only, not a market analysis or appraisal.",
+        "placement": "pageFooter",
+        "prominence": "normal"
+      }
+    ],
+    "source": {
+      "ListingKey": "Synthetic source/0003 ",
+      "StandardStatus": "closed",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": 3,
+      "Address": {
+        "line1": "103 Make Believe Meadow Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0004",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0004 ",
+      "StandardStatus": "active",
+      "ListPrice": null,
+      "BedroomsTotal": 4,
+      "Address": {
+        "line1": "104 Fictional Moonbeam Road",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0005",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0005 ",
+      "StandardStatus": "active",
+      "ListPrice": "330000.00",
+      "BedroomsTotal": 0,
+      "Address": {
+        "line1": "105 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0006",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0006 ",
+      "StandardStatus": "withdrawn",
+      "ListPrice": "345000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "106 Pretend Comet Court",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": false
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0007",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0007 ",
+      "StandardStatus": "pending",
+      "ListPrice": "345000.00",
+      "BedroomsTotal": 2,
+      "Address": {
+        "line1": "107 Make Believe Meadow Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0008",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0008 ",
+      "StandardStatus": "active",
+      "ListPrice": "360000.00",
+      "BedroomsTotal": 3,
+      "Address": {
+        "line1": "108 Fictional Moonbeam Road",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0009",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0009 ",
+      "StandardStatus": "active",
+      "ListPrice": "360000.00",
+      "BedroomsTotal": 4,
+      "Address": {
+        "line1": "109 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0010",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0010 ",
+      "StandardStatus": "active",
+      "ListPrice": "375000.00",
+      "BedroomsTotal": 0,
+      "Address": {
+        "line1": "110 Pretend Comet Court",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0011",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0011 ",
+      "StandardStatus": "active",
+      "ListPrice": "375000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "111 Make Believe Meadow Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0012",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0012 ",
+      "StandardStatus": "active",
+      "ListPrice": "390000.00",
+      "BedroomsTotal": 2,
+      "Address": {
+        "line1": "112 Fictional Moonbeam Road",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0013",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0013 ",
+      "StandardStatus": "active",
+      "ListPrice": "390000.00",
+      "BedroomsTotal": 3,
+      "Address": {
+        "line1": "113 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0014",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0014 ",
+      "StandardStatus": "active",
+      "ListPrice": "405000.00",
+      "BedroomsTotal": 4,
+      "Address": {
+        "line1": "114 Pretend Comet Court",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0015",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0015 ",
+      "StandardStatus": "active",
+      "ListPrice": "405000.00",
+      "BedroomsTotal": 0,
+      "Address": {
+        "line1": "115 Make Believe Meadow Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0016",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0016 ",
+      "StandardStatus": "active",
+      "ListPrice": "420000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "116 Fictional Moonbeam Road",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0017",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0017 ",
+      "StandardStatus": "active",
+      "ListPrice": "420000.00",
+      "BedroomsTotal": 2,
+      "Address": {
+        "line1": "117 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0018",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0018 ",
+      "StandardStatus": "active",
+      "ListPrice": "435000.00",
+      "BedroomsTotal": 3,
+      "Address": {
+        "line1": "118 Pretend Comet Court",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0019",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0019 ",
+      "StandardStatus": "active",
+      "ListPrice": "435000.00",
+      "BedroomsTotal": 4,
+      "Address": {
+        "line1": "119 Make Believe Meadow Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0020",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0020 ",
+      "StandardStatus": "active",
+      "ListPrice": "450000.00",
+      "BedroomsTotal": 0,
+      "Address": {
+        "line1": "120 Fictional Moonbeam Road",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0021",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0021 ",
+      "StandardStatus": "active",
+      "ListPrice": "450000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "121 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_demo_0022",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0022 ",
+      "StandardStatus": "active",
+      "ListPrice": "465000.00",
+      "BedroomsTotal": 2,
+      "Address": {
+        "line1": "122 Pretend Comet Court",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_expired",
+    "publicId": "lst_demo_0023",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0023 ",
+      "StandardStatus": "active",
+      "ListPrice": "465000.00",
+      "BedroomsTotal": 3,
+      "Address": {
+        "line1": "123 Make Believe Meadow Way",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-002.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  },
+  {
+    "feedId": "feed_demo_expired",
+    "publicId": "lst_demo_0024",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic source/0024 ",
+      "StandardStatus": "active",
+      "ListPrice": "480000.00",
+      "BedroomsTotal": 4,
+      "Address": {
+        "line1": "124 Fictional Moonbeam Road",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-003.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    }
+  }
+]
