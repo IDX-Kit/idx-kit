@@ -8,5 +8,5 @@
     "verbatimModuleSyntax": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
-  "include": ["packages/**/*.ts", "tests/**/*.ts", ".generated/**/*.ts"]
+  "include": ["packages/**/*.ts", "tests/**/*.ts", "examples/**/*.ts", ".generated/**/*.ts"]
 }

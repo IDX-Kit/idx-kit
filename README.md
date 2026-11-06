@@ -8,8 +8,8 @@ your MLS.
 ## Status
 
 This project is early. The engine serves discovery, its contract, authorized
-synthetic listing detail and search with paging. Inquiries and the demo website
-are not implemented.
+synthetic listing detail and search with paging. The plain demo website renders
+property pages through that API. Search pages and inquiries are not implemented.
 
 The first milestone is a demo with clearly fake listings. A visitor goes from
 a guide page to search to a property page, then sends an inquiry. The demo
@@ -46,7 +46,26 @@ The checks also start the engine and validate real HTTP responses and required
 headers against the checked-in contract, with negative controls. They cover key
 creation, revocation and rotation, display metadata, withholding, version and input
 errors, search and paging, redacted logs and a stopped database. They do not cover
-website rendering, inquiries, real feeds or deployment. All execution checks run in CI.
+inquiries, real feeds or deployment. CI also builds the demo site and checks property
+HTML and no-JavaScript browsing with a real engine and database. All execution checks
+run in CI.
+
+## Demo property pages
+
+The `examples/demo-site` workspace uses Astro with its Node adapter. After building
+with `npm run demo:site:build`, set `IDX_ENGINE_URL` to the engine origin and
+`IDX_SECRET_KEY` to a Site-bound key with `listings:read`. Keep both in server
+configuration. Run `npm run demo:site` with `HOST=127.0.0.1` and `PORT=4321` for
+loopback use. Startup checks `/api` for v1 and `listingDetail` before serving.
+Do not expose the synthetic demo publicly.
+
+`/properties/lst_demo_0001` renders facts, illustrations, listing and page disclosures,
+and feed freshness without browser JavaScript. Unknown display instructions suppress
+the listing. Missing and withdrawn listings return 404, stale feeds return 503, and
+upstream failures show a generic error. HTML and illustration responses use no-store.
+The shared listing renderer is ready for the later search page; no inquiry form,
+deployment or guide is included yet. `npm run test:demo` runs the runner-only browser
+checks after building, migrating, seeding and installing the pinned Chromium browser.
 
 ## Engine and secret keys
 

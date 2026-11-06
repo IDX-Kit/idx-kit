@@ -13,4 +13,11 @@ test('each fixture file has original synthetic provenance and a matching checksu
     const bytes = await readFile(new URL(name, directory));
     assert.ok(rights.includes(`| ${name} | \`${createHash('sha256').update(bytes).digest('hex')}\``));
   }
+  for (const number of ['001', '002', '003']) {
+    const name = `synthetic-house-${number}.svg`;
+    const bytes = await readFile(new URL(`../examples/demo-site/assets/${name}`, import.meta.url));
+    assert.ok(rights.includes(`| [${name}]`));
+    assert.ok(rights.includes(createHash('sha256').update(bytes).digest('hex')));
+    assert.match(bytes.toString(), />SYNTHETIC<\/text>/);
+  }
 });

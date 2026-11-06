@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic house illustration 2</title>
+  <desc id="desc">An invented house drawing, not a real property.</desc>
+  <rect width="480" height="300" fill="#f7fafc"/>
+  <path d="M30 245H450" stroke="#52683e" stroke-width="4"/>
+  <rect x="130" y="115" width="220" height="125" fill="#e4ead4" stroke="#202020" stroke-width="3"/>
+  <path d="M110 115L240 35L370 115Z" fill="#4f6142" stroke="#202020" stroke-width="3"/>
+  <rect x="215" y="165" width="45" height="75" fill="#fff" stroke="#202020" stroke-width="3"/>
+  <rect x="150" y="140" width="40" height="40" fill="#fff" stroke="#202020" stroke-width="3"/>
+  <rect x="285" y="140" width="40" height="40" fill="#fff" stroke="#202020" stroke-width="3"/>
+  <text x="240" y="282" text-anchor="middle" font-family="sans-serif" font-size="24" fill="#202020">SYNTHETIC</text>
+</svg>

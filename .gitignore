@@ -8,3 +8,6 @@ coverage/
 *.log
 .generated/
 contract-lint.json
+.astro/
+test-results/
+playwright-report/

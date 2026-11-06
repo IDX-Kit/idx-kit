@@ -2,7 +2,7 @@
   "name": "idx-kit",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/engine", "packages/client"],
+  "workspaces": ["packages/engine", "packages/client", "examples/demo-site"],
   "engines": {"node": "24.14.1"},
   "scripts": {
     "contract:lint": "redocly lint openapi/v1/openapi.yaml --extends recommended --max-problems 1000 --format json > contract-lint.json && node scripts/check-lint.mjs",
@@ -11,12 +11,16 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
     "test:api": "node --test tests/api/search.test.ts && node --test tests/api/detail.test.ts",
+    "test:demo": "playwright test",
+    "demo:site:build": "npm run build --workspace @idx-kit/demo-site",
+    "demo:site": "npm run start --workspace @idx-kit/demo-site",
     "demo:engine": "node packages/engine/src/runtime/node.ts",
     "demo:key": "node packages/engine/src/runtime/key.ts",
     "demo:db:migrate": "node packages/engine/src/db/migrate.ts",
     "demo:seed": "node packages/engine/src/db/seed.ts"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "@redocly/cli": "2.72.1",

@@ -1,0 +1,19 @@
+---
+import { engineClient, PageFailure } from '../../server/engine.ts';
+import { displayBlocks } from '../../server/display.ts';
+import Page from '../../layouts/Page.astro';
+import Listing from '../../components/Listing.astro';
+let response;
+let status = 200;
+try {
+  response = await engineClient().listing(Astro.params.listingId ?? '');
+  displayBlocks(response.data, response.display);
+} catch (error) {
+  status = error instanceof PageFailure ? error.status : 502;
+}
+Astro.response.status = status;
+const message = status === 404 ? 'Listing not found' : status === 503 ? 'Listing temporarily unavailable' : 'Unable to load this listing';
+---
+<Page title={status === 200 ? 'Property' : message}>
+  {status === 200 && response ? <Listing listing={response.data} pageDisplay={response.display} /> : <><h1>{message}</h1><p>Please try again later.</p></>}
+</Page>

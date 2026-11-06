@@ -57,6 +57,12 @@ jobs:
           npm test
           npm run demo:db:migrate
           npm run demo:seed
+      - name: Build server-rendered demo and install its pinned browser
+        run: |
+          npm run demo:site:build
+          npx playwright install --with-deps chromium
+      - name: Prove property HTML, display rules and no-JavaScript browser acceptance
+        run: npm run test:demo
       # Search runs first; the detail suite stops the disposable database at its end.
       - name: Prove search, live paging, detail and key lifecycle against the contract
         env:

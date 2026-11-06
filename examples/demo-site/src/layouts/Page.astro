@@ -1,0 +1,31 @@
+---
+interface Props { title: string }
+const { title } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="robots" content="noindex" />
+    <title>{title} | IDX Kit demo</title>
+    <style is:inline>
+      :root { font: 100%/1.5 system-ui, sans-serif; color: #202020; background: #fff; }
+      body { max-width: 48rem; margin: auto; padding: 1rem; overflow-wrap: anywhere; }
+      article { border: 1px solid #666; padding: 1rem; margin-block: 1rem; }
+      h1, .largestListingText { font-size: 1.5rem; font-weight: 600; }
+      article p, article dd, article dt, .normal, .medianListingText { font-size: 1rem; }
+      article p.largestListingText { font-size: 1.5rem; }
+      dd { margin: 0 0 0.75rem; }
+      dt { font-weight: 600; }
+      img { max-width: 100%; height: auto; }
+      a { color: #163e91; }
+      a:focus-visible { outline: 3px solid #163e91; outline-offset: 3px; }
+    </style>
+  </head>
+  <body>
+    <a href="#main">Skip to content</a>
+    <header><a href="/">IDX Kit demo</a><p>Synthetic properties for demonstration.</p></header>
+    <main id="main"><slot /></main>
+  </body>
+</html>
