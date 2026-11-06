@@ -2,8 +2,14 @@
   "name": "idx-kit",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/engine", "packages/client", "examples/demo-site"],
-  "engines": {"node": "24.14.1"},
+  "workspaces": [
+    "packages/engine",
+    "packages/client",
+    "examples/demo-site"
+  ],
+  "engines": {
+    "node": "24.14.1"
+  },
   "scripts": {
     "format": "prettier --write \"{packages,examples,tests,scripts}/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}\" \"*.{js,cjs,mjs,ts,cts,mts,json}\"",
     "format:check": "prettier --check \"{packages,examples,tests,scripts}/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}\" \"*.{js,cjs,mjs,ts,cts,mts,json}\"",

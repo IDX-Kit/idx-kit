@@ -8,13 +8,26 @@ import tseslint from "typescript-eslint";
 const sourceFiles = ["**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}"];
 const restricted = (regex) => [
   "error",
-  { patterns: [{ regex, message: "Keep websites and the engine separate; use the public API." }] },
+  {
+    patterns: [
+      {
+        regex,
+        message: "Keep websites and the engine separate; use the public API.",
+      },
+    ],
+  },
 ];
 
 export default defineConfig(
   globalIgnores([
-    "**/node_modules/**", "**/dist/**", "**/.astro/**", ".generated/**",
-    "coverage/**", "test-results/**", "playwright-report/**", "fixtures/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.astro/**",
+    ".generated/**",
+    "coverage/**",
+    "test-results/**",
+    "playwright-report/**",
+    "fixtures/**",
     "packages/client/src/generated.ts",
   ]),
   {
@@ -22,7 +35,11 @@ export default defineConfig(
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
     plugins: { "import-x": importX },
-    settings: { "import-x/resolver": { node: { extensions: [".js", ".mjs", ".ts", ".astro"] } } },
+    settings: {
+      "import-x/resolver": {
+        node: { extensions: [".js", ".mjs", ".ts", ".astro"] },
+      },
+    },
     rules: {
       "max-statements-per-line": ["error", { max: 1 }],
       "import-x/no-relative-packages": "error",
@@ -35,10 +52,18 @@ export default defineConfig(
   },
   {
     files: ["examples/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}"],
-    rules: { "no-restricted-imports": restricted("(^|/)packages/engine(/|$)|^@idx-kit/engine(/|$)") },
+    rules: {
+      "no-restricted-imports": restricted(
+        "(^|/)packages/engine(/|$)|^@idx-kit/engine(/|$)",
+      ),
+    },
   },
   {
     files: ["packages/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}"],
-    rules: { "no-restricted-imports": restricted("(^|/)examples(/|$)|^@idx-kit/demo-site(/|$)") },
+    rules: {
+      "no-restricted-imports": restricted(
+        "(^|/)examples(/|$)|^@idx-kit/demo-site(/|$)",
+      ),
+    },
   },
 );

@@ -1,13 +1,26 @@
 ---
-import type { DisplayBlock } from '@idx-kit/client';
-interface Props { blocks: DisplayBlock[]; placement: string }
+import type { DisplayBlock } from "@idx-kit/client";
+interface Props {
+  blocks: DisplayBlock[];
+  placement: string;
+}
 const { blocks, placement } = Astro.props;
 ---
+
 <div data-placement={placement}>
-  {blocks.filter(block => block.placement === placement).map(block => (
-    <p class={block.prominence} data-block={block.id}>
-      {block.image && <img src={block.image.url} alt={block.image.alt} width="80" height="60" />}
-      <span>{block.text}</span>
-    </p>
-  ))}
+  {blocks
+    .filter((block) => block.placement === placement)
+    .map((block) => (
+      <p class={block.prominence} data-block={block.id}>
+        {block.image && (
+          <img
+            src={block.image.url}
+            alt={block.image.alt}
+            width="80"
+            height="60"
+          />
+        )}
+        <span>{block.text}</span>
+      </p>
+    ))}
 </div>

@@ -1,23 +1,33 @@
 ---
-import { engineClient, logFailure, PageFailure } from '../../server/engine.ts';
-import { displayBlocks } from '../../server/display.ts';
-import Page from '../../layouts/Page.astro';
-import Listing from '../../components/Listing.astro';
-import Failure from '../../components/Failure.astro';
+import { engineClient, logFailure, PageFailure } from "../../server/engine.ts";
+import { displayBlocks } from "../../server/display.ts";
+import Page from "../../layouts/Page.astro";
+import Listing from "../../components/Listing.astro";
+import Failure from "../../components/Failure.astro";
 let response;
 let status = 200;
 let engine: ReturnType<typeof engineClient> | undefined;
 try {
   engine = engineClient();
-  response = await engine.listing(Astro.params.listingId ?? '');
+  response = await engine.listing(Astro.params.listingId ?? "");
   displayBlocks(response.data.display, response.display);
 } catch (error) {
   logFailure(error, engine?.context());
   status = error instanceof PageFailure ? error.status : 502;
 }
 Astro.response.status = status;
-const message = status === 404 ? 'Listing not found' : status === 503 ? 'Listing temporarily unavailable' : 'Unable to load this listing';
+const message =
+  status === 404
+    ? "Listing not found"
+    : status === 503
+      ? "Listing temporarily unavailable"
+      : "Unable to load this listing";
 ---
-<Page title={status === 200 ? 'Property' : message}>
-  {status === 200 && response ? <Listing listing={response.data} pageDisplay={response.display} /> : <Failure status={status} />}
+
+<Page title={status === 200 ? "Property" : message}>
+  {status === 200 && response ? (
+    <Listing listing={response.data} pageDisplay={response.display} />
+  ) : (
+    <Failure status={status} />
+  )}
 </Page>

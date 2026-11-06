@@ -1,33 +1,82 @@
 ---
-import type { Display, Listing } from '@idx-kit/client';
-import { displayBlocks } from '../server/display.ts';
-import Blocks from './Blocks.astro';
-interface Props { listing: Listing; pageDisplay?: Display; linked?: boolean }
+import type { Display, Listing } from "@idx-kit/client";
+import { displayBlocks } from "../server/display.ts";
+import Blocks from "./Blocks.astro";
+interface Props {
+  listing: Listing;
+  pageDisplay?: Display;
+  linked?: boolean;
+}
 const { listing, pageDisplay, linked = false } = Astro.props;
-const blocks = displayBlocks(listing.display, ...(pageDisplay ? [pageDisplay] : []));
+const blocks = displayBlocks(
+  listing.display,
+  ...(pageDisplay ? [pageDisplay] : []),
+);
 const heading = `property-${listing.id}`;
-const unavailable = 'Not available';
-const address = listing.withheldFields.includes('address') ? null : listing.address;
-const price = listing.price === null ? unavailable : new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: listing.price.currency
-}).format(listing.price.amount);
+const unavailable = "Not available";
+const address = listing.withheldFields.includes("address")
+  ? null
+  : listing.address;
+const price =
+  listing.price === null
+    ? unavailable
+    : new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: listing.price.currency,
+      }).format(listing.price.amount);
 const refreshedAt = listing.display.freshness.refreshedAt;
 ---
+
 <article aria-labelledby={heading} data-listing={listing.id}>
-  {linked ? <h2 id={heading}><a href={`/properties/${listing.id}`}>Open property</a></h2> : <h1 id={heading}>Property</h1>}
+  {linked ? (
+    <h2 id={heading}>
+      <a href={`/properties/${listing.id}`}>Open property</a>
+    </h2>
+  ) : (
+    <h1 id={heading}>Property</h1>
+  )}
   <dl>
-    <dt>Status</dt><dd data-fact="status">{listing.status ?? unavailable}</dd>
-    <dt>Price</dt><dd data-fact="price">{price}</dd>
-    <dt>Address</dt><dd data-fact="address">{address ? [address.line1, address.city, address.region, address.postalCode, address.country].join(', ') : unavailable}</dd>
-    <dt>Bedrooms</dt><dd data-fact="bedrooms">{listing.bedrooms ?? unavailable}</dd>
+    <dt>Status</dt>
+    <dd data-fact="status">{listing.status ?? unavailable}</dd>
+    <dt>Price</dt>
+    <dd data-fact="price">{price}</dd>
+    <dt>Address</dt>
+    <dd data-fact="address">
+      {address
+        ? [
+            address.line1,
+            address.city,
+            address.region,
+            address.postalCode,
+            address.country,
+          ].join(", ")
+        : unavailable}
+    </dd>
+    <dt>Bedrooms</dt>
+    <dd data-fact="bedrooms">{listing.bedrooms ?? unavailable}</dd>
   </dl>
   <div data-images>
-    {listing.images?.length ? listing.images.map(image => <img src={image.url} alt={image.alt} width="480" height="300" />) : <p>{unavailable}</p>}
+    {listing.images?.length ? (
+      listing.images.map((image) => (
+        <img src={image.url} alt={image.alt} width="480" height="300" />
+      ))
+    ) : (
+      <p>{unavailable}</p>
+    )}
     <Blocks blocks={blocks} placement="adjacent" />
   </div>
   <Blocks blocks={blocks} placement="afterListing" />
-  <p>Feed refreshed: <time datetime={refreshedAt}>{new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium', timeStyle: 'long', timeZone: 'America/New_York'
-  }).format(new Date(refreshedAt))}</time></p>
-  <footer aria-label="Listing disclosures"><Blocks blocks={blocks} placement="pageFooter" /></footer>
+  <p>
+    Feed refreshed:{" "}
+    <time datetime={refreshedAt}>
+      {new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "long",
+        timeZone: "America/New_York",
+      }).format(new Date(refreshedAt))}
+    </time>
+  </p>
+  <footer aria-label="Listing disclosures">
+    <Blocks blocks={blocks} placement="pageFooter" />
+  </footer>
 </article>
