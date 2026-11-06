@@ -19,7 +19,10 @@ const dereference = (value: AnySchemaObject): AnySchemaObject =>
         value.$ref
           .slice(2)
           .split("/")
-          .reduce((object: AnySchemaObject, name: string) => object[name], contract),
+          .reduce(
+            (object: AnySchemaObject, name: string) => object[name],
+            contract,
+          ),
       )
     : value;
 const validators = new Map();

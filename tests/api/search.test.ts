@@ -112,7 +112,8 @@ test(
       });
       return { body, response, text };
     }
-    const ids = (body: SearchResponse): string[] => body.data.map((item: Listing) => item.id);
+    const ids = (body: SearchResponse): string[] =>
+      body.data.map((item: Listing) => item.id);
     async function browse(query: string, initialCursor: string | null = null) {
       const data: Listing[] = [];
       let cursor: string | null = initialCursor;

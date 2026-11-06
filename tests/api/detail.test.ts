@@ -288,7 +288,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           [body.display.blocks, "feed_address"],
           [body.display.blocks, "page_address"],
         ] as const) {
-          const disclosure = blocks.find((item: DisplayBlock) => item.id === id);
+          const disclosure = blocks.find(
+            (item: DisplayBlock) => item.id === id,
+          );
           assert.equal(
             disclosure.text,
             "Synthetic disclosure for Address withheld.",
