@@ -57,6 +57,10 @@ jobs:
           npm test
           npm run demo:db:migrate
           npm run demo:seed
+      - name: Prove real HTTP responses and key lifecycle against the contract
+        env:
+          IDX_TEST_PGDATA: ${{ runner.temp }}/idx11-pg
+        run: npm run test:api
       - name: Stop only the task cluster
         if: always()
         run: |

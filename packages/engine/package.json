@@ -1,7 +1,7 @@
 {
   "name": "@idx-kit/engine",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "dependencies": {"pg": "8.16.3"}
+  "dependencies": {"pg": "8.16.3", "hono": "4.13.16", "@hono/node-server": "2.1.6", "yaml": "2.9.1"}
 }
