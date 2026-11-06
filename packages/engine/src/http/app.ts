@@ -57,7 +57,11 @@ export function createApp(db: Repository, contract: unknown, release: string, lo
     if (!key.scopes.includes('listings:read')) throw new HttpProblem(403, 'insufficient_scope', 'The key does not grant this operation.');
     if (search) {
       const query = searchQuery(url, key.site_id);
-      return Response.json(listingSearch(await db.search(query), query.context), { headers: { 'Cache-Control': 'private, no-store' } });
+      const body = listingSearch(await db.search(query), query.context);
+      const cursor = body.meta.page.nextCursor;
+      if (cursor !== null && query.bytes + (query.bytes ? 1 : 0) + 'after='.length + cursor.length > 2048)
+        throw new HttpProblem(500, 'internal_error', 'The request could not be completed.');
+      return Response.json(body, { headers: { 'Cache-Control': 'private, no-store' } });
     }
     const id = detail![1];
     const row = /^[A-Za-z0-9_-]+$/.test(id) ? await db.listing(key.site_id, id) : undefined;

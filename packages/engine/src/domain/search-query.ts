@@ -10,7 +10,7 @@ export interface SearchContext {
   site: string; city: string | null; minPrice: string | null; maxPrice: string | null;
   minBedrooms: number | null; sort: 'price' | '-price'; limit: number;
 }
-export interface SearchQuery { context: SearchContext; last: { price: string | null; id: string } | null }
+export interface SearchQuery { context: SearchContext; last: { price: string | null; id: string } | null; bytes: number }
 const encode = (value: string) => btoa(String.fromCharCode(...new TextEncoder().encode(value)))
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 export const searchCursor = (context: SearchContext, last: NonNullable<SearchQuery['last']>) =>
@@ -22,6 +22,11 @@ export function searchQuery(url: URL, site: string): SearchQuery {
   const params = url.searchParams;
   const allowed = ['city', 'minPrice', 'maxPrice', 'minBedrooms', 'sort', 'limit', 'after'];
   for (const name of params.keys()) if (!allowed.includes(name) || params.getAll(name).length !== 1) invalid();
+  // Preserve raw percent encoding when measuring the query without its cursor.
+  const raw = url.search.slice(1).split('&').filter(pair =>
+    decodeURIComponent(pair.split('=', 1)[0].replaceAll('+', ' ')) !== 'after').join('&');
+  const bytes = new TextEncoder().encode(raw).byteLength;
+  if (bytes > 600) invalid();
   const city = params.get('city')?.trim().toLowerCase() ?? null;
   if (city !== null && (!city.length || Array.from(city).length > 100)) invalid();
   const price = (name: string) => {
@@ -59,5 +64,5 @@ export function searchQuery(url: URL, site: string): SearchQuery {
       last = cursor.last;
     } catch { throw new HttpProblem(400, 'cursor_invalid', 'The cursor is invalid for this search. Restart the search.'); }
   }
-  return { context, last };
+  return { context, last, bytes };
 }

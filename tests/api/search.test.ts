@@ -142,9 +142,35 @@ test('real HTTP search and live continuation acceptance', { timeout: 90_000 }, a
       const result = await request(query, 400);
       assert.equal(result.body.code, 'invalid_query'); assert.ok(!result.text.includes('query-private-marker'));
     }
-    const boundary = 'minPrice=0.' + '0'.repeat(2048 - 'minPrice=0.'.length);
-    await request(boundary);
-    assert.equal((await request(boundary + '0', 400)).body.code, 'invalid_query');
+  });
+  await t.test('600 raw query bytes leave room for usable continuation; 601 bytes are rejected', async () => {
+    const boundary = 'maxPrice=' + '9'.repeat(600 - 'maxPrice=&limit=1'.length) + '&limit=1';
+    assert.equal(Buffer.byteLength(boundary), 600);
+    const first = (await request(boundary)).body;
+    assert.equal(first.meta.page.hasMore, true);
+    const cursor = first.meta.page.nextCursor;
+    const continuation = `${boundary}&after=${cursor}`;
+    assert.ok(Buffer.byteLength(continuation) <= 2048);
+    const second = (await request(continuation)).body;
+    assert.notDeepEqual(ids(second), ids(first));
+    // Cursor names may be encoded, and the pair may appear anywhere in the raw query.
+    for (const query of [`%61fter=${cursor}&${boundary}`, boundary.replace('&limit=1', `&after=${cursor}&limit=1`)])
+      assert.deepEqual((await request(query)).body, second);
+    for (const query of [boundary + '0', boundary + '0&after=' + cursor,
+      'maxPrice=' + '9'.repeat(1000) + '&limit=1', 'after=' + 'a'.repeat(2049 - 'after='.length)])
+      assert.equal((await request(query, 400)).body.code, 'invalid_query');
+    assert.equal((await request('after=' + 'a'.repeat(2048 - 'after='.length), 400)).body.code, 'cursor_invalid');
+    // Encoded digits must count as their raw three-byte representation.
+    const encoded = 'maxPrice=' + '%39'.repeat(194) + '&limit=1';
+    assert.equal(Buffer.byteLength(encoded), 599);
+    await request(encoded);
+    assert.equal((await request(encoded + '%30', 400)).body.code, 'invalid_query');
+  });
+  await t.test('an oversized generated cursor returns a server problem instead of a broken continuation', async () => {
+    await db.query("UPDATE idx.listings SET price=$1::numeric WHERE id='lst_demo_0001'", ['9'.repeat(2000)]);
+    const result = await request('sort=-price&limit=1', 500);
+    assert.equal(result.body.code, 'internal_error');
+    assert.ok(!Object.hasOwn(result.body, 'meta'));
   });
   await t.test('empty results retain page disclosures; closed and withheld records reuse detail projection', async () => {
     const empty = (await request('city=No%20Such%20Synthetic%20City')).body;

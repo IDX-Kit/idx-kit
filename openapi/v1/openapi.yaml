@@ -103,7 +103,11 @@ paths:
         Each page rechecks visibility. The opaque cursor has no dataset revision, time expiry, signature or traversal
         count in S01; clients never parse or construct it. Malformed/mismatched cursors return 400 cursor_invalid
         and tell the client to restart. Signing may be added later without a wire change. No limiter is implemented.
-        A future 429 search_window_exceeded requires narrowing the search. Query string maximum is 2 KiB.
+        A future 429 search_window_exceeded requires narrowing the search. The complete raw query string after
+        the question mark has a maximum of 2,048 bytes. Excluding the after pair and its separating ampersand,
+        the raw query has a maximum of 600 bytes on every page; exceeding either limit returns 400 invalid_query.
+        If a generated cursor would make continuation exceed the total limit, the engine returns a 500 server
+        problem instead of an unusable cursor. Each page repeats the same filters, sort and effective page size.
       x-required-scopes: ['listings:read']
       parameters:
       - name: city
