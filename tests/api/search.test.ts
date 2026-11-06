@@ -639,7 +639,12 @@ test(
                     const nodes = flatten(plan).filter(
                       (node) => node["Relation Name"] === "listings",
                     );
-                    const diagnostic = JSON.stringify({ sort, last, sql, plan });
+                    const diagnostic = JSON.stringify({
+                      sort,
+                      last,
+                      sql,
+                      plan,
+                    });
                     assert.ok(nodes.length > 0, diagnostic);
                     for (const node of nodes) {
                       const condition = node["Index Cond"] ?? "";

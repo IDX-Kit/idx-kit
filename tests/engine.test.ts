@@ -98,6 +98,9 @@ test("unexpected exceptions and middleware errors use problems and redacted requ
       `Synthetic cause ${secret} ${hash} postgresql://user:synthetic_password@db.invalid/demo`,
     );
   });
+  app.get("/middleware", () => {
+    throw new HTTPException(401);
+  });
   const response = await app.request("/throw", {
     headers: { "Request-Id": "untrusted-request-id" },
   });
@@ -116,9 +119,6 @@ test("unexpected exceptions and middleware errors use problems and redacted requ
       !lines[0].includes(hash) &&
       !lines[0].includes("synthetic_password"),
   );
-  app.get("/middleware", () => {
-    throw new HTTPException(401);
-  });
   assert.equal(
     (await (await app.request("/middleware")).json()).code,
     "unauthorized",
