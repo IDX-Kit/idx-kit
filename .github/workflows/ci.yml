@@ -22,6 +22,25 @@ jobs:
         run: |
           node --version
           npm ci
+      - name: Check formatting and lint
+        run: |
+          npm run format:check
+          npm run lint
+      - name: Prepare mechanical formatting patch
+        if: failure()
+        run: |
+          git clone --shared . "$RUNNER_TEMP/style-scratch"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/style-scratch/node_modules"
+          cd "$RUNNER_TEMP/style-scratch"
+          npm run lint -- --fix || true
+          npm run format
+          git diff --binary > "$RUNNER_TEMP/code-style.patch"
+      - name: Save mechanical formatting patch
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: code-style-patch
+          path: ${{ runner.temp }}/code-style.patch
       - name: Lint contract with no errors or warnings
         run: npm run contract:lint
       - name: Generate client and compatibility types

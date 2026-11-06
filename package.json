@@ -5,6 +5,9 @@
   "workspaces": ["packages/engine", "packages/client", "examples/demo-site"],
   "engines": {"node": "24.14.1"},
   "scripts": {
+    "format": "prettier --write \"{packages,examples,tests,scripts}/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}\" \"*.{js,cjs,mjs,ts,cts,mts,json}\"",
+    "format:check": "prettier --check \"{packages,examples,tests,scripts}/**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,astro}\" \"*.{js,cjs,mjs,ts,cts,mts,json}\"",
+    "lint": "eslint . --max-warnings 0",
     "contract:lint": "redocly lint openapi/v1/openapi.yaml --extends recommended --max-problems 1000 --format json > contract-lint.json && node scripts/check-lint.mjs",
     "contract:generate": "redocly generate-client openapi/v1/openapi.yaml --output packages/client/src/generated.ts",
     "contract:compat": "openapi-typescript openapi/v1/openapi.yaml --output .generated/compat.ts",
@@ -20,6 +23,14 @@
     "demo:seed": "node packages/engine/src/db/seed.ts"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "eslint-plugin-astro": "1.7.0",
+    "eslint-plugin-import-x": "4.17.1",
+    "globals": "17.14.0",
+    "prettier": "3.9.10",
+    "prettier-plugin-astro": "1.1.2",
+    "typescript-eslint": "8.72.1",
     "@playwright/test": "1.64.1",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",

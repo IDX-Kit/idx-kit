@@ -1,0 +1,8 @@
+packages/client/src/generated.ts
+fixtures/
+.generated/
+**/dist/
+**/.astro/
+coverage/
+test-results/
+playwright-report/
