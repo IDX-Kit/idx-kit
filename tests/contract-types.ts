@@ -16,8 +16,8 @@ const nulls: Pick<
 };
 // @ts-expect-error A defined fact must be present even when its value is unknown.
 const missingPrice: Pick<Listing, "price"> = {};
-// @ts-expect-error Decimal money is a string on the wire.
 const numericAmount: NonNullable<Listing["price"]> = {
+  // @ts-expect-error Decimal money is a string on the wire.
   amount: 100,
   currency: "USD",
 };
