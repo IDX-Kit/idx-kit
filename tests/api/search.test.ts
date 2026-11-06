@@ -682,7 +682,7 @@ test(
             const all: Listing[] = [];
             let cursor: string | null = null;
             do {
-              const body = (
+              const body: SearchResponse = (
                 await request(
                   `sort=${sort}&limit=1` + (cursor ? "&after=" + cursor : ""),
                 )

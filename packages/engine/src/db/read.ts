@@ -4,6 +4,11 @@ import { HttpProblem } from "../http/problem.ts";
 import { searchListings } from "./search.ts";
 import type { SearchQuery } from "../domain/search-query.ts";
 
+interface SiteKey {
+  site_id: string;
+  scopes: string[];
+}
+
 export interface ListingRow {
   id: string;
   synthetic: boolean;
@@ -55,16 +60,16 @@ export function repository(pool: pg.Pool) {
   ) => readQuery<T>(pool, sql, values, operation);
   return {
     search: (query: SearchQuery) => searchListings(pool, query),
-    async key(hash: string) {
+    async key(hash: string): Promise<SiteKey | undefined> {
       return (
-        await query<{ site_id: string; scopes: string[] }>(
+        await query<SiteKey>(
           "SELECT site_id, scopes FROM idx.site_secret_keys WHERE secret_hash = $1 AND revoked_at IS NULL",
           [hash],
           "key.lookup",
         )
       )[0];
     },
-    async listing(site: string, id: string) {
+    async listing(site: string, id: string): Promise<ListingRow | undefined> {
       return (
         await query<ListingRow>(
           `${listingSelect}
