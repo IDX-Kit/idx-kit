@@ -94,6 +94,17 @@ export function createApp(
     });
     return problemResponse(problem, c.get("requestId"));
   });
+  for (const path of [
+    "/api",
+    "/api/v1/openapi.json",
+    "/api/v1/listings",
+    "/api/v1/listings/:listingId",
+  ]) {
+    app.use(path, async (c, next) => {
+      c.set("route", path.replace(":listingId", "{listingId}"));
+      await next();
+    });
+  }
   app.use("*", async (c, next) => {
     if (
       c.req.header("Origin") !== undefined &&
@@ -106,14 +117,9 @@ export function createApp(
       );
     await next();
   });
-  for (const path of [
-    "/api",
-    "/api/v1/openapi.json",
-    "/api/v1/listings",
-    "/api/v1/listings/:listingId",
-  ]) {
-    app.use(path, async (c, next) => {
-      c.set("route", path.replace(":listingId", "{listingId}"));
+  app.use("*", async (c, next) => {
+    const route = c.get("route");
+    if (route !== "/api/*") {
       if (c.req.method !== "GET")
         throw new HttpProblem(
           405,
@@ -123,16 +129,16 @@ export function createApp(
       const url = new URL(c.req.url);
       if (
         new TextEncoder().encode(url.search.slice(1)).byteLength > 2048 ||
-        (path !== "/api/v1/listings" && url.searchParams.size)
+        (route !== "/api/v1/listings" && url.searchParams.size)
       )
         throw new HttpProblem(
           400,
           "invalid_query",
           "The query string is not supported.",
         );
-      await next();
-    });
-  }
+    }
+    await next();
+  });
   app.get("/api", () => {
     const body: DiscoveryResponse = {
       data: {
