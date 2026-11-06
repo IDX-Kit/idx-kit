@@ -405,7 +405,7 @@ test.describe.serial('SSR property pages through the public engine', () => {
         finally { await execute('npm', ['run', '--silent', 'demo:seed']); }
       }
     }
-    await db.query("UPDATE idx.feeds SET expires_at='2000-01-01' WHERE id='feed_demo_primary'");
+    await db.query("UPDATE idx.feeds SET refreshed_at='2000-01-01', expires_at='2000-01-02' WHERE id='feed_demo_primary'");
     try { expect(await raw(request, '/search', 503)).toContain('Listing temporarily unavailable'); }
     finally { await execute('npm', ['run', '--silent', 'demo:seed']); }
   });
