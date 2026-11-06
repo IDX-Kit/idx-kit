@@ -339,8 +339,9 @@ export type SearchListingsQuery = {
      */
     limit?: number;
     /**
-     * Opaque nextCursor from the previous page with the same filters, sort and effective page size. Invalid/mismatched means restart.
+     * Opaque nextCursor from the previous page with the same filters, sort and effective page size. At most 4,096 bytes. Invalid/mismatched means restart.
      * @minLength 1
+     * @maxLength 4096
      */
     after?: string;
 };
