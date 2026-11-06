@@ -27,16 +27,6 @@ jobs:
         run: |
           npm run format:check
           npm run lint
-      - name: Save formatting changes for inspection
-        if: failure()
-        run: |
-          npm run format
-          git diff > "$RUNNER_TEMP/format.patch"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: failure()
-        with:
-          name: formatting-changes
-          path: ${{ runner.temp }}/format.patch
       - name: Lint contract with no errors or warnings
         run: npm run contract:lint
       - name: Generate client and compatibility types
