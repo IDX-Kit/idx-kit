@@ -630,7 +630,12 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       const result = await request(listing, 503);
       assert.equal(result.body.code, "service_unavailable");
       await new Promise((resolve) => setTimeout(resolve, 100));
-      const failure = engine.logs().trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.requestId === result.body.requestId);
+      const failure = engine
+        .logs()
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((line) => line.requestId === result.body.requestId);
       assert.equal(failure.length, 1);
       assert.equal(failure[0].operation, "key.lookup");
       assert.equal(failure[0].errorCode, "ECONNREFUSED");
@@ -666,7 +671,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       const logs = text
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line)).filter((line) => line.requestId);
+        .map((line) => JSON.parse(line))
+        .filter((line) => line.requestId);
       assert.equal(logs.length, requests.length);
       for (const request of requests) {
         const log = logs.find((line) => line.requestId === request.id);
@@ -677,7 +683,18 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(typeof log.duration, "number");
         assert.ok(log.duration >= 0);
         assert.deepEqual(
-          Object.keys(log).filter((name) => !["errorType", "errorCode", "operation", "message", "stack"].includes(name)).sort(),
+          Object.keys(log)
+            .filter(
+              (name) =>
+                ![
+                  "errorType",
+                  "errorCode",
+                  "operation",
+                  "message",
+                  "stack",
+                ].includes(name),
+            )
+            .sort(),
           [
             "method",
             "route",

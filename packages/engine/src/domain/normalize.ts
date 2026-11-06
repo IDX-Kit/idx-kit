@@ -86,7 +86,9 @@ export function normalize(record: FixtureRecord) {
     )
   )
     throw new Error("Invalid image");
-  const hideAddress = !source.InternetAddressDisplayYN || record.withheldFields?.includes("address");
+  const hideAddress =
+    !source.InternetAddressDisplayYN ||
+    record.withheldFields?.includes("address");
   const protection = addressProtection(hideAddress ? source.Address : null);
   const facts: Pick<
     Listing,
@@ -114,7 +116,9 @@ export function normalize(record: FixtureRecord) {
       throw new Error("Invalid withheld field");
     facts[field] = null;
   }
-  facts.withheldFields = [...new Set([...facts.withheldFields, ...(record.withheldFields ?? [])])];
+  facts.withheldFields = [
+    ...new Set([...facts.withheldFields, ...(record.withheldFields ?? [])]),
+  ];
   return {
     feedId: record.feedId,
     sourceKey: source.ListingKey,

@@ -7,7 +7,10 @@ import type { DisplayBlock, Listing, SearchResponse } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { searchListings } from "@idx-kit/engine/src/db/search.ts";
 import { listingSelect } from "@idx-kit/engine/src/db/read.ts";
-import { searchQuery, searchSchema } from "@idx-kit/engine/src/domain/search-query.ts";
+import {
+  searchQuery,
+  searchSchema,
+} from "@idx-kit/engine/src/domain/search-query.ts";
 import type { FixtureRecord } from "@idx-kit/engine/src/domain/normalize.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { validateResponse } from "./contract.ts";
@@ -341,58 +344,27 @@ test(
       },
     );
     await t.test(
-      "600 raw query bytes leave room for usable continuation; 601 bytes are rejected",
+      "queries above the former filter budget page without a server failure",
       async () => {
-        const boundary =
-          "maxPrice=" +
-          "9".repeat(600 - "maxPrice=&limit=1".length) +
-          "&limit=1";
-        assert.equal(Buffer.byteLength(boundary), 600);
-        const first = (await request(boundary)).body;
-        assert.equal(first.meta.page.hasMore, true);
-        const cursor = first.meta.page.nextCursor;
-        const continuation = `${boundary}&after=${cursor}`;
-        assert.ok(Buffer.byteLength(continuation) <= 2048);
-        const second = (await request(continuation)).body;
-        assert.notDeepEqual(ids(second), ids(first));
-        // Cursor names may be encoded, and the pair may appear anywhere in the raw query.
-        for (const query of [
-          `%61fter=${cursor}&${boundary}`,
-          boundary.replace("&limit=1", `&after=${cursor}&limit=1`),
-        ])
-          assert.deepEqual((await request(query)).body, second);
-        for (const query of [
-          boundary + "0",
-          boundary + "0&after=" + cursor,
-          "maxPrice=" + "9".repeat(1000) + "&limit=1",
-          "after=" + "a".repeat(2049 - "after=".length),
-        ])
-          assert.equal((await request(query, 400)).body.code, "invalid_query");
-        assert.equal(
-          (await request("after=" + "a".repeat(2048 - "after=".length), 400))
-            .body.code,
-          "cursor_invalid",
-        );
-        // Encoded digits must count as their raw three-byte representation.
-        const encoded = "maxPrice=" + "%39".repeat(194) + "&limit=1";
-        assert.equal(Buffer.byteLength(encoded), 599);
-        await request(encoded);
-        assert.equal(
-          (await request(encoded + "%30", 400)).body.code,
-          "invalid_query",
-        );
+        const query = "maxPrice=" + "9".repeat(1783) + "&limit=1";
+        assert.equal(Buffer.byteLength(query), 1800);
+        const rows = await browse(query);
+        assert.equal(rows.length, licensedCount - 1);
+        for (const invalid of ["after=" + "a".repeat(2049), "maxPrice=" + "9".repeat(2049)]) {
+          assert.equal((await request(invalid, 400)).body.code, "invalid_query");
+        }
       },
     );
     await t.test(
-      "an oversized generated cursor returns a server problem instead of a broken continuation",
+      "generating a cursor no longer has a server failure path",
       async () => {
         await db.query(
           "UPDATE idx.listings SET price=$1::numeric WHERE id='lst_demo_0001'",
           ["9".repeat(2000)],
         );
-        const result = await request("sort=-price&limit=1", 500);
-        assert.equal(result.body.code, "internal_error");
-        assert.ok(!Object.hasOwn(result.body, "meta"));
+        const result = await request("sort=-price&limit=1");
+        assert.equal(result.body.meta.page.hasMore, true);
+        assert.equal(typeof result.body.meta.page.nextCursor, "string");
       },
     );
     await t.test(
@@ -596,91 +568,159 @@ test(
           );
       },
     );
-    await t.test("every page seeks through listing indexes in both price orders", async () => {
-      interface Plan { "Node Type": string; "Relation Name"?: string; "Index Cond"?: string; Plans?: Plan[] }
-      const flatten = (node: Plan): Plan[] => [node, ...(node.Plans ?? []).flatMap(flatten)];
-      await db.query("BEGIN");
-      try {
-        await db.query("SET LOCAL enable_seqscan=off");
-        for (const sort of ["price", "-price"]) {
-          for (const last of [null, { price: "425000", id: "lst_demo_0002" }, { price: "590000", id: "lst_demo_0023" }, { price: null, id: "lst_demo_0004" }]) {
-            let scans = 0;
-            const inspecting = { async query(sql: string, values: unknown[]) {
-              if (sql.startsWith(listingSelect)) {
-                assert.ok(!sql.includes("OR l.price IS NULL"));
-                const plan = (await db.query("EXPLAIN (FORMAT JSON) " + sql, values)).rows[0]["QUERY PLAN"][0].Plan as Plan;
-                const nodes = flatten(plan).filter((node) => node["Relation Name"] === "listings");
-                assert.ok(nodes.length > 0);
-                for (const node of nodes) {
-                  assert.match(node["Node Type"], /Index/);
-                  assert.match(node["Index Cond"] ?? "", /price|id/);
-                  if (last?.price === null) assert.match(node["Index Cond"] ?? "", /id > /);
-                  else if (last && !sql.includes("l.price IS NULL")) assert.match(node["Index Cond"] ?? "", /[<>]/);
-                  scans++;
-                }
-              }
-              return db.query(sql, values);
-            } } as pg.Pool;
-            const query = searchQuery(searchSchema.parse({ sort, limit: "50" }), "site_demo_primary");
-            await searchListings(inspecting, { ...query, last });
-            assert.ok(scans > 0);
-          }
+    await t.test(
+      "every page seeks through listing indexes in both price orders",
+      async () => {
+        interface Plan {
+          "Node Type": string;
+          "Relation Name"?: string;
+          "Index Cond"?: string;
+          Plans?: Plan[];
         }
-      } finally { await db.query("ROLLBACK"); }
-    });
-    await t.test("withheld synthetic facts are null in storage, responses, filters and cursors", async () => {
-      const extra = JSON.parse(await readFile(new URL("../../fixtures/withheld-listings.json", import.meta.url), "utf8")) as FixtureRecord[];
-      extra[3].source.ListPrice = null;
-      const extended = structuredClone(fixtures);
-      extended.listings.push(...extra);
-      try {
-        await seed(db, extended);
-        const stored = (await db.query("SELECT * FROM idx.listings WHERE id LIKE 'lst_withheld_%' ORDER BY id")).rows;
-        for (let index = 0; index < extra.length; index++) {
-          const field = extra[index].withheldFields![0];
-          assert.equal(stored[index][field], null);
-          assert.deepEqual(stored[index].withheld_fields, [field]);
-          if (field === "price") assert.equal(stored[index].currency, null);
-          const response = await fetch(`http://127.0.0.1:8787${path}/${extra[index].publicId}`, { headers: { Authorization: `Bearer ${key.secret}` } });
-          const detail = await response.json();
-          validateResponse(path + "/{listingId}", response, detail);
-          assert.equal(detail.data[field], null);
-          assert.deepEqual(detail.data.withheldFields, [field]);
-        }
-        assert.ok(!ids((await request("minPrice=0&limit=50")).body).includes(extra[0].publicId));
-        assert.ok(!ids((await request("minBedrooms=0&limit=50")).body).includes(extra[2].publicId));
-        for (const sort of ["price", "-price"]) {
-          const all: Listing[] = [];
-          let cursor: string | null = null;
-          do {
-            const body = (await request(`sort=${sort}&limit=1` + (cursor ? "&after=" + cursor : ""))).body;
-            const listing = body.data[0];
-            all.push(listing);
-            cursor = body.meta.page.nextCursor;
-            if (cursor) {
-              const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString());
-              if (listing.id === extra[0].publicId) {
-                assert.equal(decoded[0], null);
-                assert.ok(!JSON.stringify(decoded).includes(extra[0].source.ListPrice!));
-              }
-              assert.equal(decoded.length, 3);
+        const flatten = (node: Plan): Plan[] => [
+          node,
+          ...(node.Plans ?? []).flatMap(flatten),
+        ];
+        await db.query("BEGIN");
+        try {
+          await db.query("SET LOCAL enable_seqscan=off");
+          for (const sort of ["price", "-price"]) {
+            for (const last of [
+              null,
+              { price: "425000", id: "lst_demo_0002" },
+              { price: "590000", id: "lst_demo_0023" },
+              { price: null, id: "lst_demo_0004" },
+            ]) {
+              let scans = 0;
+              const inspecting = {
+                async query(sql: string, values: unknown[]) {
+                  if (sql.startsWith(listingSelect)) {
+                    assert.ok(!sql.includes("OR l.price IS NULL"));
+                    const plan = (
+                      await db.query("EXPLAIN (FORMAT JSON) " + sql, values)
+                    ).rows[0]["QUERY PLAN"][0].Plan as Plan;
+                    const nodes = flatten(plan).filter(
+                      (node) => node["Relation Name"] === "listings",
+                    );
+                    assert.ok(nodes.length > 0);
+                    for (const node of nodes) {
+                      assert.match(node["Node Type"], /Index/);
+                      assert.match(node["Index Cond"] ?? "", /price|id/);
+                      if (last?.price === null)
+                        assert.match(node["Index Cond"] ?? "", /id > /);
+                      else if (last && !sql.includes("l.price IS NULL"))
+                        assert.match(node["Index Cond"] ?? "", /[<>]/);
+                      scans++;
+                    }
+                  }
+                  return db.query(sql, values);
+                },
+              } as pg.Pool;
+              const query = searchQuery(
+                searchSchema.parse({ sort, limit: "50" }),
+                "site_demo_primary",
+              );
+              await searchListings(inspecting, { ...query, last });
+              assert.ok(scans > 0);
             }
-          } while (cursor);
-          assert.equal(all.at(-1)!.id, extra[3].publicId);
-          assert.ok(all.slice(-3).every((listing) => listing.price === null));
-          for (const record of extra) {
-            const item = all.find((listing) => listing.id === record.publicId)!;
-            const field = record.withheldFields![0];
-            assert.equal(item[field], null);
-            assert.deepEqual(item.withheldFields, [field]);
           }
+        } finally {
+          await db.query("ROLLBACK");
         }
-      } finally {
-        await db.query("DELETE FROM idx.source_mappings WHERE listing_id LIKE 'lst_withheld_%'");
-        await db.query("DELETE FROM idx.listings WHERE id LIKE 'lst_withheld_%'");
-        await seed(db, fixtures);
-      }
-    });
+      },
+    );
+    await t.test(
+      "withheld synthetic facts are null in storage, responses, filters and cursors",
+      async () => {
+        const extra = JSON.parse(
+          await readFile(
+            new URL("../../fixtures/withheld-listings.json", import.meta.url),
+            "utf8",
+          ),
+        ) as FixtureRecord[];
+        extra[3].source.ListPrice = null;
+        const extended = structuredClone(fixtures);
+        extended.listings.push(...extra);
+        try {
+          await seed(db, extended);
+          const stored = (
+            await db.query(
+              "SELECT * FROM idx.listings WHERE id LIKE 'lst_withheld_%' ORDER BY id",
+            )
+          ).rows;
+          for (let index = 0; index < extra.length; index++) {
+            const field = extra[index].withheldFields![0];
+            assert.equal(stored[index][field], null);
+            assert.deepEqual(stored[index].withheld_fields, [field]);
+            if (field === "price") assert.equal(stored[index].currency, null);
+            const response = await fetch(
+              `http://127.0.0.1:8787${path}/${extra[index].publicId}`,
+              { headers: { Authorization: `Bearer ${key.secret}` } },
+            );
+            const detail = await response.json();
+            validateResponse(path + "/{listingId}", response, detail);
+            assert.equal(detail.data[field], null);
+            assert.deepEqual(detail.data.withheldFields, [field]);
+          }
+          assert.ok(
+            !ids((await request("minPrice=0&limit=50")).body).includes(
+              extra[0].publicId,
+            ),
+          );
+          assert.ok(
+            !ids((await request("minBedrooms=0&limit=50")).body).includes(
+              extra[2].publicId,
+            ),
+          );
+          for (const sort of ["price", "-price"]) {
+            const all: Listing[] = [];
+            let cursor: string | null = null;
+            do {
+              const body = (
+                await request(
+                  `sort=${sort}&limit=1` + (cursor ? "&after=" + cursor : ""),
+                )
+              ).body;
+              const listing = body.data[0];
+              all.push(listing);
+              cursor = body.meta.page.nextCursor;
+              if (cursor) {
+                const decoded = JSON.parse(
+                  Buffer.from(cursor, "base64url").toString(),
+                );
+                if (listing.id === extra[0].publicId) {
+                  assert.equal(decoded[0], null);
+                  assert.ok(
+                    !JSON.stringify(decoded).includes(
+                      extra[0].source.ListPrice!,
+                    ),
+                  );
+                }
+                assert.equal(decoded.length, 3);
+              }
+            } while (cursor);
+            assert.equal(all.at(-1)!.id, extra[3].publicId);
+            assert.ok(all.slice(-3).every((listing) => listing.price === null));
+            for (const record of extra) {
+              const item = all.find(
+                (listing) => listing.id === record.publicId,
+              )!;
+              const field = record.withheldFields![0];
+              assert.equal(item[field], null);
+              assert.deepEqual(item.withheldFields, [field]);
+            }
+          }
+        } finally {
+          await db.query(
+            "DELETE FROM idx.source_mappings WHERE listing_id LIKE 'lst_withheld_%'",
+          );
+          await db.query(
+            "DELETE FROM idx.listings WHERE id LIKE 'lst_withheld_%'",
+          );
+          await seed(db, fixtures);
+        }
+      },
+    );
     await t.test(
       "search logs correlate errors and successes without queries or credentials",
       async () => {

@@ -12,5 +12,8 @@ export function registerSecret(secret: string) {
   const directory = process.env.IDX_TEST_LOG_DIR;
   if (!directory) return;
   mkdirSync(directory, { recursive: true });
-  appendFileSync(join(directory, "forbidden.values"), secret + "\n" + createHash("sha256").update(secret).digest("hex") + "\n");
+  appendFileSync(
+    join(directory, "forbidden.values"),
+    secret + "\n" + createHash("sha256").update(secret).digest("hex") + "\n",
+  );
 }

@@ -1,4 +1,5 @@
 import { captureLog, registerSecret } from "./logs.ts";
+import { TimeoutError } from "@idx-kit/client";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -105,7 +106,6 @@ test("all demo engine HTTP calls stay behind the generated client", async () => 
   }
 });
 
-
 test("site failures log once with status, request ID, path and redacted causes", async (t) => {
   const savedFetch = globalThis.fetch;
   const savedUrl = process.env.IDX_ENGINE_URL;
@@ -127,7 +127,11 @@ test("site failures log once with status, request ID, path and redacted causes",
     if (savedKey === undefined) delete process.env.IDX_SECRET_KEY;
     else process.env.IDX_SECRET_KEY = savedKey;
   });
-  globalThis.fetch = async () => Response.json({}, { status: 401, headers: { "Request-Id": "req_synthetic_key" } });
+  globalThis.fetch = async () =>
+    Response.json(
+      {},
+      { status: 401, headers: { "Request-Id": "req_synthetic_key" } },
+    );
   const engine = engineClient();
   await assert.rejects(engine.search({}), (error) => {
     logFailure(error, engine.context());
@@ -139,7 +143,11 @@ test("site failures log once with status, request ID, path and redacted causes",
   assert.equal(wrong.upstreamStatus, 401);
   assert.equal(wrong.requestId, "req_synthetic_key");
   assert.equal(wrong.path, "/api/v1/listings");
-  globalThis.fetch = async () => { throw new TypeError(`Synthetic connection failure ${secret} ${hash} postgresql://user:synthetic_password@db.invalid/demo`); };
+  globalThis.fetch = async () => {
+    throw new TypeError(
+      `Synthetic connection failure ${secret} ${hash} postgresql://user:synthetic_password@db.invalid/demo`,
+    );
+  };
   await assert.rejects(engine.listing("lst_synthetic"));
   const outage = JSON.parse(logs[1]);
   assert.equal(outage.category, "engine_outage");
@@ -148,5 +156,15 @@ test("site failures log once with status, request ID, path and redacted causes",
   assert.equal(outage.errorType, "TypeError");
   assert.equal(outage.path, "/api/v1/listings/{listingId}");
   assert.match(outage.message, /Synthetic connection failure/);
-  assert.ok(!logs.join("").includes(secret) && !logs.join("").includes(hash) && !logs.join("").includes("synthetic_password"));
+  assert.ok(
+    !logs.join("").includes(secret) &&
+      !logs.join("").includes(hash) &&
+      !logs.join("").includes("synthetic_password"),
+  );
+  globalThis.fetch = async () => {
+    throw new TimeoutError("searchListings", 5000, 1);
+  };
+  await assert.rejects(engine.search({}));
+  assert.equal(JSON.parse(logs[2]).errorType, "TimeoutError");
+  assert.equal(JSON.parse(logs[2]).category, "engine_outage");
 });

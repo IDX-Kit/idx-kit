@@ -16,7 +16,9 @@ const pool = new pg.Pool({
   statement_timeout: 2000,
 });
 pool.on("error", (error) => {
-  console.error(logLine({ operation: "database.idle", ...failureFields(error) }));
+  console.error(
+    logLine({ operation: "database.idle", ...failureFields(error) }),
+  );
 });
 const contract = parse(
   await readFile(

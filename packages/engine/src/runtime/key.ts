@@ -17,8 +17,11 @@ if (
       !requested.length ||
       requested.some((scope) => !scopes.some((allowed) => allowed === scope))))
 ) {
-  process.stderr.write(
-    "Usage: demo:key create <site> <scopes> <new-file> | rotate <key-id> <scopes> <new-file> | revoke <key-id>\n",
+  logFailure(
+    "key.input",
+    new Error(
+      "Invalid arguments or missing DATABASE_URL. Usage: demo:key create <site> <scopes> <new-file> | rotate <key-id> <scopes> <new-file> | revoke <key-id>",
+    ),
   );
   process.exitCode = 1;
 } else {
@@ -63,8 +66,13 @@ if (
     process.stdout.write(id + "\n");
   } catch (error) {
     logFailure("key.operation", error);
-    await db.query("ROLLBACK").catch((cause: unknown) => logFailure("key.rollback", cause));
-    if (createdFile) await unlink(path!).catch((cause: unknown) => logFailure("key.cleanup", cause));
+    await db
+      .query("ROLLBACK")
+      .catch((cause: unknown) => logFailure("key.rollback", cause));
+    if (createdFile)
+      await unlink(path!).catch((cause: unknown) =>
+        logFailure("key.cleanup", cause),
+      );
     process.exitCode = 1;
   } finally {
     await db.end();

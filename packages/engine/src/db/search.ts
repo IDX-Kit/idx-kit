@@ -27,7 +27,12 @@ export async function searchListings(
   );
   const rows: ListingRow[] = [];
   // Separate equality, strict price and null ranges keep each continuation seekable.
-  const ranges = last?.price === null ? ["null"] : last ? ["tie", "price", "null"] : ["price", "null"];
+  const ranges =
+    last?.price === null
+      ? ["null"]
+      : last
+        ? ["tie", "price", "null"]
+        : ["price", "null"];
   for (const range of ranges) {
     if (rows.length === c.limit + 1) break;
     const values: unknown[] = [c.site];
@@ -36,11 +41,16 @@ export async function searchListings(
       return `$${values.length}`;
     };
     const where = ["l.entire_listing_display"];
-    if (c.city !== null) where.push(`lower(l.address->>'city') = ${bind(c.city)}`);
-    if (c.minBedrooms !== null) where.push(`l.bedrooms >= ${bind(c.minBedrooms)}::bigint`);
-    if (c.minPrice !== null || c.maxPrice !== null) where.push("l.currency = 'USD'");
-    if (c.minPrice !== null) where.push(`l.price >= ${bind(c.minPrice)}::numeric`);
-    if (c.maxPrice !== null) where.push(`l.price <= ${bind(c.maxPrice)}::numeric`);
+    if (c.city !== null)
+      where.push(`lower(l.address->>'city') = ${bind(c.city)}`);
+    if (c.minBedrooms !== null)
+      where.push(`l.bedrooms >= ${bind(c.minBedrooms)}::bigint`);
+    if (c.minPrice !== null || c.maxPrice !== null)
+      where.push("l.currency = 'USD'");
+    if (c.minPrice !== null)
+      where.push(`l.price >= ${bind(c.minPrice)}::numeric`);
+    if (c.maxPrice !== null)
+      where.push(`l.price <= ${bind(c.maxPrice)}::numeric`);
     if (range === "null") {
       where.push("l.price IS NULL");
       if (last?.price === null) where.push(`l.id > ${bind(last.id)}`);
@@ -48,17 +58,21 @@ export async function searchListings(
       where.push("l.price IS NOT NULL");
       if (last) {
         const price = bind(last.price);
-        where.push(`l.price ${range === "tie" ? "=" : c.sort === "price" ? ">" : "<"} ${price}::numeric`);
+        where.push(
+          `l.price ${range === "tie" ? "=" : c.sort === "price" ? ">" : "<"} ${price}::numeric`,
+        );
         if (range === "tie") where.push(`l.id > ${bind(last.id)}`);
       }
     }
-    rows.push(...await readQuery<ListingRow>(
-      pool,
-      `${listingSelect} WHERE ${where.join(" AND ")}
+    rows.push(
+      ...(await readQuery<ListingRow>(
+        pool,
+        `${listingSelect} WHERE ${where.join(" AND ")}
       ORDER BY l.price ${c.sort === "price" ? "ASC" : "DESC"} NULLS LAST, l.id ASC LIMIT ${bind(c.limit + 1 - rows.length)}`,
-      values,
-      `search.${range}`,
-    ));
+        values,
+        `search.${range}`,
+      )),
+    );
   }
   return { feeds, rows };
 }

@@ -6,7 +6,12 @@ export class HttpProblem extends Error {
   readonly code: string;
   readonly detail: string;
   readonly operation?: string;
-  constructor(status: number, code: string, detail: string, options?: { cause: unknown; operation: string }) {
+  constructor(
+    status: number,
+    code: string,
+    detail: string,
+    options?: { cause: unknown; operation: string },
+  ) {
     super(code, options);
     this.name = "HttpProblem";
     this.operation = options?.operation;

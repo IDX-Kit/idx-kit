@@ -48,8 +48,11 @@ export const listingSelect = `SELECT l.id, l.synthetic, l.status, l.price::text,
   JOIN idx.feeds f ON f.id = m.feed_id
   JOIN idx.data_licenses d ON d.feed_id = f.id AND d.site_id = $1`;
 export function repository(pool: pg.Pool) {
-  const query = <T extends pg.QueryResultRow>(sql: string, values: unknown[], operation: string) =>
-    readQuery<T>(pool, sql, values, operation);
+  const query = <T extends pg.QueryResultRow>(
+    sql: string,
+    values: unknown[],
+    operation: string,
+  ) => readQuery<T>(pool, sql, values, operation);
   return {
     search: (query: SearchQuery) => searchListings(pool, query),
     async key(hash: string) {

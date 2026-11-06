@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { logFailure } from "../log.ts";
 
 export async function migrate(client: pg.Client) {
   await client.query("BEGIN");
@@ -34,9 +35,12 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
   try {
+    await client.connect();
     await migrate(client);
+  } catch (error) {
+    logFailure("migrate.command", error);
+    process.exitCode = 1;
   } finally {
     await client.end();
   }

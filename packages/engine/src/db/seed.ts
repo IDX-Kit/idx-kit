@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { logFailure } from "../log.ts";
 import { FixtureConnector } from "../connectors/fixture.ts";
 import type { Fixtures } from "../connectors/fixture.ts";
 import { normalize } from "../domain/normalize.ts";
@@ -15,7 +16,8 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
         .filter(
           (record) =>
             record.feedId === feed.id &&
-            (record.source.InternetAddressDisplayYN === false || record.withheldFields?.includes("address")),
+            (record.source.InternetAddressDisplayYN === false ||
+              record.withheldFields?.includes("address")),
         )
         .reduce(
           (blocks, record) =>
@@ -59,9 +61,12 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
   try {
+    await client.connect();
     await seed(client, await new FixtureConnector().read());
+  } catch (error) {
+    logFailure("seed.command", error);
+    process.exitCode = 1;
   } finally {
     await client.end();
   }

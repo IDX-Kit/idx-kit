@@ -29,19 +29,32 @@ export class PageFailure extends Error {
 
 export function logFailure(
   error: unknown,
-  upstream?: { status: number | null; requestId: string | null; path?: string | null },
+  upstream?: {
+    status: number | null;
+    requestId: string | null;
+    path?: string | null;
+  },
 ) {
   const cause = error instanceof PageFailure ? error.cause : error;
   if (error instanceof PageFailure && error.logged) return;
-  const status = cause instanceof ApiError ? cause.status : (upstream?.status ?? null);
+  const status =
+    cause instanceof ApiError ? cause.status : (upstream?.status ?? null);
   writeLog({
     event: "demo_request_failed",
-    category: status === 401 || status === 403 ? "key_problem" : status === null || status >= 500 ? "engine_outage" : "request_problem",
+    category:
+      status === 401 || status === 403
+        ? "key_problem"
+        : status === null || status >= 500
+          ? "engine_outage"
+          : "request_problem",
     errorType: cause instanceof Error ? cause.name : "PageFailure",
     reason: error instanceof PageFailure ? error.reason : "render_failed",
     upstreamStatus: status,
-    requestId: (error instanceof PageFailure ? error.requestId : null) ?? upstream?.requestId ?? null,
-    path: error instanceof PageFailure ? error.path : upstream?.path ?? null,
+    requestId:
+      (error instanceof PageFailure ? error.requestId : null) ??
+      upstream?.requestId ??
+      null,
+    path: error instanceof PageFailure ? error.path : (upstream?.path ?? null),
     message: cause instanceof Error ? cause.message : "Request failed",
   });
   if (error instanceof PageFailure) error.logged = true;
@@ -78,7 +91,10 @@ export function engineClient() {
     cache: "no-store",
     redirect: "error",
   };
-  async function request<T>(requestPath: string, call: () => Promise<T>): Promise<T> {
+  async function request<T>(
+    requestPath: string,
+    call: () => Promise<T>,
+  ): Promise<T> {
     path = requestPath;
     requestId = null;
     upstreamStatus = null;
@@ -122,7 +138,9 @@ export function engineClient() {
       );
     },
     async search(query: SearchListingsQuery) {
-      return request("/api/v1/listings", () => client.searchListings({ query }, options));
+      return request("/api/v1/listings", () =>
+        client.searchListings({ query }, options),
+      );
     },
   };
 }

@@ -34,10 +34,7 @@ export function listingDetail(row: ListingRow): ListingResponse {
           ? null
           : { amount: row.price, currency: row.currency! },
       address: row.address,
-      bedrooms:
-        row.bedrooms === null
-          ? null
-          : Number(row.bedrooms),
+      bedrooms: row.bedrooms === null ? null : Number(row.bedrooms),
       images: row.images,
       withheldFields: row.withheld_fields,
       display: display(
