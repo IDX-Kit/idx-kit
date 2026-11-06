@@ -4,6 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import pg from 'pg';
+import { FixtureConnector } from '../../packages/engine/src/connectors/fixture.ts';
+import { seed } from '../../packages/engine/src/db/seed.ts';
 import { contract, valid, validateResponse } from './contract.ts';
 import { execute, keyCommand, startEngine } from './runtime.ts';
 
@@ -103,6 +105,50 @@ test('real HTTP listing and key acceptance', { timeout: 90_000 }, async t => {
     }
     t.diagnostic(results[0] && !results[1] && !results[2] ? 'Drift detects both negative controls; JSON Schema additionally checks every error path.' :
       'Drift cannot prove all required response controls; pinned JSON Schema 2020-12 validation checks every response and required header.');
+  });
+  await t.test('ingestion removes withheld addresses from image alt and every display context', async () => {
+    const fixtures = await new FixtureConnector().read();
+    const unsafe = structuredClone(fixtures);
+    const record = unsafe.listings[1];
+    const street = record.source.Address!.line1;
+    const hidden = '/api/v1/listings/lst_demo_0002';
+    const visibleStreet = unsafe.listings[0].source.Address!.line1;
+    unsafe.listings[0].source.Images![0].alt = `Synthetic illustration of ${visibleStreet}`;
+    const block = (id: string) => ({
+      id, text: `Synthetic disclosure for ${street}.`, placement: 'pageFooter', prominence: 'normal',
+      image: { url: '/media/synthetic-house-002.svg', alt: `Synthetic icon for ${street.toUpperCase()}` }
+    });
+    record.source.Images![0].alt = `Synthetic illustration of ${street.toUpperCase()}`;
+    record.blocks.push(block('listing_address'));
+    record.pageBlocks.push(block('page_address'));
+    unsafe.feeds[0].blocks.push(block('feed_address'));
+    try {
+      await seed(db, unsafe);
+      const { body, text } = await request(hidden);
+      assert.equal(body.data.address, null);
+      assert.deepEqual(body.data.withheldFields, ['address']);
+      assert.ok(!text.toLowerCase().includes(street.toLowerCase()));
+      assert.equal(body.data.images[0].alt, 'Synthetic illustration of Address withheld');
+      for (const [blocks, id] of [[body.data.display.blocks, 'listing_address'],
+        [body.display.blocks, 'feed_address'], [body.display.blocks, 'page_address']] as const) {
+        const disclosure = blocks.find((item: any) => item.id === id);
+        assert.equal(disclosure.text, 'Synthetic disclosure for Address withheld.');
+        assert.equal(disclosure.image.alt, 'Synthetic icon for Address withheld');
+      }
+      // Shared feed disclosures must also be safe when another listing is requested.
+      const visible = await request(listing);
+      assert.ok(!visible.text.toLowerCase().includes(street.toLowerCase()));
+      assert.equal(visible.body.data.images[0].alt, `Synthetic illustration of ${visibleStreet}`);
+      for (const table of ['listings', 'feeds']) {
+        const stored = (await db.query(`SELECT * FROM idx.${table}`)).rows;
+        assert.ok(!JSON.stringify(stored).toLowerCase().includes(street.toLowerCase()));
+      }
+      for (const encoded of [street, encodeURIComponent(street)]) {
+        record.blocks.at(-1)!.image!.url = `/media/${encoded}.svg`;
+        await assert.rejects(seed(db, unsafe), /Withheld address in media reference/);
+        assert.ok(!(await request(hidden)).text.toLowerCase().includes(street.toLowerCase()));
+      }
+    } finally { await seed(db, fixtures); }
   });
   await t.test('null facts and withholding names have distinct meanings; hidden address is absent everywhere', async () => {
     const { body, text } = await request('/api/v1/listings/lst_demo_0002');

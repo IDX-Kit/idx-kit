@@ -3,15 +3,22 @@ import pg from 'pg';
 import { FixtureConnector } from '../connectors/fixture.ts';
 import type { Fixtures } from '../connectors/fixture.ts';
 import { normalize } from '../domain/normalize.ts';
+import { addressProtection } from '../domain/withholding.ts';
 import { upsertListing } from './listings.ts';
 
 export async function seed(client: pg.Client, fixtures: Fixtures) {
   await client.query('BEGIN');
   try {
-    for (const feed of fixtures.feeds) await client.query(`INSERT INTO idx.feeds VALUES ($1,$2,$3,$4,$5)
+    for (const feed of fixtures.feeds) {
+      // Feed disclosures are shared: protect every withheld source address in this feed.
+      const blocks = fixtures.listings.filter(record => record.feedId === feed.id &&
+        record.source.InternetAddressDisplayYN === false).reduce((blocks, record) =>
+        addressProtection(record.source.Address).blocks(blocks), feed.blocks);
+      await client.query(`INSERT INTO idx.feeds VALUES ($1,$2,$3,$4,$5)
       ON CONFLICT (id) DO UPDATE SET refreshed_at=EXCLUDED.refreshed_at, expires_at=EXCLUDED.expires_at,
         display_blocks=EXCLUDED.display_blocks, rules_version=EXCLUDED.rules_version`,
-    [feed.id, feed.refreshedAt, feed.expiresAt, JSON.stringify(feed.blocks), feed.rulesVersion]);
+      [feed.id, feed.refreshedAt, feed.expiresAt, JSON.stringify(blocks), feed.rulesVersion]);
+    }
     for (const site of fixtures.sites) {
       await client.query('INSERT INTO idx.sites VALUES ($1) ON CONFLICT DO NOTHING', [site.id]);
       for (const feedId of site.feedIds) await client.query(

@@ -1,4 +1,5 @@
 import type { Listing, DisplayBlock } from '../../../client/src/generated.ts';
+import { addressProtection } from './withholding.ts';
 
 export interface FixtureRecord {
   feedId: string;
@@ -38,18 +39,19 @@ export function normalize(record: FixtureRecord) {
     !/^[A-Z]{2}$/.test(source.Address.country))) throw new Error('Invalid address');
   if (source.Images?.some(image => !image || typeof image.url !== 'string' ||
     typeof image.alt !== 'string' || !image.alt.length)) throw new Error('Invalid image');
+  const protection = addressProtection(source.InternetAddressDisplayYN ? null : source.Address);
   const facts: Pick<Listing, 'synthetic' | 'status' | 'price' | 'address' | 'bedrooms' | 'images' | 'withheldFields'> = {
     synthetic: true,
     status: source.StandardStatus,
     price: source.ListPrice === null ? null : { amount: source.ListPrice, currency: 'USD' },
     address: source.InternetAddressDisplayYN ? source.Address : null,
     bedrooms: source.BedroomsTotal,
-    images: source.Images,
+    images: source.Images?.map(protection.image) ?? null,
     withheldFields: source.InternetAddressDisplayYN ? [] : ['address']
   };
   return { feedId: record.feedId, sourceKey: source.ListingKey, publicId: record.publicId,
     facts, entireListingDisplay: source.InternetEntireListingDisplayYN,
-    blocks: record.blocks, pageBlocks: record.pageBlocks,
+    blocks: protection.blocks(record.blocks), pageBlocks: protection.blocks(record.pageBlocks),
     sourceUpdatedAt: record.sourceUpdatedAt, ingestedAt: record.ingestedAt };
 }
 export type NormalizedListing = ReturnType<typeof normalize>;
