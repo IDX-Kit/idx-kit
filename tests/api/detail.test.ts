@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
+import type { DisplayBlock } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { contract, valid, validateResponse } from "./contract.ts";
@@ -143,7 +144,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       const closed = await request("/api/v1/listings/lst_demo_0003");
       assert.equal(closed.body.data.status, "closed");
       assert.deepEqual(
-        closed.body.display.blocks.map((block: any) => block.id),
+        closed.body.display.blocks.map((block: DisplayBlock) => block.id),
         ["synthetic_notice", "closed_information"],
       );
     },
@@ -287,7 +288,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           [body.display.blocks, "feed_address"],
           [body.display.blocks, "page_address"],
         ] as const) {
-          const disclosure = blocks.find((item: any) => item.id === id);
+          const disclosure = blocks.find((item: DisplayBlock) => item.id === id);
           assert.equal(
             disclosure.text,
             "Synthetic disclosure for Address withheld.",
@@ -357,13 +358,13 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(hiddenBody.data.display.blocks.at(-1).image.url, safeUrl);
         assert.deepEqual(
           hiddenBody.display.blocks
-            .filter((item: any) => item.id === "safe_media")
-            .map((item: any) => item.image.url),
+            .filter((item: DisplayBlock) => item.id === "safe_media")
+            .map((item: DisplayBlock) => item.image!.url),
           [safeUrl, safeUrl],
         );
         assert.equal(
           visibleBody.display.blocks.find(
-            (item: any) => item.id === "safe_media",
+            (item: DisplayBlock) => item.id === "safe_media",
           ).image.url,
           safeUrl,
         );

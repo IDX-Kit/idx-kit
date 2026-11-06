@@ -1,5 +1,5 @@
 import type pg from "pg";
-import type { DisplayBlock, Listing } from "@idx-kit/client/src/generated.ts";
+import type { DisplayBlock, Listing } from "@idx-kit/client";
 import { HttpProblem } from "../http/problem.ts";
 import { searchListings } from "./search.ts";
 import type { SearchQuery } from "../domain/search-query.ts";

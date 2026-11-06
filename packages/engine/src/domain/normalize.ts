@@ -1,4 +1,4 @@
-import type { Listing, DisplayBlock } from "@idx-kit/client/src/generated.ts";
+import type { Listing, DisplayBlock } from "@idx-kit/client";
 import { addressProtection } from "./withholding.ts";
 
 export interface FixtureRecord {

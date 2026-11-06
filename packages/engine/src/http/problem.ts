@@ -1,4 +1,4 @@
-import type { Problem } from "@idx-kit/client/src/generated.ts";
+import type { Problem } from "@idx-kit/client";
 
 export class HttpProblem extends Error {
   readonly status: number;

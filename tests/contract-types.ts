@@ -1,4 +1,4 @@
-import type { Listing } from "@idx-kit/client/src/generated.ts";
+import type { Listing } from "@idx-kit/client";
 import type { components } from "../.generated/compat.ts";
 
 type CompatibleListing = components["schemas"]["Listing"];

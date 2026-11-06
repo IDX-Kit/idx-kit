@@ -1,4 +1,4 @@
-import type { DisplayBlock, Listing } from "@idx-kit/client/src/generated.ts";
+import type { DisplayBlock, Listing } from "@idx-kit/client";
 
 // Apply while the connector still has the source address; never retain it in public facts.
 export function addressProtection(address: Listing["address"]) {

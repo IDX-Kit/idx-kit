@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchemaObject } from "ajv";
 import addFormats from "ajv-formats";
 import { parse } from "yaml";
 
@@ -12,17 +13,17 @@ export const contract = parse(
 );
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 addFormats.default(ajv);
-const dereference = (value: any): any =>
+const dereference = (value: AnySchemaObject): AnySchemaObject =>
   value.$ref
     ? dereference(
         value.$ref
           .slice(2)
           .split("/")
-          .reduce((object: any, name: string) => object[name], contract),
+          .reduce((object: AnySchemaObject, name: string) => object[name], contract),
       )
     : value;
 const validators = new Map();
-export function valid(schema: any, value: unknown) {
+export function valid(schema: AnySchemaObject, value: unknown) {
   const key = JSON.stringify(schema);
   if (!validators.has(key))
     validators.set(
@@ -45,7 +46,7 @@ export function validateResponse(
       contract.components.responses.Problem,
   );
   for (const [name, value] of Object.entries(definition.headers)) {
-    const header = dereference(value);
+    const header = dereference(value as AnySchemaObject);
     const actual = response.headers.get(name);
     if (header.required)
       assert.notEqual(actual, null, `Required header: ${name}`);

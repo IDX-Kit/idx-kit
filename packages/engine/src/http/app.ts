@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { DiscoveryResponse } from "@idx-kit/client/src/generated.ts";
+import type { DiscoveryResponse } from "@idx-kit/client";
 import type { Repository } from "../db/read.ts";
 import { listingDetail } from "../domain/detail.ts";
 import { listingSearch } from "../domain/search.ts";

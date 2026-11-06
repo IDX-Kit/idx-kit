@@ -2,7 +2,7 @@ import type {
   Display,
   DisplayBlock,
   ListingResponse,
-} from "@idx-kit/client/src/generated.ts";
+} from "@idx-kit/client";
 import type { ListingRow } from "../db/read.ts";
 import { HttpProblem } from "../http/problem.ts";
 

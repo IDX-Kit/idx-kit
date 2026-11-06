@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
+import type { DisplayBlock, Listing, SearchResponse } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { validateResponse } from "./contract.ts";
@@ -111,9 +112,9 @@ test(
       });
       return { body, response, text };
     }
-    const ids = (body: any): string[] => body.data.map((item: any) => item.id);
+    const ids = (body: SearchResponse): string[] => body.data.map((item: Listing) => item.id);
     async function browse(query: string, initialCursor: string | null = null) {
-      const data: any[] = [];
+      const data: Listing[] = [];
       let cursor: string | null = initialCursor;
       do {
         const { body } = await request(
@@ -181,7 +182,7 @@ test(
         );
         const all = (await request("limit=50")).body;
         assert.equal(
-          all.data.find((item: any) => item.id === "lst_demo_0001").price
+          all.data.find((item: Listing) => item.id === "lst_demo_0001").price
             .currency,
           "CAD",
         );
@@ -199,7 +200,7 @@ test(
         const known = (await request("minPrice=0&minBedrooms=0&limit=50")).body;
         assert.ok(
           known.data.every(
-            (item: any) =>
+            (item: Listing) =>
               item.price !== null &&
               item.price.currency === "USD" &&
               item.bedrooms !== null,
@@ -243,8 +244,8 @@ test(
             ["lst_demo_0004", "lst_demo_0005"],
           );
           for (let i = 1; i < rows.length - 2; i++) {
-            const a = Number(rows[i - 1].price.amount),
-              b = Number(rows[i].price.amount);
+            const a = Number(rows[i - 1].price!.amount),
+              b = Number(rows[i].price!.amount);
             assert.ok(sort === "price" ? a <= b : a >= b);
           }
           const full = (await request(`sort=${sort}&limit=50`)).body;
@@ -402,7 +403,7 @@ test(
         assert.equal(empty.display.blocks[0].id, "synthetic_notice");
         const result = await request("limit=50");
         const hidden = result.body.data.find(
-          (item: any) => item.id === "lst_demo_0002",
+          (item: Listing) => item.id === "lst_demo_0002",
         );
         assert.equal(hidden.address, null);
         assert.deepEqual(hidden.withheldFields, ["address"]);
@@ -411,7 +412,7 @@ test(
         );
         assert.ok(
           result.body.display.blocks.some(
-            (block: any) => block.id === "closed_information",
+            (block: DisplayBlock) => block.id === "closed_information",
           ),
         );
         for (const item of result.body.data) {
@@ -468,7 +469,7 @@ test(
         );
         assert.deepEqual(ids(next.body), ["lst_demo_0008"]);
         assert.ok(
-          rows.find((item) => item.id === "lst_demo_0005").price.amount ===
+          rows.find((item) => item.id === "lst_demo_0005")!.price!.amount ===
             "600000",
         );
         await db.query(

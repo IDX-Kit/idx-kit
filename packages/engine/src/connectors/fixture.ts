@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { FixtureRecord } from "../domain/normalize.ts";
-import type { DisplayBlock } from "@idx-kit/client/src/generated.ts";
+import type { DisplayBlock } from "@idx-kit/client";
 
 export interface Fixtures {
   feeds: {

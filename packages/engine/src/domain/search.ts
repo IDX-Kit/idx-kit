@@ -1,4 +1,4 @@
-import type { SearchResponse } from "@idx-kit/client/src/generated.ts";
+import type { SearchResponse } from "@idx-kit/client";
 import type { searchListings } from "../db/search.ts";
 import { listingDetail } from "./detail.ts";
 import { searchCursor } from "./search-query.ts";
