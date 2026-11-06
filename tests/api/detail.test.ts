@@ -52,7 +52,7 @@ test('real HTTP listing and key acceptance', { timeout: 90_000 }, async t => {
   await t.test('anonymous discovery advertises only implemented capabilities and exact release contract', async () => {
     const { body } = await request('/api', 200, null);
     assert.equal(body.data.engineVersion, '0.1.0');
-    assert.deepEqual(body.data.supportedVersions, [{ major: 'v1', contractVersion: '1.0.0', capabilities: ['listingDetail', 'displayRulesV1'] }]);
+    assert.deepEqual(body.data.supportedVersions, [{ major: 'v1', contractVersion: '1.0.0', capabilities: ['listingSearch', 'listingDetail', 'displayRulesV1'] }]);
     assert.deepEqual((await request('/api/v1/openapi.json', 200, null)).body, contract);
   });
   await t.test('detail translates facts, ordered display and feed freshness without private columns', async () => {
@@ -265,7 +265,7 @@ test('real HTTP listing and key acceptance', { timeout: 90_000 }, async t => {
     assert.equal((await request('/api/listings/input-marker', 400)).body.code, 'api_version_required');
     assert.equal((await request('/api/v9/listings/input-marker', 404)).body.code, 'api_version_unsupported');
     assert.equal((await request('/api/v1/input-marker', 404)).body.code, 'not_found');
-    await request('/api/v1/listings', 404);
+    await request('/api/v1/listings');
     for (const path of ['/api', '/api/v1/openapi.json', listing]) {
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']) {
         assert.equal((await request(path, 405, key.secret, { method, ...(method === 'POST' ? { body: 'body-private-marker' } : {}) })).response.headers.get('Allow'), 'GET');
@@ -315,7 +315,7 @@ test('real HTTP listing and key acceptance', { timeout: 90_000 }, async t => {
       assert.equal(typeof log.duration, 'number');
       assert.ok(log.duration >= 0);
       assert.deepEqual(Object.keys(log).sort(), ['method', 'route', 'status', 'code', 'duration', 'requestId', 'engineRelease'].sort());
-      assert.ok(['/api', '/api/*', '/api/v1/openapi.json', detailPath].includes(log.route));
+      assert.ok(['/api', '/api/*', '/api/v1/openapi.json', '/api/v1/listings', detailPath].includes(log.route));
     }
   });
 });

@@ -57,7 +57,8 @@ jobs:
           npm test
           npm run demo:db:migrate
           npm run demo:seed
-      - name: Prove real HTTP responses and key lifecycle against the contract
+      # Search runs first; the detail suite stops the disposable database at its end.
+      - name: Prove search, live paging, detail and key lifecycle against the contract
         env:
           IDX_TEST_PGDATA: ${{ runner.temp }}/idx11-pg
         run: npm run test:api

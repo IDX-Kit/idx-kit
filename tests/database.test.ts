@@ -23,7 +23,7 @@ test('fresh PostgreSQL database and transactional fixture loading', async t => {
     assert.equal((await db.query("SELECT to_regnamespace('idx') AS schema")).rows[0].schema, null);
     await migrate(db);
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM public.schema_migrations')).rows[0].count, 1);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM public.schema_migrations')).rows[0].count, 2);
     const owners = await db.query("SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'");
     assert.deepEqual(owners.rows, [{ tableowner: 'idx_migration' }]);
     assert.equal((await db.query('SELECT count(*)::int AS count FROM idx.listings')).rows[0].count, 0);
