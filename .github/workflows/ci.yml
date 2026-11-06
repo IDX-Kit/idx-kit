@@ -68,6 +68,7 @@ jobs:
           SQL
           psql -h 127.0.0.1 -p 55432 -U postgres -d idx_demo -v ON_ERROR_STOP=1 -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
       - name: Prove database acceptance and command entry points
+        id: acceptance
         run: |
           mkdir -p "$IDX_TEST_LOG_DIR"
           npm test 2>&1 | tee "$IDX_TEST_LOG_DIR/unit.log"
@@ -85,7 +86,7 @@ jobs:
           IDX_TEST_PGDATA: ${{ runner.temp }}/idx11-pg
         run: npm run test:api 2>&1 | tee "$IDX_TEST_LOG_DIR/api.log"
       - name: Reject credentials in every captured engine and site log
-        if: always()
+        if: always() && steps.acceptance.outcome != 'skipped'
         run: node scripts/check-logs.mjs
       - name: Stop only the task cluster
         if: always()

@@ -350,8 +350,14 @@ test(
         assert.equal(Buffer.byteLength(query), 1800);
         const rows = await browse(query);
         assert.equal(rows.length, licensedCount - 1);
-        for (const invalid of ["after=" + "a".repeat(2049), "maxPrice=" + "9".repeat(2049)]) {
-          assert.equal((await request(invalid, 400)).body.code, "invalid_query");
+        for (const invalid of [
+          "after=" + "a".repeat(2049),
+          "maxPrice=" + "9".repeat(2049),
+        ]) {
+          assert.equal(
+            (await request(invalid, 400)).body.code,
+            "invalid_query",
+          );
         }
       },
     );
