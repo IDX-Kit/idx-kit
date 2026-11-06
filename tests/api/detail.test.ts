@@ -78,6 +78,12 @@ test('real HTTP listing and key acceptance', { timeout: 90_000 }, async t => {
       assert.throws(() => validateResponse(detailPath, new Response(null, { headers }), good.body), /Required header/);
     }
   });
+  await t.test('unsupported display rules suppress the listing', async () => {
+    await db.query("UPDATE idx.feeds SET rules_version='2' WHERE id='feed_demo_primary'");
+    const result = await request(listing, 503);
+    assert.equal(result.body.code, 'display_rules_unavailable');
+    await db.query("UPDATE idx.feeds SET rules_version='1' WHERE id='feed_demo_primary'");
+  });
   await t.test('drift capability probe uses a real response and a removed-fact negative control', async () => {
     const capture = (body: unknown, headers = good.response.headers) => ({ log: { version: '1.2', creator: { name: 'IDX Kit', version: '1' }, entries: [{
       request: { method: 'GET', url: `http://127.0.0.1:8787${listing}`, headers: [], queryString: [] },

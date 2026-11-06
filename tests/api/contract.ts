@@ -6,7 +6,7 @@ import { parse } from 'yaml';
 
 export const contract = parse(await readFile(new URL('../../openapi/v1/openapi.yaml', import.meta.url), 'utf8'));
 const ajv = new Ajv2020({ strict: false, allErrors: true });
-addFormats(ajv);
+addFormats.default(ajv);
 const dereference = (value: any): any => value.$ref ? dereference(value.$ref.slice(2).split('/').reduce(
   (object: any, name: string) => object[name], contract)) : value;
 const validators = new Map();
