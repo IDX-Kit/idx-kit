@@ -1,3 +1,4 @@
+import { captureLog } from "../logs.ts";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { spawn } from "node:child_process";
@@ -33,9 +34,11 @@ async function startSite(base = "http://127.0.0.1:8787", port = 4321) {
   let logs = "";
   child.stdout.on("data", (chunk) => {
     logs += chunk;
+    captureLog("site", String(chunk));
   });
   child.stderr.on("data", (chunk) => {
     logs += chunk;
+    captureLog("site", String(chunk));
   });
   const exited = once(child, "exit");
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -872,6 +875,22 @@ test.describe.serial("SSR property pages through the public engine", () => {
       await expect(page.locator("[data-listing]").first()).toBeVisible();
     });
 
+  test("wrong server key logs the engine status and request ID and shows a generic page", async ({ request }) => {
+    const saved = secret;
+    secret = "idx_secret_synthetic_wrong_key";
+    const wrong = await startSite("http://127.0.0.1:8787", 4322);
+    secret = saved;
+    try {
+      expect(await raw(request, property, 502, "http://127.0.0.1:4322")).toContain("Unable to load this listing");
+      expect(await raw(request, "/search", 502, "http://127.0.0.1:4322")).toContain("Unable to load these results");
+      expect(wrong.logs()).toContain('"category":"key_problem"');
+      expect(wrong.logs()).toMatch(/"upstreamStatus":401,"requestId":"[0-9a-f-]{36}"/);
+      expect(wrong.logs()).toContain('"path":"/api/v1/listings/{listingId}"');
+    } finally {
+      await wrong.stop();
+    }
+  });
+
   test("stopped engine gives safe error pages and captured site logs contain no key", async ({
     request,
   }) => {
@@ -892,6 +911,9 @@ test.describe.serial("SSR property pages through the public engine", () => {
       "Authorization",
     ])
       expect(html).not.toContain(value);
+    expect(site.logs()).toContain('"category":"engine_outage"');
+    expect(site.logs()).toMatch(/"errorType":"(TypeError|TimeoutError)"/);
+    expect(site.logs()).toContain('"upstreamStatus":null');
     expect(site.logs()).not.toContain(secret);
   });
 });

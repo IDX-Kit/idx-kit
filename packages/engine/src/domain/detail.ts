@@ -24,22 +24,21 @@ export function listingDetail(row: ListingRow): ListingResponse {
       expiresAt: row.expires_at.toISOString(),
     },
   });
-  const withheld = (name: string) => row.withheld_fields.includes(name);
   return {
     data: {
       id: row.id,
       synthetic: row.synthetic,
-      status: withheld("status") ? null : row.status,
+      status: row.status,
       price:
-        withheld("price") || row.price === null
+        row.price === null
           ? null
           : { amount: row.price, currency: row.currency! },
-      address: withheld("address") ? null : row.address,
+      address: row.address,
       bedrooms:
-        withheld("bedrooms") || row.bedrooms === null
+        row.bedrooms === null
           ? null
           : Number(row.bedrooms),
-      images: withheld("images") ? null : row.images,
+      images: row.images,
       withheldFields: row.withheld_fields,
       display: display(
         row.display_blocks,

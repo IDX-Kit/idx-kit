@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { open, unlink } from "node:fs/promises";
 import pg from "pg";
 import { hashSecret, scopes } from "../domain/keys.ts";
+import { logFailure } from "../log.ts";
 
 const [action, subject, grants, path, ...extra] = process.argv.slice(2);
 const requested = grants?.split(",") ?? [];
@@ -60,12 +61,10 @@ if (
     }
     await db.query("COMMIT");
     process.stdout.write(id + "\n");
-  } catch {
-    await db.query("ROLLBACK").catch(() => {});
-    if (createdFile) await unlink(path!).catch(() => {});
-    process.stderr.write(
-      "Key operation failed. Check the Site, key, scopes and unused output path.\n",
-    );
+  } catch (error) {
+    logFailure("key.operation", error);
+    await db.query("ROLLBACK").catch((cause: unknown) => logFailure("key.rollback", cause));
+    if (createdFile) await unlink(path!).catch((cause: unknown) => logFailure("key.cleanup", cause));
     process.exitCode = 1;
   } finally {
     await db.end();

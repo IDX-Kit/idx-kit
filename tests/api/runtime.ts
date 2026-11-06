@@ -1,3 +1,4 @@
+import { captureLog, registerSecret } from "../logs.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -22,12 +23,16 @@ export async function keyCommand(
     subject,
     ...(scopes ? [scopes, path] : []),
   ];
-  const { stdout, stderr } = await execute("npm", args);
+  const { stdout, stderr } = await execute("npm", args).catch((error) => {
+    captureLog("key", error.stderr ?? "");
+    throw error;
+  });
   assert.equal(stderr, "");
   const id = stdout.trim();
   if (!scopes) return { id, secret: "", path };
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   const secret = (await readFile(path, "utf8")).trim();
+  registerSecret(secret);
   assert.ok(/^idx_secret_[A-Za-z0-9_-]{43}$/.test(secret));
   assert.equal(
     Buffer.from(secret.slice("idx_secret_".length), "base64url").length,
@@ -45,6 +50,7 @@ export async function startEngine() {
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
+    captureLog("engine", String(chunk));
   });
   const exited = once(child, "exit");
   const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);

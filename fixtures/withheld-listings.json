@@ -1,0 +1,162 @@
+[
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_withheld_0000",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic withheld price",
+      "StandardStatus": "active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "101 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    },
+    "withheldFields": [
+      "price"
+    ]
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_withheld_0001",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic withheld status",
+      "StandardStatus": "active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "101 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    },
+    "withheldFields": [
+      "status"
+    ]
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_withheld_0002",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic withheld bedrooms",
+      "StandardStatus": "active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "101 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    },
+    "withheldFields": [
+      "bedrooms"
+    ]
+  },
+  {
+    "feedId": "feed_demo_primary",
+    "publicId": "lst_withheld_0003",
+    "synthetic": true,
+    "sourceUpdatedAt": "2026-11-01T00:00:00Z",
+    "ingestedAt": "2026-11-01T00:05:00Z",
+    "blocks": [
+      {
+        "id": "synthetic_broker",
+        "text": "Synthetic Example Brokerage. Invented listing attribution.",
+        "placement": "afterListing",
+        "prominence": "largestListingText"
+      }
+    ],
+    "pageBlocks": [],
+    "source": {
+      "ListingKey": "Synthetic withheld images",
+      "StandardStatus": "active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": 1,
+      "Address": {
+        "line1": "101 Imaginary Lantern Lane",
+        "city": "Example Springs",
+        "region": "NC",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "Images": [
+        {
+          "url": "/media/synthetic-house-001.svg",
+          "alt": "Invented synthetic house illustration; no real property"
+        }
+      ],
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true
+    },
+    "withheldFields": [
+      "images"
+    ]
+  }
+]

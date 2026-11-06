@@ -4,6 +4,7 @@ import pg from "pg";
 import { parse } from "yaml";
 import { repository } from "../db/read.ts";
 import { createApp } from "../http/app.ts";
+import { failureFields, logLine } from "../log.ts";
 
 if (!process.env.RUNTIME_DATABASE_URL)
   throw new Error("RUNTIME_DATABASE_URL is required");
@@ -14,8 +15,8 @@ const pool = new pg.Pool({
   query_timeout: 2000,
   statement_timeout: 2000,
 });
-pool.on("error", () => {
-  /* A disconnected idle client is replaced on the next request. */
+pool.on("error", (error) => {
+  console.error(logLine({ operation: "database.idle", ...failureFields(error) }));
 });
 const contract = parse(
   await readFile(
@@ -26,9 +27,7 @@ const contract = parse(
 const { version } = JSON.parse(
   await readFile(new URL("../../package.json", import.meta.url), "utf8"),
 );
-const app = createApp(repository(pool), contract, version, (line) =>
-  process.stderr.write(line + "\n"),
-);
+const app = createApp(repository(pool), contract, version);
 const server = serve(
   { fetch: app.fetch, hostname: "127.0.0.1", port: 8787 },
   () => process.stdout.write("Engine ready\n"),

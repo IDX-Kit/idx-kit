@@ -9,7 +9,7 @@ test("each fixture file has original synthetic provenance and a matching checksu
   assert.match(rights, /original synthetic data created for IDX Kit/);
   assert.match(rights, /IDX Kit maintainers/);
   assert.match(rights, /Source: invented/);
-  for (const name of ["feeds.json", "sites.json", "listings.json"]) {
+  for (const name of ["feeds.json", "sites.json", "listings.json", "withheld-listings.json"]) {
     const bytes = await readFile(new URL(name, directory));
     assert.ok(
       rights.includes(

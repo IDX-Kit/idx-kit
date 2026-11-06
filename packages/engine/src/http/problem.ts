@@ -1,11 +1,15 @@
 import type { Problem } from "@idx-kit/client";
+import { STATUS_CODES } from "node:http";
 
 export class HttpProblem extends Error {
   readonly status: number;
   readonly code: string;
   readonly detail: string;
-  constructor(status: number, code: string, detail: string) {
-    super(code);
+  readonly operation?: string;
+  constructor(status: number, code: string, detail: string, options?: { cause: unknown; operation: string }) {
+    super(code, options);
+    this.name = "HttpProblem";
+    this.operation = options?.operation;
     this.status = status;
     this.code = code;
     this.detail = detail;
@@ -20,17 +24,7 @@ export function problemResponse(error: unknown, requestId: string) {
           "internal_error",
           "The request could not be completed.",
         );
-  const title =
-    (
-      {
-        400: "Bad Request",
-        401: "Unauthorized",
-        403: "Forbidden",
-        404: "Not Found",
-        405: "Method Not Allowed",
-        503: "Service Unavailable",
-      } as Record<number, string>
-    )[status] ?? "Internal Server Error";
+  const title = STATUS_CODES[status] ?? STATUS_CODES[500]!;
   const body: Problem = {
     type: "about:blank",
     title,

@@ -15,7 +15,7 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
         .filter(
           (record) =>
             record.feedId === feed.id &&
-            record.source.InternetAddressDisplayYN === false,
+            (record.source.InternetAddressDisplayYN === false || record.withheldFields?.includes("address")),
         )
         .reduce(
           (blocks, record) =>

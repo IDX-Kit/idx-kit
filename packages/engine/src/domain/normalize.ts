@@ -5,6 +5,7 @@ export interface FixtureRecord {
   feedId: string;
   publicId: string;
   synthetic: true;
+  withheldFields?: ("status" | "price" | "address" | "bedrooms" | "images")[];
   sourceUpdatedAt: string | null;
   ingestedAt: string;
   blocks: DisplayBlock[];
@@ -85,9 +86,8 @@ export function normalize(record: FixtureRecord) {
     )
   )
     throw new Error("Invalid image");
-  const protection = addressProtection(
-    source.InternetAddressDisplayYN ? null : source.Address,
-  );
+  const hideAddress = !source.InternetAddressDisplayYN || record.withheldFields?.includes("address");
+  const protection = addressProtection(hideAddress ? source.Address : null);
   const facts: Pick<
     Listing,
     | "synthetic"
@@ -104,11 +104,17 @@ export function normalize(record: FixtureRecord) {
       source.ListPrice === null
         ? null
         : { amount: source.ListPrice, currency: "USD" },
-    address: source.InternetAddressDisplayYN ? source.Address : null,
+    address: hideAddress ? null : source.Address,
     bedrooms: source.BedroomsTotal,
     images: source.Images?.map(protection.image) ?? null,
-    withheldFields: source.InternetAddressDisplayYN ? [] : ["address"],
+    withheldFields: hideAddress ? ["address"] : [],
   };
+  for (const field of record.withheldFields ?? []) {
+    if (!["status", "price", "address", "bedrooms", "images"].includes(field))
+      throw new Error("Invalid withheld field");
+    facts[field] = null;
+  }
+  facts.withheldFields = [...new Set([...facts.withheldFields, ...(record.withheldFields ?? [])])];
   return {
     feedId: record.feedId,
     sourceKey: source.ListingKey,
