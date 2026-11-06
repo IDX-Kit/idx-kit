@@ -7,8 +7,9 @@ your MLS.
 
 ## Status
 
-This project is early. The engine serves discovery, its contract and authorized
-synthetic listing detail. Search, inquiries and the demo website are not implemented.
+This project is early. The engine serves discovery, its contract, authorized
+synthetic listing detail and search with paging. Inquiries and the demo website
+are not implemented.
 
 The first milestone is a demo with clearly fake listings. A visitor goes from
 a guide page to search to a property page, then sends an inquiry. The demo
@@ -44,8 +45,8 @@ from `openapi/v1/openapi.yaml`; regenerate it with `npm run contract:generate`.
 The checks also start the engine and validate real HTTP responses and required
 headers against the checked-in contract, with negative controls. They cover key
 creation, revocation and rotation, display metadata, withholding, version and input
-errors, redacted logs and a stopped database. They do not cover website rendering,
-search, inquiries, real feeds or deployment. All execution checks run in CI.
+errors, search and paging, redacted logs and a stopped database. They do not cover
+website rendering, inquiries, real feeds or deployment. All execution checks run in CI.
 
 ## Engine and secret keys
 
