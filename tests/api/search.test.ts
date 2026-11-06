@@ -618,14 +618,29 @@ test(
           node,
           ...(node.Plans ?? []).flatMap(flatten),
         ];
+        // A page smaller than the data tests ordered seeks rather than a plan
+        // that collects almost the entire tiny contract fixture into a bitmap.
+        const extended = structuredClone(fixtures);
+        for (let i = 0; i < 2000; i++) {
+          const record = structuredClone(fixtures.listings[0]);
+          record.publicId = `lst_search_plan_${i}`;
+          record.source.ListingKey = `Synthetic plan position ${i}`;
+          record.source.ListPrice = String(350000 + i * 100);
+          extended.listings.push(record);
+        }
+        await seed(db, extended);
+        await db.query("ANALYZE idx.listings, idx.source_mappings");
         await db.query("BEGIN");
         try {
-          await db.query("SET LOCAL enable_seqscan=off");
           for (const sort of ["price", "-price"]) {
+            const boundary = {
+              price: sort === "price" ? "590000" : "0",
+              id: "lst_demo_0023",
+            };
             for (const last of [
               null,
               { price: "425000", id: "lst_demo_0002" },
-              { price: "590000", id: "lst_demo_0023" },
+              boundary,
               { price: null, id: "lst_demo_0004" },
             ]) {
               let scans = 0;
@@ -668,8 +683,10 @@ test(
                 searchSchema.parse({ sort, limit: "50" }),
                 "site_demo_primary",
               );
-              await searchListings(inspecting, { ...query, last });
+              const result = await searchListings(inspecting, { ...query, last });
               assert.ok(scans > 0);
+              if (last === boundary)
+                assert.ok(result.rows.some((row) => row.price === null));
             }
           }
         } finally {
