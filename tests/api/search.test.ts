@@ -13,6 +13,7 @@ test('real HTTP search and live continuation acceptance', { timeout: 90_000 }, a
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await db.connect();
   const fixtures = await new FixtureConnector().read();
+  const licensedCount = fixtures.listings.filter(item => item.feedId === 'feed_demo_primary' && item.source.InternetEntireListingDisplayYN).length;
   await seed(db, fixtures);
   const key = await keyCommand(directory, 'create', 'site_demo_primary', 'listings:read');
   const other = await keyCommand(directory, 'create', 'site_demo_other', 'listings:read', 'other');
@@ -100,7 +101,7 @@ test('real HTTP search and live continuation acceptance', { timeout: 90_000 }, a
     await db.query("UPDATE idx.listings SET price=NULL,currency=NULL WHERE id='lst_demo_0005'");
     for (const sort of ['price', '-price']) {
       const rows = await browse(`sort=${sort}&limit=1`);
-      assert.equal(rows.length, 22); assert.equal(new Set(rows.map(item => item.id)).size, 22);
+      assert.equal(rows.length, licensedCount); assert.equal(new Set(rows.map(item => item.id)).size, licensedCount);
       assert.deepEqual(rows.slice(-2).map(item => item.id), ['lst_demo_0004', 'lst_demo_0005']);
       for (let i = 1; i < rows.length - 2; i++) {
         const a = Number(rows[i - 1].price.amount), b = Number(rows[i].price.amount);
@@ -127,7 +128,7 @@ test('real HTTP search and live continuation acceptance', { timeout: 90_000 }, a
       assert.equal(page.meta.page.limit, 50); assert.equal(page.data.length, 50);
       assert.equal(page.meta.page.hasMore, true);
       const next = (await request(`limit=50&after=${page.meta.page.nextCursor}`)).body;
-      assert.equal(next.data.length, 32); assert.equal(next.meta.page.nextCursor, null);
+      assert.equal(next.data.length, licensedCount + 60 - 50); assert.equal(next.meta.page.nextCursor, null);
     }
   });
   await t.test('bad, unknown and duplicate parameters fail clearly without echoing input', async () => {
@@ -174,7 +175,7 @@ test('real HTTP search and live continuation acceptance', { timeout: 90_000 }, a
     await db.query("UPDATE idx.listings SET price=600000 WHERE id='lst_demo_0005'");
     await db.query("UPDATE idx.listings SET entire_listing_display=false WHERE id='lst_demo_0007'");
     const rows = await browse('limit=1', first.meta.page.nextCursor);
-    assert.equal(rows.length, 21);
+    assert.equal(rows.length, licensedCount - 1);
     assert.equal(rows[0].id, 'lst_demo_0008');
     assert.ok(!rows.some(item => item.id === 'lst_demo_0007'));
     const next = await request(`limit=1&after=${first.meta.page.nextCursor}`);
@@ -214,7 +215,7 @@ test('real HTTP search and live continuation acceptance', { timeout: 90_000 }, a
     await request('', 403, key.secret, { headers: { Origin: 'https://synthetic.example.invalid' } });
     assert.equal((await request('', 503, other.secret)).body.code, 'feed_expired');
     await db.query("UPDATE idx.feeds SET expires_at='2099-11-01T12:00:00Z' WHERE id='feed_demo_expired'");
-    assert.deepEqual(ids((await request('', 200, other.secret)).body), ['lst_demo_0024']);
+    assert.deepEqual(ids((await request('', 200, other.secret)).body), ['lst_demo_0023', 'lst_demo_0024']);
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'])
       assert.equal((await request('', 405, key.secret, { method })).response.headers.get('Allow'), 'GET');
   });
