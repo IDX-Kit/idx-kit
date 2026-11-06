@@ -446,6 +446,7 @@ test.describe.serial("SSR property pages through the public engine", () => {
           (error) => error,
         );
         expect(result.code).toBe(1);
+        captureLog("site", result.stderr);
         expect(result.stderr).toContain(
           "requires a reachable engine with API v1 and listingDetail",
         );

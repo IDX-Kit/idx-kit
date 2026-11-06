@@ -16,6 +16,7 @@ test("demo requests use generated operations with server-only authorization and 
   const originalUrl = process.env.IDX_ENGINE_URL;
   const originalSecret = process.env.IDX_SECRET_KEY;
   const secret = "synthetic-test-secret";
+  registerSecret(secret);
   process.env.IDX_ENGINE_URL = "http://127.0.0.1:8787";
   process.env.IDX_SECRET_KEY = secret;
   t.after(() => {

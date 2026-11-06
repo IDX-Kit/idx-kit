@@ -127,7 +127,10 @@ export function engineClient() {
             version.capabilities.includes("listingDetail"),
         )
       ) {
-        throw new PageFailure(502, "unsupported_engine", { requestId });
+        throw new PageFailure(502, "unsupported_engine", {
+          requestId,
+          path: "/api",
+        });
       }
     },
     async listing(id: string) {
