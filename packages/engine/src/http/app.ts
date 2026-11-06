@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { Buffer } from "node:buffer";
 import { bearerAuth } from "hono/bearer-auth";
 import { HTTPException } from "hono/http-exception";
 import { requestId } from "hono/request-id";
@@ -11,6 +12,9 @@ import {
   searchQuery,
   searchSchema,
   invalidQuery,
+  invalidCursor,
+  SEARCH_TERMS_MAX_BYTES,
+  CURSOR_MAX_BYTES,
 } from "../domain/search-query.ts";
 import { hashSecret } from "../domain/keys.ts";
 import { failureFields, logLine } from "../log.ts";
@@ -127,8 +131,13 @@ export function createApp(
           "Use GET on this resource.",
         );
       const url = new URL(c.req.url);
+      // Preserve raw encoding while Node parses each parameter's name.
+      const pairs = url.search.slice(1).split("&");
+      const terms = pairs
+        .filter((pair) => !new URLSearchParams(pair).has("after"))
+        .join("&");
       if (
-        new TextEncoder().encode(url.search.slice(1)).byteLength > 2048 ||
+        Buffer.byteLength(terms) > SEARCH_TERMS_MAX_BYTES ||
         (route !== "/api/v1/listings" && url.searchParams.size)
       )
         throw new HttpProblem(
@@ -136,6 +145,15 @@ export function createApp(
           "invalid_query",
           "The query string is not supported.",
         );
+      const cursors = pairs.filter((pair) =>
+        new URLSearchParams(pair).has("after"),
+      );
+      // Count any extra percent encoding against the same cursor allowance.
+      if (
+        cursors.length === 1 &&
+        Buffer.byteLength(cursors[0]) > "after=".length + CURSOR_MAX_BYTES
+      )
+        throw invalidCursor();
     }
     await next();
   });

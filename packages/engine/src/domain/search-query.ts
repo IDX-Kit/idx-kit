@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { HttpProblem } from "../http/problem.ts";
 
+export const SEARCH_TERMS_MAX_BYTES = 2048;
+// Allow long decimal positions while keeping cursor parsing bounded.
+export const CURSOR_MAX_BYTES = 4096;
+
 const decimal = /^(0|[1-9][0-9]*)(\.[0-9]+)?$/;
 const amount = (value: string) =>
   value.includes(".") ? value.replace(/0+$/, "").replace(/\.$/, "") : value;
@@ -72,6 +76,13 @@ export const searchSchema = z
 export const invalidQuery = () =>
   new HttpProblem(400, "invalid_query", "Use valid, unique search parameters.");
 
+export const invalidCursor = () =>
+  new HttpProblem(
+    400,
+    "cursor_invalid",
+    "The cursor is invalid for this search. Restart the search.",
+  );
+
 export function searchCursor(
   context: SearchContext,
   last: NonNullable<SearchQuery["last"]>,
@@ -101,6 +112,8 @@ export function searchQuery(
   let last: SearchQuery["last"] = null;
   if (after !== undefined) {
     try {
+      if (Buffer.byteLength(after) > CURSOR_MAX_BYTES)
+        throw new Error("Cursor exceeds its byte limit");
       const [price, id] = cursorSchema.parse(
         JSON.parse(Buffer.from(after, "base64url").toString("utf8")),
       );
@@ -108,11 +121,7 @@ export function searchQuery(
       if (searchCursor(context, last) !== after)
         throw new Error("Cursor checksum mismatch");
     } catch {
-      throw new HttpProblem(
-        400,
-        "cursor_invalid",
-        "The cursor is invalid for this search. Restart the search.",
-      );
+      throw invalidCursor();
     }
   }
   return { context, last };

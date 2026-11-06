@@ -10,6 +10,7 @@ import { listingSelect } from "@idx-kit/engine/src/db/read.ts";
 import {
   searchQuery,
   searchSchema,
+  CURSOR_MAX_BYTES,
 } from "@idx-kit/engine/src/domain/search-query.ts";
 import type { FixtureRecord } from "@idx-kit/engine/src/domain/normalize.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
@@ -346,21 +347,45 @@ test(
       },
     );
     await t.test(
-      "queries above the former filter budget page without a server failure",
+      "2048 raw search bytes page unchanged; oversized terms and cursors fail clearly",
       async () => {
-        const query = "maxPrice=" + "9".repeat(1783) + "&limit=1";
-        assert.equal(Buffer.byteLength(query), 1800);
+        const query = "maxPrice=" + "9".repeat(2031) + "&limit=1";
+        assert.equal(Buffer.byteLength(query), 2048);
+        const first = (await request(query)).body;
+        const cursor = first.meta.page.nextCursor;
+        assert.equal(typeof cursor, "string");
         const rows = await browse(query);
         assert.equal(rows.length, licensedCount - 1);
-        for (const invalid of [
-          "after=" + "a".repeat(2049),
-          "maxPrice=" + "9".repeat(2049),
+        const second = (await request(`${query}&after=${cursor}`)).body;
+        for (const continuation of [
+          `%61fter=${cursor}&${query}`,
+          query.replace("&limit=1", `&after=${cursor}&limit=1`),
         ]) {
+          assert.deepEqual((await request(continuation)).body, second);
+        }
+        const oversized = query.replace("maxPrice=", "maxPrice=9");
+        assert.equal(Buffer.byteLength(oversized), 2049);
+        for (const invalid of [oversized, `${oversized}&after=${cursor}`]) {
           assert.equal(
             (await request(invalid, 400)).body.code,
             "invalid_query",
           );
         }
+        const oversizedCursor = "a".repeat(CURSOR_MAX_BYTES + 1);
+        const invalidCursor = await request(
+          `${query}&after=${oversizedCursor}`,
+          400,
+        );
+        assert.equal(invalidCursor.body.code, "cursor_invalid");
+        const encoded = "maxPrice=" + "%39".repeat(677) + "&limit=1";
+        assert.equal(Buffer.byteLength(encoded), 2048);
+        const encodedFirst = (await request(encoded)).body;
+        await request(`${encoded}&after=${encodedFirst.meta.page.nextCursor}`);
+        assert.equal(
+          (await request(encoded.replace("maxPrice=", "maxPrice=9"), 400))
+            .body.code,
+          "invalid_query",
+        );
       },
     );
     await t.test(
@@ -373,6 +398,14 @@ test(
         const result = await request("sort=-price&limit=1");
         assert.equal(result.body.meta.page.hasMore, true);
         assert.equal(typeof result.body.meta.page.nextCursor, "string");
+        assert.ok(
+          Buffer.byteLength(result.body.meta.page.nextCursor) < CURSOR_MAX_BYTES,
+        );
+        const remaining = await browse(
+          "sort=-price&limit=1",
+          result.body.meta.page.nextCursor,
+        );
+        assert.equal(remaining.length, licensedCount - 1);
       },
     );
     await t.test(
