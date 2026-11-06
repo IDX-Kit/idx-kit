@@ -9,7 +9,8 @@ your MLS.
 
 This project is early. The engine serves discovery, its contract, authorized
 synthetic listing detail and search with paging. The plain demo website renders
-property pages through that API. Search pages and inquiries are not implemented.
+guide, search and property pages through the generated API client. Inquiries are
+not implemented.
 
 The first milestone is a demo with clearly fake listings. A visitor goes from
 a guide page to search to a property page, then sends an inquiry. The demo
@@ -47,10 +48,10 @@ headers against the checked-in contract, with negative controls. They cover key
 creation, revocation and rotation, display metadata, withholding, version and input
 errors, search and paging, redacted logs and a stopped database. They do not cover
 inquiries, real feeds or deployment. CI also builds the demo site and checks property
-HTML and no-JavaScript browsing with a real engine and database. All execution checks
-run in CI.
+HTML, search filters, complete Next traversal, exact decimal prices and no-JavaScript
+browsing with a real engine and database. All execution checks run in CI.
 
-## Demo property pages
+## Demo pages
 
 The `examples/demo-site` workspace uses Astro with its Node adapter. After building
 with `npm run demo:site:build`, set `IDX_ENGINE_URL` to the engine origin and
@@ -63,8 +64,16 @@ Do not expose the synthetic demo publicly.
 and feed freshness without browser JavaScript. Unknown display instructions suppress
 the listing. Missing and withdrawn listings return 404, stale feeds return 503, and
 upstream failures show a generic error. HTML and illustration responses use no-store.
-The shared listing renderer is ready for the later search page; no inquiry form,
-deployment or guide is included yet. `npm run test:demo` runs the runner-only browser
+`/` redirects to `/guides/example-springs`, an original invented guide labeled as
+synthetic site content. Its link opens `/search?city=Example%20Springs`. The GET form
+accepts city, whole US dollar price bounds, minimum bedrooms and price order. Next
+preserves those filters and passes the engine's opaque cursor; Back uses browser
+history. The shared renderer includes listing disclosures on each result, and page
+disclosures appear even with no matches. Invalid filters show field guidance, while
+an invalid cursor links to the first page with the same filters. Prices are formatted
+directly from decimal strings. The key stays on the server; all engine requests use
+`@idx-kit/client`, a five-second timeout, no-store and refused redirects. No inquiry
+form or deployment is included. `npm run test:demo` runs the runner-only browser
 checks after building, migrating, seeding and installing the pinned Chromium browser.
 
 ## Engine and secret keys

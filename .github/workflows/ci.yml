@@ -61,7 +61,7 @@ jobs:
         run: |
           npm run demo:site:build
           npx playwright install --with-deps chromium
-      - name: Prove property HTML, display rules and no-JavaScript browser acceptance
+      - name: Prove guide, search, paging and property HTML without JavaScript
         run: npm run test:demo
       # Search runs first; the detail suite stops the disposable database at its end.
       - name: Prove search, live paging, detail and key lifecycle against the contract

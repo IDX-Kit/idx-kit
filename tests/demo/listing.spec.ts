@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import pg from 'pg';
 import { execute, keyCommand, startEngine } from '../api/runtime.ts';
-import type { ListingResponse } from '@idx-kit/client';
+import type { ListingResponse, SearchResponse } from '@idx-kit/client';
+import { FixtureConnector } from '../../packages/engine/src/connectors/fixture.ts';
+import { seed } from '../../packages/engine/src/db/seed.ts';
 
 const origin = 'http://127.0.0.1:4321';
 const property = '/properties/lst_demo_0001';
@@ -188,7 +190,7 @@ test.describe.serial('SSR property pages through the public engine', () => {
     await page.keyboard.press('Tab');
     await expect(page.getByRole('link', { name: 'IDX Kit demo', exact: true })).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(origin + '/');
+    await expect(page).toHaveURL(origin + '/guides/example-springs');
     expect(browserRequests.join('')).not.toContain(secret);
     expect(browserRequests.every(r => r.startsWith(origin + '/'))).toBe(true);
   });
@@ -226,11 +228,213 @@ test.describe.serial('SSR property pages through the public engine', () => {
     } finally { await new Promise<void>(resolve => stub.close(() => resolve())); }
   });
 
-  test('stopped engine gives a safe error page and captured site logs contain no key', async ({ request }) => {
+  test('guide, filters, both price orders, complete paging, Back and property entry work without JavaScript', async ({ page, request }) => {
+    const fixtures = await new FixtureConnector().read();
+    // Original synthetic records, expanded only for traversal beyond the default page size.
+    for (let i = 0; i < 30; i++) {
+      const record = structuredClone(fixtures.listings[0]);
+      record.publicId = `lst_search_demo_${String(i).padStart(4, '0')}`;
+      record.source.ListingKey = `Synthetic browser traversal ${i}`;
+      record.source.ListPrice = `${360000 + i * 1000}.00`;
+      record.source.BedroomsTotal = 3;
+      fixtures.listings.push(record);
+    }
+    await seed(db, fixtures);
+    const expected = fixtures.listings.filter(({ feedId, source: s }) => feedId === 'feed_demo_primary' &&
+      s.InternetEntireListingDisplayYN && s.InternetAddressDisplayYN && s.Address?.city === 'Example Springs' &&
+      s.ListPrice !== null && Number(s.ListPrice) >= 350000 && Number(s.ListPrice) <= 450000 &&
+      s.BedroomsTotal !== null && s.BedroomsTotal >= 3).map(record => record.publicId).sort();
+    const urls: string[] = [];
+    page.on('request', r => urls.push(r.url() + JSON.stringify(r.headers())));
+    try {
+      const root = await request.get(origin, { maxRedirects: 0 });
+      expect(root.status()).toBe(302);
+      expect(root.headers()['location']).toBe('/guides/example-springs');
+      expect(root.headers()['cache-control']).toBe('no-store');
+      expect(await raw(request, '/guides/example-springs')).toContain('Synthetic site content');
+      await page.goto('/');
+      await page.getByRole('link', { name: 'Search Example Springs' }).click();
+      await expect(page.getByLabel('City', { exact: true })).toHaveValue('Example Springs');
+      await page.getByLabel('Minimum price').fill('350000');
+      await page.getByLabel('Maximum price').fill('450000');
+      await page.getByLabel('Minimum bedrooms').fill('3');
+      const browse = async (sort: string) => {
+        await page.getByLabel('Price order').selectOption(sort);
+        await page.getByRole('button', { name: 'Search', exact: true }).click();
+        const ids: string[] = [];
+        const prices: number[] = [];
+        let pages = 0;
+        while (true) {
+          expect(++pages).toBeLessThan(5);
+          ids.push(...await page.locator('[data-listing]').evaluateAll(nodes => nodes.map(n => n.getAttribute('data-listing')!)));
+          const amounts = await page.locator('[data-fact="price"]').allTextContents();
+          prices.push(...amounts.map(text => Number(text.replace(/[$,]/g, ''))));
+          expect(prices.every(price => price >= 350000 && price <= 450000)).toBe(true);
+          expect((await page.locator('[data-fact="bedrooms"]').allTextContents()).every(text => Number(text) >= 3)).toBe(true);
+          const html = await raw(request, new URL(page.url()).pathname + new URL(page.url()).search);
+          expect(html).toContain('synthetic_notice');
+          await expect(page.getByLabel('Minimum price')).toHaveValue('350000');
+          const next = page.getByRole('link', { name: 'Next', exact: true });
+          if (!await next.count()) break;
+          const nextUrl = new URL((await next.getAttribute('href'))!, origin);
+          for (const [name, value] of Object.entries({ city: 'Example Springs', minPrice: '350000', maxPrice: '450000', minBedrooms: '3', sort })) {
+            expect(nextUrl.searchParams.get(name)).toBe(value);
+          }
+          expect(nextUrl.searchParams.get('after')).toBeTruthy();
+          const earlier = page.url();
+          await next.click();
+          await page.goBack();
+          expect(page.url()).toBe(earlier);
+          await page.getByRole('link', { name: 'Next', exact: true }).click();
+        }
+        expect(pages).toBeGreaterThan(1);
+        expect([...ids].sort()).toEqual(expected);
+        expect(new Set(ids).size).toBe(ids.length);
+        return prices;
+      };
+      const ascending = await browse('price');
+      expect(ascending).toEqual([...ascending].sort((a, b) => a - b));
+      expect(await browse('-price')).toEqual([...ascending].reverse());
+      const link = page.getByRole('link', { name: 'Open property', exact: true }).first();
+      const destination = await link.getAttribute('href');
+      await link.click();
+      expect(new URL(page.url()).pathname).toBe(destination);
+      await expect(page.getByRole('heading', { name: 'Property', exact: true })).toBeVisible();
+      expect(urls.join('')).not.toContain(secret);
+      expect(urls.every(url => url.startsWith(origin + '/'))).toBe(true);
+    } finally {
+      await db.query("DELETE FROM idx.source_mappings WHERE listing_id LIKE 'lst_search_demo_%'");
+      await db.query("DELETE FROM idx.listings WHERE id LIKE 'lst_search_demo_%'");
+      await execute('npm', ['run', '--silent', 'demo:seed']);
+    }
+  });
+
+  test('results HTML contains permitted facts, every disclosure, closed notice and exact decimal prices', async ({ request, page }) => {
+    const body = await raw(request, '/search');
+    for (const text of ['synthetic_broker', 'synthetic_notice', 'closed_information', '101 Imaginary Lantern Lane',
+      '/media/synthetic-house-001.svg', '$425,000.00', 'Not available']) expect(body).toContain(text);
+    for (const text of ['102 Hidden Stardust Way', 'Hidden Stardust', 'lst_demo_0006', 'lst_demo_0023', 'lst_demo_0024']) expect(body).not.toContain(text);
+    await page.goto('/search');
+    await expect(page.locator('[data-listing="lst_demo_0002"] [data-fact="address"]')).toHaveText('Not available');
+    await expect(page.locator('footer[aria-label="Search disclosures"] [data-block="closed_information"]')).toHaveText('Synthetic sale data is for informational use only, not a market analysis or appraisal.');
+    await page.getByRole('link', { name: 'Next', exact: true }).click();
+    await expect(page.locator('[data-listing="lst_demo_0004"] [data-fact="price"]')).toHaveText('Not available');
+    const sample: SearchResponse = await fetch('http://127.0.0.1:8787/api/v1/listings', {
+      headers: { Authorization: `Bearer ${secret}` }
+    }).then(r => r.json());
+    for (const listing of sample.data) {
+      expect(body).toContain(`data-listing="${listing.id}"`);
+      if (listing.address) expect(body).toContain(listing.address.line1);
+      for (const image of listing.images ?? []) {
+        expect(body).toContain(image.url);
+        expect(body).toContain(image.alt);
+      }
+      for (const block of listing.display.blocks) expect(body).toContain(block.text);
+    }
+    for (const block of sample.display.blocks) expect(body).toContain(block.text);
+    try {
+      for (const [amount, formatted] of [['425000.19', '$425,000.19'], ['9007199254740993.19', '$9,007,199,254,740,993.19']]) {
+        await db.query("UPDATE idx.listings SET price=$1 WHERE id='lst_demo_0001'", [amount]);
+        expect(await raw(request, property)).toContain(formatted);
+        expect(await raw(request, '/search?sort=-price')).toContain(formatted);
+      }
+      await db.query("UPDATE idx.listings SET status='future-status' WHERE id='lst_demo_0001'");
+      expect(await raw(request, '/search?sort=-price')).toContain('future-status');
+    } finally { await execute('npm', ['run', '--silent', 'demo:seed']); }
+  });
+
+  test('search renders listing and page blocks at each placement, including page blocks with no matches', async ({ page }) => {
+    const blocks = ['adjacent', 'afterListing', 'pageFooter'].map((placement, i) => ({
+      id: `synthetic_page_${i}`, text: `Synthetic <b>${placement}</b> disclosure`, placement,
+      prominence: 'largestListingText', image: { url: '/media/synthetic-house-001.svg', alt: 'Synthetic disclosure icon' }
+    }));
+    const inline = blocks.map(block => ({ ...block, id: block.id.replace('page', 'listing') }));
+    await db.query("UPDATE idx.feeds SET display_blocks=$1 WHERE id='feed_demo_primary'", [JSON.stringify(blocks)]);
+    await db.query("UPDATE idx.listings SET display_blocks=$1 WHERE id='lst_demo_0001'", [JSON.stringify(inline)]);
+    try {
+      for (const query of ['', '?city=NoSuchSyntheticCity']) {
+        await page.goto('/search' + query);
+        const results = page.getByRole('region', { name: 'Search results' });
+        for (const block of blocks) {
+          const notice = results.locator(`:scope > [data-placement="${block.placement}"] [data-block="${block.id}"], :scope > footer [data-placement="${block.placement}"] [data-block="${block.id}"]`);
+          await expect(notice).toHaveText(block.text);
+          await expect(notice).toHaveClass(block.prominence);
+          await expect(notice.locator('img')).toHaveAttribute('alt', block.image.alt);
+        }
+        if (!query) for (const block of inline) {
+          await expect(page.locator(`[data-listing="lst_demo_0001"] [data-placement="${block.placement}"] [data-block="${block.id}"]`)).toHaveText(block.text);
+        }
+        await expect(page.locator('[data-block] b')).toHaveCount(0);
+      }
+    } finally { await execute('npm', ['run', '--silent', 'demo:seed']); }
+  });
+
+  test('no matches retains page disclosures; field and cursor errors give usable recovery', async ({ request, page }) => {
+    const empty = await raw(request, '/search?city=No%20Such%20Synthetic%20City');
+    expect(empty).toContain('No matching properties.');
+    expect(empty).toContain('Original synthetic data for IDX Kit. These properties do not exist.');
+    expect(empty).not.toContain('data-listing=');
+    for (const [query, field, message] of [
+      ['minPrice=450000&maxPrice=350000', 'maxPrice', 'Maximum price must be at least the minimum price.'],
+      ['minPrice=words', 'minPrice', 'Enter a whole US dollar amount, using digits only.']
+    ]) {
+      expect(await raw(request, '/search?' + query, 400)).toContain(message);
+      await page.goto('/search?' + query);
+      await expect(page.locator('#' + field)).toHaveAttribute('aria-describedby', field + '-error');
+      await expect(page.locator('#' + field + '-error')).toHaveText(message);
+      await expect(page.locator('[data-listing]')).toHaveCount(0);
+    }
+    const query = 'city=Example+Springs&minPrice=350000&maxPrice=450000&minBedrooms=3&sort=-price';
+    expect(await raw(request, '/search?' + query + '&after=tampered', 400)).toContain('The results changed.');
+    await page.goto('/search?' + query + '&after=tampered');
+    await page.getByRole('link', { name: 'Start again with the same filters' }).click();
+    expect(new URL(page.url()).searchParams.has('after')).toBe(false);
+    await expect(page.getByLabel('Maximum price')).toHaveValue('450000');
+    await expect(page.getByLabel('Minimum bedrooms')).toHaveValue('3');
+    await expect(page.getByLabel('Price order')).toHaveValue('-price');
+    expect(site.logs()).toMatch(/"errorType":"ApiError","reason":"engine_request_failed","upstreamStatus":400,"requestId":"[0-9a-f-]{36}"/);
+    expect(site.logs()).not.toContain(secret);
+  });
+
+  test('search validates disclosures before rendering any facts and reuses expired-data errors', async ({ request }) => {
+    for (const [table, column, id] of [['listings', 'display_blocks', 'lst_demo_0001'], ['feeds', 'display_blocks', 'feed_demo_primary']]) {
+      for (const field of ['placement', 'prominence']) {
+        const block = { id: 'future', text: 'Synthetic unsupported disclosure', placement: 'adjacent', prominence: 'normal', [field]: 'future' };
+        await db.query(`UPDATE idx.${table} SET ${column}=$1 WHERE id=$2`, [JSON.stringify([block]), id]);
+        try { expect(await raw(request, '/search', 503)).not.toContain('data-listing='); }
+        finally { await execute('npm', ['run', '--silent', 'demo:seed']); }
+      }
+    }
+    await db.query("UPDATE idx.feeds SET expires_at='2000-01-01' WHERE id='feed_demo_primary'");
+    try { expect(await raw(request, '/search', 503)).toContain('Listing temporarily unavailable'); }
+    finally { await execute('npm', ['run', '--silent', 'demo:seed']); }
+  });
+
+  for (const width of [1280, 375]) test(`search form labels and keyboard access at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/search');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    for (const label of ['City', 'Minimum price (whole US dollars)', 'Maximum price (whole US dollars)', 'Minimum bedrooms', 'Price order']) {
+      await expect(page.getByLabel(label, { exact: true })).toBeVisible();
+    }
+    for (let i = 0; i < 2; i++) await page.keyboard.press('Tab');
+    for (const id of ['city', 'minPrice', 'maxPrice', 'minBedrooms', 'sort']) {
+      await page.keyboard.press('Tab');
+      await expect(page.locator('#' + id)).toBeFocused();
+      expect(await page.locator(':focus').evaluate(n => getComputedStyle(n).outlineStyle)).toBe('solid');
+    }
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-listing]').first()).toBeVisible();
+  });
+
+  test('stopped engine gives safe error pages and captured site logs contain no key', async ({ request }) => {
     await engine!.stop();
     engine = undefined;
     const html = await raw(request, property, 502);
     expect(html).toContain('Unable to load this listing');
+    expect(await raw(request, '/search', 502)).toContain('Unable to load these results');
     for (const value of ['127.0.0.1', 'http://', 'ECONNREFUSED', 'Error:', ' at ', 'postgres', 'Authorization']) expect(html).not.toContain(value);
     expect(site.logs()).not.toContain(secret);
   });

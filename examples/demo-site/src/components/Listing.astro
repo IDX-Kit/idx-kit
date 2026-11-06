@@ -2,18 +2,19 @@
 import type { Display, Listing } from '@idx-kit/client';
 import { displayBlocks } from '../server/display.ts';
 import Blocks from './Blocks.astro';
-interface Props { listing: Listing; pageDisplay: Display }
-const { listing, pageDisplay } = Astro.props;
-const blocks = displayBlocks(listing, pageDisplay);
+interface Props { listing: Listing; pageDisplay?: Display; linked?: boolean }
+const { listing, pageDisplay, linked = false } = Astro.props;
+const blocks = displayBlocks(listing.display, ...(pageDisplay ? [pageDisplay] : []));
+const heading = `property-${listing.id}`;
 const unavailable = 'Not available';
 const address = listing.withheldFields.includes('address') ? null : listing.address;
 const price = listing.price === null ? unavailable : new Intl.NumberFormat('en-US', {
   style: 'currency', currency: listing.price.currency
-}).format(Number(listing.price.amount));
+}).format(listing.price.amount);
 const refreshedAt = listing.display.freshness.refreshedAt;
 ---
-<article aria-labelledby="property-heading" data-listing>
-  <h1 id="property-heading">Property</h1>
+<article aria-labelledby={heading} data-listing={listing.id}>
+  {linked ? <h2 id={heading}><a href={`/properties/${listing.id}`}>Open property</a></h2> : <h1 id={heading}>Property</h1>}
   <dl>
     <dt>Status</dt><dd data-fact="status">{listing.status ?? unavailable}</dd>
     <dt>Price</dt><dd data-fact="price">{price}</dd>

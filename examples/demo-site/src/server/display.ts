@@ -1,14 +1,13 @@
-import type { Display, DisplayBlock, Listing } from '@idx-kit/client';
+import type { Display, DisplayBlock } from '@idx-kit/client';
 import { PageFailure } from './engine.ts';
 
-export function displayBlocks(listing: Listing, page: Display): DisplayBlock[] {
-  const displays = [listing.display, page];
+export function displayBlocks(...displays: Display[]): DisplayBlock[] {
   for (const display of displays) {
     if (display.rulesVersion !== '1' || display.siteChromeOutsideListingBody !== true ||
-        !Array.isArray(display.blocks) || display.blocks.length === 0) throw new PageFailure(503);
+        !Array.isArray(display.blocks) || display.blocks.length === 0) throw new PageFailure(503, 'unsupported_display_rules');
     for (const block of display.blocks) {
       if (!['adjacent', 'afterListing', 'pageFooter'].includes(block.placement) ||
-          !['normal', 'medianListingText', 'largestListingText'].includes(block.prominence)) throw new PageFailure(503);
+          !['normal', 'medianListingText', 'largestListingText'].includes(block.prominence)) throw new PageFailure(503, 'unsupported_display_block');
     }
   }
   return displays.flatMap(display => display.blocks);

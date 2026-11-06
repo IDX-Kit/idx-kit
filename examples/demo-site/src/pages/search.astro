@@ -1,0 +1,65 @@
+---
+import type { SearchResponse } from '@idx-kit/client';
+import { engineClient, logFailure, PageFailure, searchProblem } from '../server/engine.ts';
+import { displayBlocks } from '../server/display.ts';
+import { searchForm } from '../server/search.ts';
+import Page from '../layouts/Page.astro';
+import Listing from '../components/Listing.astro';
+import Blocks from '../components/Blocks.astro';
+import Failure from '../components/Failure.astro';
+const { values, errors, query, href } = searchForm(Astro.url.searchParams);
+let response: SearchResponse | undefined;
+let status = 200;
+let restart = false;
+let engine: ReturnType<typeof engineClient> | undefined;
+try {
+  if (Object.keys(errors).length) throw new PageFailure(400, 'invalid_search_input');
+  engine = engineClient();
+  response = await engine.search(query);
+  displayBlocks(response.display, ...response.data.map(listing => listing.display));
+} catch (error) {
+  logFailure(error, engine?.context());
+  status = error instanceof PageFailure ? error.status : 502;
+  restart = status === 400 && searchProblem(error).code === 'cursor_invalid';
+  if (status === 400 && !restart && !Object.keys(errors).length) {
+    if (query.minPrice && query.maxPrice && BigInt(values.minPrice) > BigInt(values.maxPrice)) {
+      errors.maxPrice = 'Maximum price must be at least the minimum price.';
+    } else errors.city = 'Check the search fields and try again.';
+  }
+}
+Astro.response.status = status;
+const inputs = [
+  { name: 'city', label: 'City' },
+  { name: 'minPrice', label: 'Minimum price (whole US dollars)' },
+  { name: 'maxPrice', label: 'Maximum price (whole US dollars)' },
+  { name: 'minBedrooms', label: 'Minimum bedrooms' }
+] as const;
+---
+<Page title="Search synthetic properties">
+  {status !== 200 && status !== 400 ? <Failure status={status} subject="results" /> : <>
+    <h1>Search synthetic properties</h1>
+    <form action="/search" method="get">
+      {inputs.map(({ name, label }) => <>
+        <label for={name}>{label}</label>
+        <input id={name} name={name} value={values[name]} inputmode={name === 'city' ? 'text' : 'numeric'}
+          aria-invalid={errors[name] ? 'true' : undefined} aria-describedby={errors[name] ? `${name}-error` : undefined} />
+        {errors[name] && <p id={`${name}-error`}>{errors[name]}</p>}
+      </>)}
+      <label for="sort">Price order</label>
+      <select id="sort" name="sort" aria-invalid={errors.sort ? 'true' : undefined} aria-describedby={errors.sort ? 'sort-error' : undefined}>
+        <option value="price" selected={values.sort !== '-price'}>Low to high</option>
+        <option value="-price" selected={values.sort === '-price'}>High to low</option>
+      </select>
+      {errors.sort && <p id="sort-error">{errors.sort}</p>}
+      <div><button type="submit">Search</button></div>
+    </form>
+    {restart && <p>The results changed. <a href={href()}>Start again with the same filters</a>.</p>}
+    {status === 200 && response && <section aria-label="Search results">
+      <Blocks blocks={response.display.blocks} placement="adjacent" />
+      {response.data.length ? response.data.map(listing => <Listing listing={listing} linked />) : <p>No matching properties.</p>}
+      <Blocks blocks={response.display.blocks} placement="afterListing" />
+      {response.meta.page.hasMore && response.meta.page.nextCursor && <a href={href(response.meta.page.nextCursor)}>Next</a>}
+      <footer aria-label="Search disclosures"><Blocks blocks={response.display.blocks} placement="pageFooter" /></footer>
+    </section>}
+  </>}
+</Page>
