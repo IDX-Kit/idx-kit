@@ -47,13 +47,24 @@ jobs:
           git diff --exit-code -- packages/client/src/generated.ts
       - name: Typecheck both generated outputs and consumers
         run: npm run typecheck
-      - name: Create disposable PostgreSQL 16 cluster
+      - name: Install PostgreSQL 18
         run: |
-          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          # Use only the disposable cluster; package installation must not create one.
+          echo 'create_main_cluster = false' | sudo tee -a /etc/postgresql-common/createcluster.conf
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-18
+      - name: Create disposable PostgreSQL 18 cluster
+        run: |
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
           postgres --version
-          postgres --version | grep -E '^postgres \(PostgreSQL\) 16\.'
+          postgres --version | grep -E '^postgres \(PostgreSQL\) 18\.'
           initdb -D "$RUNNER_TEMP/idx11-pg" --auth=trust --username=postgres --locale=C --encoding=UTF8
           pg_ctl -D "$RUNNER_TEMP/idx11-pg" -l "$RUNNER_TEMP/idx11-pg.log" -o "-h 127.0.0.1 -p 55432 -k $RUNNER_TEMP" -w start
+          psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'SELECT version()'
+          server_version_num=$(psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 -Atc 'SHOW server_version_num')
+          echo "server_version_num=$server_version_num"
+          [[ "$server_version_num" =~ ^[0-9]{6}$ ]]
+          (( server_version_num >= 180000 && server_version_num <= 189999 ))
           psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE idx_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
           CREATE ROLE idx_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
@@ -85,5 +96,5 @@ jobs:
         if: always()
         run: |
           if [ -f "$RUNNER_TEMP/idx11-pg/postmaster.pid" ]; then
-            /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
+            /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
           fi

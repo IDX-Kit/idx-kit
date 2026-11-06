@@ -619,7 +619,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         process.env.IDX_TEST_PGDATA,
         "Only the disposable runner cluster may be stopped",
       );
-      await execute("/usr/lib/postgresql/16/bin/pg_ctl", [
+      await execute("/usr/lib/postgresql/18/bin/pg_ctl", [
         "-D",
         process.env.IDX_TEST_PGDATA!,
         "-m",

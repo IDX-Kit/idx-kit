@@ -18,7 +18,7 @@ uses only the public API.
 
 ## Database development
 
-Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 16. The npm workspace lockfile
+Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 18. The npm workspace lockfile
 pins the dependencies. The database commands are:
 
 ```sh
@@ -39,9 +39,11 @@ and expired records. See [fixture provenance](fixtures/RIGHTS.md).
 [CI](.github/workflows/ci.yml) defines the disposable Linux runner setup, contract
 lint, reproducible client generation, compatibility typecheck and database tests.
 The tests require an empty dedicated database plus `RUNTIME_DATABASE_URL` for the
-restricted role. The workflow creates its own loopback PostgreSQL 16 cluster on
-port 55432 and stops that cluster when finished. The generated client comes only
-from `openapi/v1/openapi.yaml`; regenerate it with `npm run contract:generate`.
+restricted role. The workflow installs the latest PostgreSQL 18.x from the project's
+apt repository and checks both the binary and connected server versions. It creates
+its own loopback PostgreSQL 18 cluster on port 55432 and stops that cluster when
+finished. The generated client comes only from `openapi/v1/openapi.yaml`;
+regenerate it with `npm run contract:generate`.
 
 The checks also start the engine and validate real HTTP responses and required
 headers against the checked-in contract, with negative controls. They cover key

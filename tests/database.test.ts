@@ -26,6 +26,19 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     await runtime.end();
     await db.end();
   });
+  await t.test("both test connections use PostgreSQL 18", async () => {
+    for (const client of [db, runtime]) {
+      const version = (await client.query("SHOW server_version")).rows[0]
+        .server_version;
+      const versionNum = Number(
+        (await client.query("SHOW server_version_num")).rows[0]
+          .server_version_num,
+      );
+      t.diagnostic(`Connected PostgreSQL ${version} (${versionNum})`);
+      assert.match(version, /^18\./);
+      assert.ok(versionNum >= 180000 && versionNum <= 189999);
+    }
+  });
   const fixtures = await new FixtureConnector().read();
   const reset = () =>
     db.query("TRUNCATE idx.feeds, idx.sites, idx.listings CASCADE");
