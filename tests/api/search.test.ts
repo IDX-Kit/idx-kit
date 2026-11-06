@@ -294,6 +294,8 @@ test(
       async () => {
         for (const query of [
           "unknown=query-private-marker",
+          "=query-private-marker",
+          "__proto__=query-private-marker",
           "offset=1",
           "city=x&city=y",
           "city=x&%63ity=y",

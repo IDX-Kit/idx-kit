@@ -54,7 +54,10 @@ export function logFailure(
       (error instanceof PageFailure ? error.requestId : null) ??
       upstream?.requestId ??
       null,
-    path: error instanceof PageFailure ? error.path : (upstream?.path ?? null),
+    path:
+      (error instanceof PageFailure ? error.path : null) ??
+      upstream?.path ??
+      null,
     message: cause instanceof Error ? cause.message : "Request failed",
   });
   if (error instanceof PageFailure) error.logged = true;

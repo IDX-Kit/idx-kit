@@ -178,11 +178,14 @@ export function createApp(
     "/api/v1/listings",
     authorize,
     async (c, next) => {
+      const url = new URL(c.req.url);
       try {
-        decodeURIComponent(new URL(c.req.url).search);
+        decodeURIComponent(url.search);
       } catch {
         throw invalidQuery();
       }
+      // Hono omits empty names from its parsed query object.
+      if (url.searchParams.has("")) throw invalidQuery();
       await next();
     },
     zValidator("query", searchSchema, (result) => {
