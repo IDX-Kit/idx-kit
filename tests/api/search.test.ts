@@ -683,7 +683,10 @@ test(
                 searchSchema.parse({ sort, limit: "50" }),
                 "site_demo_primary",
               );
-              const result = await searchListings(inspecting, { ...query, last });
+              const result = await searchListings(inspecting, {
+                ...query,
+                last,
+              });
               assert.ok(scans > 0);
               if (last === boundary)
                 assert.ok(result.rows.some((row) => row.price === null));
