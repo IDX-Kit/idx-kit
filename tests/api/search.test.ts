@@ -381,11 +381,11 @@ test(
         assert.equal(Buffer.byteLength(encoded), 2048);
         const encodedFirst = (await request(encoded)).body;
         await request(`${encoded}&after=${encodedFirst.meta.page.nextCursor}`);
-        assert.equal(
-          (await request(encoded.replace("maxPrice=", "maxPrice=9"), 400))
-            .body.code,
-          "invalid_query",
+        const encodedError = await request(
+          encoded.replace("maxPrice=", "maxPrice=9"),
+          400,
         );
+        assert.equal(encodedError.body.code, "invalid_query");
       },
     );
     await t.test(
@@ -398,13 +398,9 @@ test(
         const result = await request("sort=-price&limit=1");
         assert.equal(result.body.meta.page.hasMore, true);
         assert.equal(typeof result.body.meta.page.nextCursor, "string");
-        assert.ok(
-          Buffer.byteLength(result.body.meta.page.nextCursor) < CURSOR_MAX_BYTES,
-        );
-        const remaining = await browse(
-          "sort=-price&limit=1",
-          result.body.meta.page.nextCursor,
-        );
+        const cursor: string = result.body.meta.page.nextCursor;
+        assert.ok(Buffer.byteLength(cursor) < CURSOR_MAX_BYTES);
+        const remaining = await browse("sort=-price&limit=1", cursor);
         assert.equal(remaining.length, licensedCount - 1);
       },
     );
