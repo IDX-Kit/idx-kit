@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 15
     env:
       DATABASE_URL: postgresql://idx_migration:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
-      IDX_TEST_LOG_DIR: ${{ runner.temp }}/idx-logs
+      IDX_TEST_LOG_DIR: /tmp/idx-test-logs
       RUNTIME_DATABASE_URL: postgresql://idx_runtime:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
