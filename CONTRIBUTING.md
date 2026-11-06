@@ -1,7 +1,7 @@
 # Contributing
 
 Bug reports, questions and ideas are welcome through
-[GitHub issues](https://github.com/sirwazzles/idx-kit/issues).
+[GitHub issues](https://github.com/IDX-Kit/idx-kit/issues).
 
 Code contributions are not accepted. Pull requests are limited to
 collaborators. Ideas may be implemented independently.
