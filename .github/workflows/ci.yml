@@ -9,6 +9,9 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
     env:
       DATABASE_URL: postgresql://idx_migration:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
       IDX_TEST_LOG_DIR: /tmp/idx-test-logs

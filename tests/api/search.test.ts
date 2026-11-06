@@ -639,14 +639,20 @@ test(
                     const nodes = flatten(plan).filter(
                       (node) => node["Relation Name"] === "listings",
                     );
-                    assert.ok(nodes.length > 0);
+                    const diagnostic = JSON.stringify({ sort, last, sql, plan });
+                    assert.ok(nodes.length > 0, diagnostic);
                     for (const node of nodes) {
-                      assert.match(node["Node Type"], /Index/);
-                      assert.match(node["Index Cond"] ?? "", /price|id/);
+                      const condition = node["Index Cond"] ?? "";
+                      assert.match(node["Node Type"], /Index/, diagnostic);
+                      assert.match(condition, /price|id/, diagnostic);
                       if (last?.price === null)
-                        assert.match(node["Index Cond"] ?? "", /id > /);
-                      else if (last && !sql.includes("l.price IS NULL"))
-                        assert.match(node["Index Cond"] ?? "", /[<>]/);
+                        assert.match(condition, /id > /, diagnostic);
+                      else if (last && !sql.includes("l.price IS NULL")) {
+                        assert.match(condition, /[<>]/, diagnostic);
+                        assert.match(condition, /price [<>=] /, diagnostic);
+                        if (sql.includes("l.id >"))
+                          assert.match(condition, /id > /, diagnostic);
+                      }
                       scans++;
                     }
                   }

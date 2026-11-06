@@ -44,6 +44,7 @@ export function createApp(
     c.set("code", "ok");
     c.set("route", "/api/*");
     await next();
+    c.header("Request-Id", c.get("requestId"));
     if (!c.res.headers.has("Cache-Control"))
       c.header("Cache-Control", "no-store");
     const method = [

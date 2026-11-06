@@ -45,13 +45,19 @@ export async function readQuery<T extends pg.QueryResultRow>(
     );
   }
 }
+// Each listing has one source mapping. Its bounded lateral lookup keeps the
+// licensed feed join inside the listing's ordered index range, not vice versa.
 export const listingSelect = `SELECT l.id, l.synthetic, l.status, l.price::text, l.currency,
   l.address, l.bedrooms::text, l.images, l.withheld_fields, l.display_blocks, l.page_blocks,
   l.source_updated_at, l.ingested_at, f.refreshed_at, f.expires_at, f.rules_version,
   f.display_blocks AS feed_blocks
-  FROM idx.listings l JOIN idx.source_mappings m ON m.listing_id = l.id
-  JOIN idx.feeds f ON f.id = m.feed_id
-  JOIN idx.data_licenses d ON d.feed_id = f.id AND d.site_id = $1`;
+  FROM idx.listings l
+  JOIN LATERAL (
+    SELECT f.* FROM idx.source_mappings m
+    JOIN idx.feeds f ON f.id = m.feed_id
+    JOIN idx.data_licenses d ON d.feed_id = f.id AND d.site_id = $1
+    WHERE m.listing_id = l.id LIMIT 1
+  ) f ON true`;
 export function repository(pool: pg.Pool) {
   const query = <T extends pg.QueryResultRow>(
     sql: string,
