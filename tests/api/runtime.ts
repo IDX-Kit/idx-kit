@@ -12,9 +12,10 @@ export async function preserveKeys(db: pg.Client) {
     "SELECT id, revoked_at FROM idx.site_secret_keys",
   );
   return async () => {
-    await db.query("DELETE FROM idx.site_secret_keys WHERE NOT (id = ANY($1))", [
-      rows.map((row) => row.id),
-    ]);
+    await db.query(
+      "DELETE FROM idx.site_secret_keys WHERE NOT (id = ANY($1))",
+      [rows.map((row) => row.id)],
+    );
     for (const row of rows) {
       await db.query(
         "UPDATE idx.site_secret_keys SET revoked_at=$2 WHERE id=$1",
