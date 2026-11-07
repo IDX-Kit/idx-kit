@@ -12,7 +12,7 @@ export default defineConfig({
   session: false,
   vite: {
     define: { "import.meta.env.IDX_WORKER": JSON.stringify(worker) },
-    ssr: { external: ["cloudflare:workers"] },
+    build: { rolldownOptions: { external: ["cloudflare:workers"] } },
   },
   devToolbar: { enabled: false },
 });
