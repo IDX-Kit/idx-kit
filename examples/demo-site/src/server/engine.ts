@@ -70,6 +70,7 @@ export function logFailure(
 // Imported only by server entry points. Configuration and upstream errors stay on the server.
 export function engineClient() {
   const binding = bindings?.IDX_ENGINE;
+  const redirect = binding ? "manual" : "error";
   const base = new URL(
     binding ? "https://engine.internal" : (process.env.IDX_ENGINE_URL ?? ""),
   );
@@ -102,7 +103,7 @@ export function engineClient() {
   const options: RequestOptions = {
     headers: { Authorization: `Bearer ${secret}` },
     cache: "no-store",
-    redirect: "error",
+    redirect,
   };
   async function request<T>(
     requestPath: string,
@@ -131,7 +132,7 @@ export function engineClient() {
     context: () => ({ status: upstreamStatus, requestId, path }),
     async discover() {
       const body = await request("/api", () =>
-        client.discoverServer({}, { cache: "no-store", redirect: "error" }),
+        client.discoverServer({}, { cache: "no-store", redirect }),
       );
       if (
         !body.data.supportedVersions.some(
