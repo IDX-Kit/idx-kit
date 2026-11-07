@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { captureLog } from "../logs.ts";
 
 export const workerRuntime = process.env.IDX_RUNTIME === "worker";
@@ -64,7 +65,8 @@ export async function startWorker(config: string, port: number) {
           output
             .split("\n")
             .flatMap((line) => {
-              const json = line.slice(line.indexOf("{"));
+              const plain = stripVTControlCharacters(line);
+              const json = plain.slice(plain.indexOf("{"));
               try {
                 const record = JSON.parse(json);
                 return readyId !== null && record.requestId === readyId
