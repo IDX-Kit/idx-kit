@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -68,6 +68,25 @@ test("deploy commands use checked configs and Wrangler dry runs", async () => {
       const files = await readdir(join(directory, kind), { recursive: true });
       assert.ok(files.some((name) => /\.m?js$/.test(name)));
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("credential scan permits variable names and rejects keys starting with key-", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "demo-log-check-"));
+  try {
+    await writeFile(join(directory, "forbidden.values"), "");
+    const scan = () =>
+      spawnSync(process.execPath, ["scripts/check-logs.mjs"], {
+        env: { ...process.env, IDX_TEST_LOG_DIR: directory },
+        encoding: "utf8",
+      }).status;
+    const path = join(directory, "command.log");
+    await writeFile(path, "Missing IDX_SECRET_KEY.");
+    assert.equal(scan(), 0);
+    await writeFile(path, "idx_secret_key-" + "x".repeat(39));
+    assert.equal(scan(), 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
