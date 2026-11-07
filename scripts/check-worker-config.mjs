@@ -17,7 +17,7 @@ export async function readConfig(path) {
   );
   return { text, config: parsed.config };
 }
-export function checkConfig(config, kind, source = true) {
+export function checkConfig(config, kind, source = true, hyperdriveId = "00000000000000000000000000000000") {
   const allowed = [
     "name",
     "compatibility_date",
@@ -49,7 +49,7 @@ export function checkConfig(config, kind, source = true) {
   if (kind === "engine") {
     assert.ok(!("routes" in config));
     assert.deepEqual(config.hyperdrive, [
-      { binding: "HYPERDRIVE", id: "00000000000000000000000000000000" },
+      { binding: "HYPERDRIVE", id: hyperdriveId },
     ]);
     assert.deepEqual(config.placement, { region: "aws:us-east-1" });
   } else {

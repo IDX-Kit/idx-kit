@@ -7,7 +7,10 @@ import { logFailure } from "../log.ts";
 const [action, subject, grants, path, ...extra] = process.argv.slice(2);
 const requested = grants?.split(",") ?? [];
 const creating = action === "create" || action === "rotate";
-if (
+if (action === "sync-demo") {
+  const { runDemo } = await import("./demo.ts");
+  await runDemo("key");
+} else if (
   !process.env.DATABASE_URL ||
   !subject ||
   extra.length ||
