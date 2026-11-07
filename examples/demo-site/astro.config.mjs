@@ -10,6 +10,9 @@ export default defineConfig({
     ? cloudflare({ imageService: "passthrough", remoteBindings: false })
     : node({ mode: "standalone" }),
   session: false,
-  vite: { define: { "import.meta.env.IDX_WORKER": JSON.stringify(worker) } },
+  vite: {
+    define: { "import.meta.env.IDX_WORKER": JSON.stringify(worker) },
+    ssr: { external: ["cloudflare:workers"] },
+  },
   devToolbar: { enabled: false },
 });
