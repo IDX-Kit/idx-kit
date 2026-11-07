@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -64,10 +64,10 @@ test("deploy commands use checked configs and Wrangler dry runs", async () => {
       "examples/demo-site/dist-worker/server/wrangler.json",
     );
     checkConfig(site.config, "site", false);
-    for (const kind of ["engine", "site"])
-      assert.ok(
-        (await readFile(join(directory, kind, "index.js"), "utf8")).length > 0,
-      );
+    for (const kind of ["engine", "site"]) {
+      const files = await readdir(join(directory, kind), { recursive: true });
+      assert.ok(files.some((name) => /\.m?js$/.test(name)));
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

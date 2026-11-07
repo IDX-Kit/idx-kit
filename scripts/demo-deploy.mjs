@@ -14,8 +14,11 @@ for (const name of [
   delete env[name];
 function run(command, parameters) {
   const result = spawnSync(command, parameters, { stdio: "inherit", env });
-  if (result.error || result.status !== 0)
-    throw new Error("Build or deploy command failed.");
+  if (result.error) throw result.error;
+  if (result.status !== 0)
+    throw new Error(
+      `${command} failed (exit ${result.status}, signal ${result.signal}).`,
+    );
 }
 let directory;
 try {
