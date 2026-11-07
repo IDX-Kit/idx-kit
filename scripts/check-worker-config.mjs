@@ -17,7 +17,12 @@ export async function readConfig(path) {
   );
   return { text, config: parsed.config };
 }
-export function checkConfig(config, kind, source = true, hyperdriveId = "00000000000000000000000000000000") {
+export function checkConfig(
+  config,
+  kind,
+  source = true,
+  hyperdriveId = "00000000000000000000000000000000",
+) {
   const allowed = [
     "name",
     "compatibility_date",

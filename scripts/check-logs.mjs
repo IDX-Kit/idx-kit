@@ -20,7 +20,7 @@ for (const name of logs) {
   const text = await readFile(join(directory, name), "utf8");
   if (
     forbidden.some((value) => value && text.includes(value)) ||
-    /idx_secret_|postgres(?:ql)?:\/\//i.test(text)
+    /idx_secret_(?!key\b)|postgres(?:ql)?:\/\//i.test(text)
   )
     throw new Error(`Unredacted credential in captured log: ${name}`);
 }

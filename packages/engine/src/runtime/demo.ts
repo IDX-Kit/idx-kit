@@ -7,7 +7,7 @@ import { seed } from "../db/seed.ts";
 import { repository } from "../db/read.ts";
 import { hashSecret } from "../domain/keys.ts";
 import { createApp } from "../http/app.ts";
-import { failureFields, logLine } from "../log.ts";
+import { failureFields } from "../log.ts";
 
 const site = "site_demo_primary";
 class DemoError extends Error {}
@@ -47,17 +47,31 @@ export async function checkListings(connectionString: string, secret: string) {
   try {
     await runtime.connect();
     const app = createApp(repository(runtime), {}, "demo-build");
-    const response = await app.request("https://engine.internal/api/v1/listings?limit=50", {
-      headers: { Authorization: `Bearer ${secret}` },
-    });
+    const response = await app.request(
+      "https://engine.internal/api/v1/listings?limit=50",
+      {
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+    );
     const body = await response.json();
     const expected = (await new FixtureConnector().read()).listings.filter(
-      (record) => record.feedId === "feed_demo_primary" && record.source.InternetEntireListingDisplayYN,
+      (record) =>
+        record.feedId === "feed_demo_primary" &&
+        record.source.InternetEntireListingDisplayYN,
     );
-    if (response.status !== 200 || body.data.length !== expected.length ||
-      !expected.every((record) => body.data.some((listing: { id: string; synthetic: boolean }) =>
-        listing.id === record.publicId && listing.synthetic))) {
-      throw new DemoError("demo:check failed: seeded synthetic listings are missing or unavailable.");
+    if (
+      response.status !== 200 ||
+      body.data.length !== expected.length ||
+      !expected.every((record) =>
+        body.data.some(
+          (listing: { id: string; synthetic: boolean }) =>
+            listing.id === record.publicId && listing.synthetic,
+        ),
+      )
+    ) {
+      throw new DemoError(
+        "demo:check failed: seeded synthetic listings are missing or unavailable.",
+      );
     }
   } finally {
     await runtime.end();
@@ -70,10 +84,14 @@ export async function runDemo(action: string) {
     const owner = required("MIGRATION_DATABASE_URL");
     const secret = required("IDX_SECRET_KEY");
     if (!/^idx_secret_[A-Za-z0-9_-]{43}$/.test(secret))
-      throw new DemoError("IDX_SECRET_KEY must use idx_secret_ plus base64url of 32 random bytes.");
+      throw new DemoError(
+        "IDX_SECRET_KEY must use the documented prefix and base64url of 32 random bytes.",
+      );
     const runtime = new URL(owner);
     runtime.username = "idx_runtime";
-    runtime.password = encodeURIComponent(required("RUNTIME_DATABASE_PASSWORD"));
+    runtime.password = encodeURIComponent(
+      required("RUNTIME_DATABASE_PASSWORD"),
+    );
     if (action === "check") {
       stage = "demo:check";
       await checkListings(runtime.href, secret);
@@ -86,16 +104,38 @@ export async function runDemo(action: string) {
       if (action === "prepare") {
         const password = required("RUNTIME_DATABASE_PASSWORD");
         if (password.length < 32)
-          throw new DemoError("RUNTIME_DATABASE_PASSWORD must have at least 32 characters.");
+          throw new DemoError(
+            "RUNTIME_DATABASE_PASSWORD must have at least 32 characters.",
+          );
         stage = "runtime role";
-        if (!(await db.query("SELECT 1 FROM pg_roles WHERE rolname='idx_runtime'")).rowCount)
-          await db.query("CREATE ROLE idx_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION");
-        if ((await db.query("SELECT 1 FROM pg_auth_members WHERE member='idx_runtime'::regrole")).rowCount)
+        if (
+          !(
+            await db.query("SELECT 1 FROM pg_roles WHERE rolname='idx_runtime'")
+          ).rowCount
+        )
+          await db.query(
+            "CREATE ROLE idx_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION",
+          );
+        if (
+          (
+            await db.query(
+              "SELECT 1 FROM pg_auth_members WHERE member='idx_runtime'::regrole",
+            )
+          ).rowCount
+        )
           throw new DemoError("idx_runtime must not be granted another role.");
-        const role = (await db.query("SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit OR rolbypassrls OR rolreplication AS unsafe FROM pg_roles WHERE rolname='idx_runtime'")).rows[0];
+        const role = (
+          await db.query(
+            "SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit OR rolbypassrls OR rolreplication AS unsafe FROM pg_roles WHERE rolname='idx_runtime'",
+          )
+        ).rows[0];
         if (role.unsafe)
-          throw new DemoError("idx_runtime must have no elevated privileges and NOINHERIT.");
-        await db.query(`ALTER ROLE idx_runtime LOGIN PASSWORD ${pg.escapeLiteral(password)}`);
+          throw new DemoError(
+            "idx_runtime must have no elevated privileges and NOINHERIT.",
+          );
+        await db.query(
+          `ALTER ROLE idx_runtime LOGIN PASSWORD ${pg.escapeLiteral(password)}`,
+        );
         stage = "migrations";
         await migrate(db);
         stage = "fixture seed";
@@ -112,11 +152,16 @@ export async function runDemo(action: string) {
     }
     console.log("Demo preparation passed.");
   } catch (error) {
-    console.error(logLine({
-      operation: stage,
-      ...failureFields(error),
-      message: error instanceof DemoError ? error.message : `Demo ${stage} failed; check the database connection and permissions.`,
-    }));
+    console.error(
+      JSON.stringify({
+        operation: stage,
+        ...failureFields(error),
+        message:
+          error instanceof DemoError
+            ? error.message
+            : `Demo ${stage} failed; check the database connection and permissions.`,
+      }),
+    );
     process.exitCode = 1;
   }
 }

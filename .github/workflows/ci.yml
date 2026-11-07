@@ -13,17 +13,28 @@ jobs:
       run:
         shell: bash
     env:
-      DATABASE_URL: postgresql://idx_migration:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
       IDX_TEST_LOG_DIR: /tmp/idx-test-logs
       WRANGLER_SEND_METRICS: "false"
       CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false"
-      RUNTIME_DATABASE_URL: postgresql://idx_runtime:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Generate and mask disposable database credentials
+        run: |
+          node --input-type=module <<'JS'
+          import { randomBytes } from "node:crypto";
+          import { appendFileSync } from "node:fs";
+          const password = randomBytes(32).toString("base64url");
+          console.log(`::add-mask::${password}`);
+          for (const [name, role] of [["DATABASE_URL", "idx_migration"], ["RUNTIME_DATABASE_URL", "idx_runtime"]]) {
+            const value = `postgresql://${role}:${password}@127.0.0.1:55432/idx_demo`;
+            console.log(`::add-mask::${value}`);
+            appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
+          }
+          JS
       - name: Install locked dependencies
         run: |
           node --version
