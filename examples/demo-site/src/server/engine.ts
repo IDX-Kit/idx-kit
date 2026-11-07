@@ -116,7 +116,9 @@ export function engineClient() {
       return await call();
     } catch (cause) {
       const status =
-        cause instanceof ApiError && [400, 404, 503].includes(cause.status)
+        cause instanceof ApiError &&
+        requestId !== null &&
+        [400, 404, 503].includes(cause.status)
           ? cause.status
           : 502;
       const error = new PageFailure(status, "engine_request_failed", {

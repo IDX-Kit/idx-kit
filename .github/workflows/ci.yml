@@ -30,19 +30,8 @@ jobs:
           npm ci
       - name: Check formatting and lint
         run: |
-          if ! npm run format:check; then
-            npm run format
-            git diff > "$RUNNER_TEMP/format.patch"
-            exit 1
-          fi
+          npm run format:check
           npm run lint
-      - name: Save formatting corrections if needed
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: formatting-corrections
-          path: ${{ runner.temp }}/format.patch
-          if-no-files-found: ignore
       - name: Check Worker exposure and binding invariants
         run: npm run workers:check
       - name: Lint contract with no errors or warnings

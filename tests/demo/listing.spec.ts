@@ -907,6 +907,7 @@ test.describe.serial("SSR property pages through the public engine", () => {
   test("stopped engine gives safe error pages and captured site logs contain no key", async ({
     request,
   }) => {
+    const logStart = site.logs().length;
     await engine!.stop();
     engine = undefined;
     const html = await raw(request, property, 502);
@@ -924,11 +925,19 @@ test.describe.serial("SSR property pages through the public engine", () => {
       "Authorization",
     ])
       expect(html).not.toContain(value);
-    expect(site.logs()).toContain('"category":"engine_outage"');
+    const failures = () => site.logs().slice(logStart);
+    await expect.poll(failures).toContain('"category":"engine_outage"');
+    // A stopped local service binding can throw or return a proxy 503.
     await expect
-      .poll(() => site.logs())
-      .toMatch(/"errorType":"(TypeError|TimeoutError)"/);
-    expect(site.logs()).toContain('"upstreamStatus":null');
+      .poll(failures)
+      .toMatch(
+        workerRuntime
+          ? /"errorType":"(Error|ApiError)"/
+          : /"errorType":"(TypeError|TimeoutError)"/,
+      );
+    expect(failures()).toMatch(
+      workerRuntime ? /"upstreamStatus":(null|503)/ : /"upstreamStatus":null/,
+    );
     expect(site.logs()).not.toContain(secret);
   });
 });

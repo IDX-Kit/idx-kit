@@ -168,4 +168,12 @@ test("site failures log once with status, request ID, path and redacted causes",
   await assert.rejects(engine.search({}));
   assert.equal(JSON.parse(logs[2]).errorType, "TimeoutError");
   assert.equal(JSON.parse(logs[2]).category, "engine_outage");
+  globalThis.fetch = async () =>
+    new Response("Synthetic proxy outage", { status: 503 });
+  await assert.rejects(
+    engine.search({}),
+    (error) => error instanceof PageFailure && error.status === 502,
+  );
+  assert.equal(JSON.parse(logs[3]).upstreamStatus, 503);
+  assert.equal(JSON.parse(logs[3]).requestId, null);
 });
