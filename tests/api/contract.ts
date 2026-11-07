@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchemaObject } from "ajv";
 import addFormats from "ajv-formats";
 import { parse } from "yaml";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ export const contract = parse(
   ),
 );
 const directory = await mkdtemp(`${tmpdir()}/idx-contract-`);
-let bundled;
+let bundled: AnySchemaObject;
 try {
   const output = `${directory}/contract.json`;
   await execute(process.execPath, [
