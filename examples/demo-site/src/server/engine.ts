@@ -70,8 +70,12 @@ export function logFailure(
 // Imported only by server entry points. Configuration and upstream errors stay on the server.
 export function engineClient() {
   const binding = bindings?.IDX_ENGINE;
-  const base = new URL(binding ? "https://engine.internal" : process.env.IDX_ENGINE_URL ?? "");
-  const secret = bindings ? bindings.IDX_SECRET_KEY : process.env.IDX_SECRET_KEY;
+  const base = new URL(
+    binding ? "https://engine.internal" : (process.env.IDX_ENGINE_URL ?? ""),
+  );
+  const secret = bindings
+    ? bindings.IDX_SECRET_KEY
+    : process.env.IDX_SECRET_KEY;
   if (
     !["http:", "https:"].includes(base.protocol) ||
     base.username ||

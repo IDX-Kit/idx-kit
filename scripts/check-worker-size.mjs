@@ -21,6 +21,11 @@ async function size(directory) {
 }
 for (const directory of process.argv.slice(2)) {
   const { raw, compressed } = await size(directory);
-  console.log(`${directory}: ${raw} bytes, ${compressed} gzip bytes (Free limit: 3145728).`);
-  assert.ok(raw > 0 && compressed <= 3 * 1024 * 1024, "Worker must fit the Free plan");
+  console.log(
+    `${directory}: ${raw} bytes, ${compressed} gzip bytes (Free limit: 3145728).`,
+  );
+  assert.ok(
+    raw > 0 && compressed <= 3 * 1024 * 1024,
+    "Worker must fit the Free plan",
+  );
 }

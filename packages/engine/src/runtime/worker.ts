@@ -28,7 +28,9 @@ export default {
     };
     let response: Response | undefined;
     try {
-      response = await createApp(repository(db), contract, version).fetch(request);
+      response = await createApp(repository(db), contract, version).fetch(
+        request,
+      );
       return response;
     } finally {
       await client.end().catch((error: unknown) => {
