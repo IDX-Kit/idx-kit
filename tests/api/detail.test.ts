@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
@@ -8,17 +8,26 @@ import type { DisplayBlock } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { contract, valid, validateResponse } from "./contract.ts";
-import { execute, keyCommand, startEngine } from "./runtime.ts";
+import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
 
 test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
   const directory = await mkdtemp(`${tmpdir()}/idx-api-`);
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  db.on("error", () => {});
   await db.connect();
+  const restoreOriginalKeys = await preserveKeys(db);
   t.after(async () => {
-    await db.end();
-    await rm(directory, { recursive: true, force: true });
+    try {
+      await restoreOriginalKeys();
+    } finally {
+      try {
+        await db.end();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
   });
+  const fixtures = await new FixtureConnector().read();
+  t.afterEach(() => seed(db, fixtures));
   const key = await keyCommand(
     directory,
     "create",
@@ -40,6 +49,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
     "limited",
   );
   const secrets = [key.secret, other.secret, limited.secret];
+  const restoreSuiteKeys = await preserveKeys(db);
+  t.afterEach(restoreSuiteKeys);
   const engine = await startEngine();
   t.after(() => engine.stop());
   const requests: { id: string; status: number; code: string }[] = [];
@@ -87,7 +98,6 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
     });
     return { body, response, text };
   }
-  let good: Awaited<ReturnType<typeof request>>;
   await t.test(
     "anonymous discovery advertises only implemented capabilities and exact release contract",
     async () => {
@@ -109,7 +119,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
   await t.test(
     "detail translates facts, ordered display and feed freshness without private columns",
     async () => {
-      good = await request(listing);
+      const good = await request(listing);
       assert.equal(good.body.data.id, "lst_demo_0001");
       assert.deepEqual(good.body.data.price, {
         amount: "425000.00",
@@ -151,7 +161,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
   );
   await t.test(
     "required-fact negative control and required-header controls reject broken responses",
-    () => {
+    async () => {
+      const good = await request(listing);
       const broken = structuredClone(good.body);
       delete broken.data.price;
       assert.throws(
@@ -184,69 +195,18 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
     );
   });
   await t.test(
-    "drift capability probe uses a real response and a removed-fact negative control",
-    async () => {
-      const capture = (body: unknown, headers = good.response.headers) => ({
-        log: {
-          version: "1.2",
-          creator: { name: "IDX Kit", version: "1" },
-          entries: [
-            {
-              request: {
-                method: "GET",
-                url: `http://127.0.0.1:8787${listing}`,
-                headers: [],
-                queryString: [],
-              },
-              response: {
-                status: 200,
-                headers: Array.from(headers, ([name, value]) => ({
-                  name,
-                  value,
-                })),
-                content: {
-                  mimeType: "application/json",
-                  text: JSON.stringify(body),
-                },
-              },
-            },
-          ],
-        },
-      });
-      const missingFact = structuredClone(good.body);
-      delete missingFact.data.price;
-      const missingHeader = new Headers(good.response.headers);
-      missingHeader.delete("Request-Id");
-      const results = [];
-      for (const [name, sample] of [
-        ["valid", capture(good.body)],
-        ["missing-fact", capture(missingFact)],
-        ["missing-header", capture(good.body, missingHeader)],
-      ] as const) {
-        const file = `${directory}/${name}.har`;
-        await writeFile(file, JSON.stringify(sample));
-        const args = [
-          "node_modules/@redocly/cli/bin/cli.js",
-          "drift",
-          file,
-          "--api",
-          "openapi/v1/openapi.yaml",
-          "--rules",
-          "schema-consistency",
-          "--format",
-          "json",
-        ];
-        const result = await execute(process.execPath, args).then(
-          () => true,
-          () => false,
-        );
-        results.push(result);
-      }
-      t.diagnostic(
-        results[0] && !results[1] && !results[2]
-          ? "Drift detects both negative controls; JSON Schema additionally checks every error path."
-          : "Drift cannot prove all required response controls; pinned JSON Schema 2020-12 validation checks every response and required header.",
+    "drift check rejects a removed fact and passes the real response",
+    async (t) => {
+      const good = await request(listing);
+      const drifted = structuredClone(good.body);
+      delete drifted.data.price;
+      assert.throws(
+        () => validateResponse(detailPath, good.response, drifted),
+        /required/,
       );
+      t.diagnostic("Drifted copy: FAIL as expected (required price removed).");
+      validateResponse(detailPath, good.response, good.body);
+      t.diagnostic("Real response: PASS.");
     },
   );
   await t.test(
@@ -526,7 +486,6 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       ).rows;
       assert.ok(records.every((row) => row.site_id === "site_demo_primary"));
       assert.equal(records.filter((row) => row.revoked_at !== null).length, 1);
-      key.secret = rotated.secret;
       await assert.rejects(
         keyCommand(directory, "create", "site_demo_primary", "admin", "bad"),
       );
@@ -583,6 +542,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
   await t.test(
     "open country/currency, decimal precision and safe-integer bedroom schema controls",
     async () => {
+      const good = await request(listing);
       const sample = structuredClone(good.body);
       sample.data.address.country = "CA";
       sample.data.price = { amount: "123.456", currency: "CAD" };
@@ -593,7 +553,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         () => validateResponse(detailPath, good.response, sample),
         /maximum/,
       );
-      valid(contract.components.schemas.Money, {
+      valid("/components/schemas/Money", {
         amount: "0.001",
         currency: "KWD",
       });
@@ -610,47 +570,6 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         ),
         { code: "23514" },
       );
-    },
-  );
-  await t.test(
-    "stopped database is a safe 503 while discovery and contract remain available",
-    async () => {
-      assert.ok(
-        process.env.IDX_TEST_PGDATA,
-        "Only the disposable runner cluster may be stopped",
-      );
-      await execute("/usr/lib/postgresql/18/bin/pg_ctl", [
-        "-D",
-        process.env.IDX_TEST_PGDATA!,
-        "-m",
-        "fast",
-        "-w",
-        "stop",
-      ]);
-      const result = await request(listing, 503);
-      assert.equal(result.body.code, "service_unavailable");
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const failure = engine
-        .logs()
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line))
-        .filter((line) => line.requestId === result.body.requestId);
-      assert.equal(failure.length, 1);
-      assert.equal(failure[0].operation, "key.lookup");
-      assert.equal(failure[0].errorCode, "ECONNREFUSED");
-      assert.equal(typeof failure[0].errorType, "string");
-      for (const value of [
-        "postgres",
-        "SELECT",
-        "secret_hash",
-        "ECONNREFUSED",
-        "127.0.0.1",
-        "idx_runtime",
-      ])
-        assert.ok(!result.text.includes(value));
-      await request("/api", 200, null);
-      await request("/api/v1/openapi.json", 200, null);
     },
   );
   await t.test(

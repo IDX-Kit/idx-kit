@@ -84,11 +84,54 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Prove guide, search, paging and property HTML without JavaScript
         run: npm run test:demo 2>&1 | tee "$IDX_TEST_LOG_DIR/demo.log"
-      # Search runs first; the detail suite stops the disposable database at its end.
       - name: Prove search, live paging, detail and key lifecycle against the contract
-        env:
-          IDX_TEST_PGDATA: ${{ runner.temp }}/idx11-pg
         run: npm run test:api 2>&1 | tee "$IDX_TEST_LOG_DIR/api.log"
+      - name: Prove detail then search on the same database without reseeding
+        run: |
+          started=$SECONDS
+          node --test tests/api/detail.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/api-reverse-detail.log"
+          node --test tests/api/search.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/api-reverse-search.log"
+          elapsed=$((SECONDS - started))
+          echo "Reverse-order API proof added ${elapsed}s (budget: 60s)"
+          (( elapsed < 60 ))
+      - name: Prove safe database failure with the cluster stopped by CI
+        run: |
+          /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { startEngine } from "./tests/api/runtime.ts";
+          import { validateResponse } from "./tests/api/contract.ts";
+          const engine = await startEngine();
+          let body;
+          try {
+            const response = await fetch("http://127.0.0.1:8787/api/v1/listings/lst_demo_0001", {
+              headers: { Authorization: "Bearer invalid-secret-marker" },
+            });
+            const text = await response.text();
+            body = JSON.parse(text);
+            assert.equal(response.status, 503);
+            assert.equal(body.code, "service_unavailable");
+            assert.equal(body.requestId, response.headers.get("Request-Id"));
+            validateResponse("/api/v1/listings/{listingId}", response, body);
+            for (const value of ["postgres", "SELECT", "secret_hash", "ECONNREFUSED", "127.0.0.1", "idx_runtime"])
+              assert.ok(!text.includes(value));
+            for (const path of ["/api", "/api/v1/openapi.json"]) {
+              const discovery = await fetch(`http://127.0.0.1:8787${path}`);
+              assert.equal(discovery.status, 200);
+              validateResponse(path, discovery, await discovery.json());
+            }
+          } finally {
+            await engine.stop();
+          }
+          const failure = engine.logs().trim().split("\n")
+            .map((line) => JSON.parse(line))
+            .filter((line) => line.requestId === body.requestId);
+          assert.equal(failure.length, 1);
+          assert.equal(failure[0].operation, "key.lookup");
+          assert.equal(failure[0].errorCode, "ECONNREFUSED");
+          assert.equal(typeof failure[0].errorType, "string");
+          console.log("Stopped database: safe 503, correlated cause, discovery and contract PASS.");
+          JS
       - name: Reject credentials in every captured engine and site log
         if: always() && steps.acceptance.outcome != 'skipped'
         run: node scripts/check-logs.mjs

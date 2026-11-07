@@ -4,8 +4,25 @@ import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
+import type pg from "pg";
 
 export const execute = promisify(execFile);
+export async function preserveKeys(db: pg.Client) {
+  const { rows } = await db.query(
+    "SELECT id, revoked_at FROM idx.site_secret_keys",
+  );
+  return async () => {
+    await db.query("DELETE FROM idx.site_secret_keys WHERE NOT (id = ANY($1))", [
+      rows.map((row) => row.id),
+    ]);
+    for (const row of rows) {
+      await db.query(
+        "UPDATE idx.site_secret_keys SET revoked_at=$2 WHERE id=$1",
+        [row.id, row.revoked_at],
+      );
+    }
+  };
+}
 export async function keyCommand(
   directory: string,
   action: string,

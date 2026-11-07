@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { AnySchemaObject } from "ajv";
 import addFormats from "ajv-formats";
 import { parse } from "yaml";
+import { tmpdir } from "node:os";
+import { execute } from "./runtime.ts";
 
 export const contract = parse(
   await readFile(
@@ -11,29 +12,30 @@ export const contract = parse(
     "utf8",
   ),
 );
+const directory = await mkdtemp(`${tmpdir()}/idx-contract-`);
+let bundled;
+try {
+  const output = `${directory}/contract.json`;
+  await execute(process.execPath, [
+    "node_modules/@redocly/cli/bin/cli.js",
+    "bundle",
+    "openapi/v1/openapi.yaml",
+    "--dereferenced",
+    "--output",
+    output,
+  ]);
+  bundled = JSON.parse(await readFile(output, "utf8"));
+} finally {
+  await rm(directory, { recursive: true, force: true });
+}
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 addFormats.default(ajv);
-const dereference = (value: AnySchemaObject): AnySchemaObject =>
-  value.$ref
-    ? dereference(
-        value.$ref
-          .slice(2)
-          .split("/")
-          .reduce(
-            (object: AnySchemaObject, name: string) => object[name],
-            contract,
-          ),
-      )
-    : value;
-const validators = new Map();
-export function valid(schema: AnySchemaObject, value: unknown) {
-  const key = JSON.stringify(schema);
-  if (!validators.has(key))
-    validators.set(
-      key,
-      ajv.compile({ ...schema, components: contract.components }),
-    );
-  const validate = validators.get(key);
+ajv.addSchema(bundled, "urn:idx-kit:contract");
+const pointer = (name: string) =>
+  name.replaceAll("~", "~0").replaceAll("/", "~1");
+export function valid(reference: string, value: unknown) {
+  const validate = ajv.getSchema(`urn:idx-kit:contract#${reference}`);
+  assert.ok(validate, `Documented schema: ${reference}`);
   assert.ok(validate(value), JSON.stringify(validate.errors));
 }
 export function validateResponse(
@@ -42,23 +44,27 @@ export function validateResponse(
   body: unknown,
   headersOnly = false,
 ) {
-  const operation = contract.paths[path]?.get;
-  const definition = dereference(
-    operation?.responses[response.status] ??
-      operation?.responses.default ??
-      contract.components.responses.Problem,
-  );
-  for (const [name, value] of Object.entries(definition.headers)) {
-    const header = dereference(value as AnySchemaObject);
+  const operation = bundled.paths[path]?.get;
+  const status = Object.hasOwn(operation?.responses ?? {}, response.status)
+    ? response.status
+    : "default";
+  const reference = operation
+    ? `/paths/${pointer(path)}/get/responses/${status}`
+    : "/components/responses/Problem";
+  const definition =
+    operation?.responses[status] ?? bundled.components.responses.Problem;
+  for (const [name, header] of Object.entries(definition.headers)) {
     const actual = response.headers.get(name);
-    if (header.required)
+    if ((header as { required?: boolean }).required)
       assert.notEqual(actual, null, `Required header: ${name}`);
-    if (actual !== null) valid(header.schema, actual);
+    if (actual !== null)
+      valid(`${reference}/headers/${pointer(name)}/schema`, actual);
   }
   const mediaType = response.headers.get("content-type")?.split(";")[0];
   assert.ok(
     mediaType && Object.hasOwn(definition.content, mediaType),
     "Documented response media type",
   );
-  if (!headersOnly) valid(definition.content[mediaType].schema, body);
+  if (!headersOnly)
+    valid(`${reference}/content/${pointer(mediaType)}/schema`, body);
 }

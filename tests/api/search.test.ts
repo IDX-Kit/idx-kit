@@ -15,7 +15,7 @@ import {
 import type { FixtureRecord } from "@idx-kit/engine/src/domain/normalize.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { validateResponse } from "./contract.ts";
-import { keyCommand, startEngine } from "./runtime.ts";
+import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
 
 test(
   "real HTTP search and live continuation acceptance",
@@ -30,7 +30,18 @@ test(
         item.feedId === "feed_demo_primary" &&
         item.source.InternetEntireListingDisplayYN,
     ).length;
-    await seed(db, fixtures);
+    const restoreKeys = await preserveKeys(db);
+    t.after(async () => {
+      try {
+        await restoreKeys();
+      } finally {
+        try {
+          await db.end();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      }
+    });
     const key = await keyCommand(
       directory,
       "create",
@@ -52,22 +63,16 @@ test(
       "limited",
     );
     const engine = await startEngine();
+    t.after(() => engine.stop());
     const clearExtra = async () => {
       await db.query(
         "DELETE FROM idx.source_mappings WHERE listing_id LIKE 'lst_search_%'",
       );
       await db.query("DELETE FROM idx.listings WHERE id LIKE 'lst_search_%'");
     };
-    t.beforeEach(async () => {
+    t.afterEach(async () => {
       await clearExtra();
       await seed(db, fixtures);
-    });
-    t.after(async () => {
-      await engine.stop();
-      await clearExtra();
-      await seed(db, fixtures);
-      await db.end();
-      await rm(directory, { recursive: true, force: true });
     });
     const path = "/api/v1/listings";
     const requestIds = new Set<string>();
