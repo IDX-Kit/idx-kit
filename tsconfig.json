@@ -13,6 +13,6 @@
     "packages/**/*.ts",
     "tests/**/*.ts",
     ".generated/**/*.ts",
-    "examples/demo-site/src/env.d.ts"
+    "examples/demo-site/src/worker-env.d.ts"
   ]
 }
