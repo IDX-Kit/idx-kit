@@ -892,7 +892,9 @@ test.describe.serial("SSR property pages through the public engine", () => {
       expect(
         await raw(request, "/search", 502, "http://127.0.0.1:4322"),
       ).toContain("Unable to load these results");
-      expect(wrong.logs()).toContain('"category":"key_problem"');
+      await expect
+        .poll(() => wrong.logs())
+        .toContain('"category":"key_problem"');
       expect(wrong.logs()).toMatch(
         /"upstreamStatus":401,"requestId":"[0-9a-f-]{36}"/,
       );
@@ -923,7 +925,9 @@ test.describe.serial("SSR property pages through the public engine", () => {
     ])
       expect(html).not.toContain(value);
     expect(site.logs()).toContain('"category":"engine_outage"');
-    expect(site.logs()).toMatch(/"errorType":"(TypeError|TimeoutError)"/);
+    await expect
+      .poll(() => site.logs())
+      .toMatch(/"errorType":"(TypeError|TimeoutError)"/);
     expect(site.logs()).toContain('"upstreamStatus":null');
     expect(site.logs()).not.toContain(secret);
   });
