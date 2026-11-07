@@ -15,6 +15,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://idx_migration:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
       IDX_TEST_LOG_DIR: /tmp/idx-test-logs
+      WRANGLER_SEND_METRICS: "false"
+      CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false"
       RUNTIME_DATABASE_URL: postgresql://idx_runtime:synthetic_ci_db_password@127.0.0.1:55432/idx_demo
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -28,14 +30,28 @@ jobs:
           npm ci
       - name: Check formatting and lint
         run: |
-          npm run format:check
+          if ! npm run format:check; then
+            npm run format
+            git diff > "$RUNNER_TEMP/format.patch"
+            exit 1
+          fi
           npm run lint
+      - name: Save formatting corrections if needed
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: formatting-corrections
+          path: ${{ runner.temp }}/format.patch
+          if-no-files-found: ignore
+      - name: Check Worker exposure and binding invariants
+        run: npm run workers:check
       - name: Lint contract with no errors or warnings
         run: npm run contract:lint
       - name: Generate client and compatibility types
         run: |
           npm run contract:generate
           npm run contract:compat
+          npm run workers:contract
       - name: Save generated client for inspection
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -94,6 +110,25 @@ jobs:
           elapsed=$((SECONDS - started))
           echo "Reverse-order API proof added ${elapsed}s (budget: 60s)"
           (( elapsed < 60 ))
+      - name: Build both Workers without deploying and enforce Free bundle size
+        run: |
+          npm run workers:site:build
+          node scripts/check-worker-config.mjs examples/demo-site/dist-worker/server/wrangler.json
+          npx wrangler deploy --config packages/engine/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-engine"
+          npx wrangler deploy --config examples/demo-site/dist-worker/server/wrangler.json --dry-run --outdir "$RUNNER_TEMP/worker-site"
+          node scripts/check-worker-size.mjs "$RUNNER_TEMP/worker-engine" "$RUNNER_TEMP/worker-site"
+      - name: Run the API, key lifecycle and contract suites against the engine Worker
+        env:
+          IDX_RUNTIME: worker
+        run: npm run test:api 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-api.log"
+      - name: Run the same no-JS site journeys through the Worker service binding
+        env:
+          IDX_RUNTIME: worker
+        run: npm run test:demo 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-demo.log"
+      - name: Prove Hyperdrive uses the restricted role and records failure causes
+        env:
+          IDX_RUNTIME: worker
+        run: node --test tests/workers/database.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-database.log"
       - name: Prove safe database failure with the cluster stopped by CI
         run: |
           /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
@@ -133,8 +168,15 @@ jobs:
           console.log("Stopped database: safe 503, correlated cause, discovery and contract PASS.");
           JS
       - name: Reject credentials in every captured engine and site log
+        id: logcheck
         if: always() && steps.acceptance.outcome != 'skipped'
         run: node scripts/check-logs.mjs
+      - name: Save verified runtime logs
+        if: always() && steps.logcheck.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-logs
+          path: /tmp/idx-test-logs/*.log
       - name: Stop only the task cluster
         if: always()
         run: |

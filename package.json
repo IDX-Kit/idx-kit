@@ -26,7 +26,10 @@
     "demo:engine": "node packages/engine/src/runtime/node.ts",
     "demo:key": "node packages/engine/src/runtime/key.ts",
     "demo:db:migrate": "node packages/engine/src/db/migrate.ts",
-    "demo:seed": "node packages/engine/src/db/seed.ts"
+    "demo:seed": "node packages/engine/src/db/seed.ts",
+    "workers:contract": "redocly bundle openapi/v1/openapi.yaml --output .generated/openapi.json",
+    "workers:check": "node --test tests/worker-config.test.mjs && node scripts/check-worker-config.mjs",
+    "workers:site:build": "IDX_WORKER=1 npm run build --workspace @idx-kit/demo-site"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
@@ -44,6 +47,7 @@
     "@types/node": "24.10.0",
     "@types/pg": "8.15.6",
     "openapi-typescript": "7.13.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "wrangler": "4.158.0"
   }
 }

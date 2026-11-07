@@ -124,3 +124,22 @@ Bug reports, questions and ideas are welcome. Code contributions are not
 accepted. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue.
 Report security vulnerabilities privately as described in
 [SECURITY.md](SECURITY.md).
+
+### Worker build proof
+
+CI also builds the engine and demo site as separate Workers, then reruns the API
+and no-JavaScript page suites under local Wrangler on the runner. The site uses
+an HTTP service binding to the engine; Node keeps using HTTP over the network.
+The engine opens one `pg` client per request through `HYPERDRIVE`. Local tests
+supply `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` with the restricted
+`idx_runtime` login. The site reads `IDX_SECRET_KEY` from a Worker secret.
+
+From the repository root, `npm ci`, `npm run workers:contract`, and
+`npm run workers:site:build` prepare the Worker builds. CI runs
+`wrangler deploy --dry-run --outdir` for each and checks gzip sizes against the
+Free plan's 3 MiB limit. These commands do not deploy anything. Config checks
+also reject public engine routes, alternate site addresses, embedded credentials,
+and changes to logging, database placement or the marked Hyperdrive placeholder.
+The fixed Worker names are `idx-kit-demo-engine` and `idx-kit-demo-site`.
+Online setup, the real Hyperdrive id, deploy commands and Access verification
+belong to a separate task. Local test results do not measure production CPU time.

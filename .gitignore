@@ -11,3 +11,6 @@ contract-lint.json
 .astro/
 test-results/
 playwright-report/
+.wrangler/
+.dev.vars*
+dist-worker/

@@ -1,3 +1,4 @@
+import { startWorker, workerRuntime } from "../workers/runtime.ts";
 import { captureLog, registerSecret } from "../logs.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -60,6 +61,7 @@ export async function keyCommand(
   return { id, secret, path };
 }
 export async function startEngine() {
+  if (workerRuntime) return startWorker("packages/engine/wrangler.jsonc", 8787);
   const child = spawn(
     process.execPath,
     ["packages/engine/src/runtime/node.ts"],

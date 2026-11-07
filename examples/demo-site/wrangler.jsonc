@@ -1,0 +1,10 @@
+{
+  "name": "idx-kit-demo-site",
+  "compatibility_date": "2026-11-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "routes": [{ "pattern": "demo.idxkit.com", "custom_domain": true }],
+  "services": [{ "binding": "IDX_ENGINE", "service": "idx-kit-demo-engine" }]
+}

@@ -1,8 +1,7 @@
-import type pg from "pg";
 import type { DisplayBlock } from "@idx-kit/client";
 import type { SearchQuery } from "../domain/search-query.ts";
 import { listingSelect, readQuery } from "./read.ts";
-import type { ListingRow } from "./read.ts";
+import type { Database, ListingRow } from "./read.ts";
 
 export interface FeedRow {
   display_blocks: DisplayBlock[];
@@ -12,7 +11,7 @@ export interface FeedRow {
   rules_version: string;
 }
 export async function searchListings(
-  pool: pg.Pool,
+  pool: Database,
   { context: c, last }: SearchQuery,
 ) {
   const feeds = await readQuery<FeedRow>(

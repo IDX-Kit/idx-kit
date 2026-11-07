@@ -1,3 +1,4 @@
+import { startWorkerSite, workerRuntime } from "../workers/runtime.ts";
 import { captureLog } from "../logs.ts";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
@@ -20,6 +21,7 @@ let directory: string,
 let site: Awaited<ReturnType<typeof startSite>>;
 let db: pg.Client;
 async function startSite(base = "http://127.0.0.1:8787", port = 4321) {
+  if (workerRuntime) return startWorkerSite(secret, base, port);
   const child = spawn(process.execPath, ["start.mjs"], {
     cwd: "examples/demo-site",
     stdio: ["ignore", "pipe", "pipe"],

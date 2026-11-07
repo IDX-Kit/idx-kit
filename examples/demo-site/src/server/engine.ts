@@ -7,6 +7,10 @@ import type {
   SearchListingsQuery,
 } from "@idx-kit/client";
 
+const bindings = import.meta.env?.IDX_WORKER
+  ? (await import("cloudflare:workers")).env
+  : undefined;
+
 export class PageFailure extends Error {
   status: number;
   reason: string;
@@ -65,8 +69,9 @@ export function logFailure(
 
 // Imported only by server entry points. Configuration and upstream errors stay on the server.
 export function engineClient() {
-  const base = new URL(process.env.IDX_ENGINE_URL ?? "");
-  const secret = process.env.IDX_SECRET_KEY;
+  const binding = bindings?.IDX_ENGINE;
+  const base = new URL(binding ? "https://engine.internal" : process.env.IDX_ENGINE_URL ?? "");
+  const secret = bindings ? bindings.IDX_SECRET_KEY : process.env.IDX_SECRET_KEY;
   if (
     !["http:", "https:"].includes(base.protocol) ||
     base.username ||
@@ -84,6 +89,7 @@ export function engineClient() {
   const client = createClient<Ops>(OPERATIONS, {
     serverUrl: base.origin,
     timeout: 5000,
+    fetch: binding ? (input, init) => binding.fetch(input, init) : fetch,
     onResponse(response) {
       requestId = response.headers.get("Request-Id");
       upstreamStatus = response.status;

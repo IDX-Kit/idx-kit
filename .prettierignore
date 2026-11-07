@@ -6,3 +6,5 @@ fixtures/
 coverage/
 test-results/
 playwright-report/
+**/dist-worker/
+**/.wrangler/

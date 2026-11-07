@@ -22,6 +22,8 @@ export default defineConfig(
   globalIgnores([
     "**/node_modules/**",
     "**/dist/**",
+    "**/dist-worker/**",
+    "**/.wrangler/**",
     "**/.astro/**",
     ".generated/**",
     "coverage/**",

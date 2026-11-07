@@ -4,6 +4,13 @@ import { HttpProblem } from "../http/problem.ts";
 import { searchListings } from "./search.ts";
 import type { SearchQuery } from "../domain/search-query.ts";
 
+export interface Database {
+  query<T extends pg.QueryResultRow>(
+    sql: string,
+    values: unknown[],
+  ): Promise<pg.QueryResult<T>>;
+}
+
 interface SiteKey {
   site_id: string;
   scopes: string[];
@@ -29,7 +36,7 @@ export interface ListingRow {
   rules_version: string;
 }
 export async function readQuery<T extends pg.QueryResultRow>(
-  pool: pg.Pool,
+  pool: Database,
   sql: string,
   values: unknown[],
   operation: string,
@@ -58,7 +65,7 @@ export const listingSelect = `SELECT l.id, l.synthetic, l.status, l.price::text,
     JOIN idx.data_licenses d ON d.feed_id = f.id AND d.site_id = $1
     WHERE m.listing_id = l.id LIMIT 1
   ) f ON true`;
-export function repository(pool: pg.Pool) {
+export function repository(pool: Database) {
   const query = <T extends pg.QueryResultRow>(
     sql: string,
     values: unknown[],

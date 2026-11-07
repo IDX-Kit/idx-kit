@@ -10,6 +10,7 @@
   "dependencies": {
     "@astrojs/node": "11.1.9",
     "astro": "7.4.5",
-    "@idx-kit/client": "0.0.0"
+    "@idx-kit/client": "0.0.0",
+    "@astrojs/cloudflare": "14.4.6"
   }
 }
