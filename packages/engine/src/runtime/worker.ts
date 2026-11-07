@@ -1,6 +1,6 @@
 import pg from "pg";
 import contract from "../../../../.generated/openapi.json" with { type: "json" };
-import { version } from "../../package.json" with { type: "json" };
+import metadata from "../../package.json" with { type: "json" };
 import { repository } from "../db/read.ts";
 import type { Database } from "../db/read.ts";
 import { createApp } from "../http/app.ts";
@@ -28,7 +28,7 @@ export default {
     };
     let response: Response | undefined;
     try {
-      response = await createApp(repository(db), contract, version).fetch(
+      response = await createApp(repository(db), contract, metadata.version).fetch(
         request,
       );
       return response;
