@@ -93,7 +93,7 @@ export function engineClient() {
   const client = createClient<Ops>(OPERATIONS, {
     serverUrl: base.origin,
     timeout: 5000,
-    fetch: binding ? (input, init) => binding.fetch(input, init) : fetch,
+    fetch: binding?.fetch.bind(binding),
     onResponse(response) {
       requestId = response.headers.get("Request-Id");
       upstreamStatus = response.status;
