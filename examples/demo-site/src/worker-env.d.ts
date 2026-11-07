@@ -1,3 +1,7 @@
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 interface ImportMetaEnv {
   readonly IDX_WORKER?: boolean;
 }
