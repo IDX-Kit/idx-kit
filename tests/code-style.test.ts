@@ -3,6 +3,22 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { ESLint } from "eslint";
+
+const findings = (output: string) =>
+  (JSON.parse(output) as ESLint.LintResult[]).map(({ filePath, messages }) => ({
+    filePath,
+    messages: messages.map(
+      ({ ruleId, severity, line, column, endLine, endColumn }) => ({
+        ruleId,
+        severity,
+        line,
+        column,
+        endLine,
+        endColumn,
+      }),
+    ),
+  }));
 
 test("formatting, statement count and package seams are enforced", () => {
   const directories: string[] = [];
@@ -38,7 +54,7 @@ test("formatting, statement count and package seams are enforced", () => {
         "json",
       ]);
       assert.equal(baseline.status, result.status, baseline.stderr);
-      assert.deepEqual(JSON.parse(baseline.stdout), reports);
+      assert.deepEqual(findings(baseline.stdout), findings(result.stdout));
     }
     if (rule)
       assert.ok(

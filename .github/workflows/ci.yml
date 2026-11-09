@@ -52,7 +52,7 @@ jobs:
           baseline="$RUNNER_TEMP/lint-baseline"
           mkdir -p "$baseline"
           git archive 931c9bee6e0a43c326461adff157a9f0003166ab | tar -x -C "$baseline"
-          npm ci --ignore-scripts --prefix "$baseline"
+          npm ci --ignore-scripts --no-audit --prefix "$baseline"
           export IDX_BASELINE_ESLINT="$baseline/node_modules/eslint/bin/eslint.js"
           export IDX_BASELINE_CONFIG="$baseline/eslint.config.mjs"
           node "$IDX_BASELINE_ESLINT" --config "$IDX_BASELINE_CONFIG" . --format json > "$RUNNER_TEMP/lint-before.json"
