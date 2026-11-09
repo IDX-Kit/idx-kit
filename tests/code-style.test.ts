@@ -29,6 +29,17 @@ test("formatting, statement count and package seams are enforced", () => {
     ]);
     assert.equal(result.status, rule ? 1 : 0, result.stdout + result.stderr);
     const reports = JSON.parse(result.stdout);
+    if (process.env.IDX_BASELINE_ESLINT) {
+      const baseline = run(process.env.IDX_BASELINE_ESLINT, [
+        "--config",
+        process.env.IDX_BASELINE_CONFIG!,
+        path,
+        "--format",
+        "json",
+      ]);
+      assert.equal(baseline.status, result.status, baseline.stderr);
+      assert.deepEqual(JSON.parse(baseline.stdout), reports);
+    }
     if (rule)
       assert.ok(
         reports.some((report: { messages: { ruleId: string }[] }) =>

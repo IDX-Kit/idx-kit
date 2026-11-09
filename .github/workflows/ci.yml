@@ -18,6 +18,8 @@ jobs:
       CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
@@ -43,6 +45,20 @@ jobs:
         run: |
           npm run format:check
           npm run lint
+      - name: Audit dependencies including development tooling
+        run: npm audit --omit=optional
+      - name: Compare lint findings with the pre-update dependency tree
+        run: |
+          baseline="$RUNNER_TEMP/lint-baseline"
+          mkdir -p "$baseline"
+          git archive 931c9bee6e0a43c326461adff157a9f0003166ab | tar -x -C "$baseline"
+          npm ci --ignore-scripts --prefix "$baseline"
+          export IDX_BASELINE_ESLINT="$baseline/node_modules/eslint/bin/eslint.js"
+          export IDX_BASELINE_CONFIG="$baseline/eslint.config.mjs"
+          node "$IDX_BASELINE_ESLINT" --config "$IDX_BASELINE_CONFIG" . --format json > "$RUNNER_TEMP/lint-before.json"
+          node node_modules/eslint/bin/eslint.js . --format json > "$RUNNER_TEMP/lint-after.json"
+          diff -u "$RUNNER_TEMP/lint-before.json" "$RUNNER_TEMP/lint-after.json"
+          node --test tests/code-style.test.ts
       - name: Check Worker exposure and binding invariants
         run: npm run workers:check
       - name: Lint contract with no errors or warnings
