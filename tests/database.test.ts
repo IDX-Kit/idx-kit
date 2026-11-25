@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      2,
+      3,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -72,7 +72,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     );
   });
   await t.test(
-    "runtime can read, but cannot create, drop or write tables",
+    "runtime reads listings but cannot change schema, sites or accepted inquiries",
     async () => {
       await runtime.query("SELECT * FROM idx.listings");
       for (const sql of [
@@ -80,6 +80,9 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "CREATE TABLE public.forbidden (id int)",
         "DROP TABLE idx.listings",
         "INSERT INTO idx.sites VALUES ('forbidden')",
+        "UPDATE idx.inquiries SET message='forbidden'",
+        "DELETE FROM idx.inquiries",
+        "TRUNCATE idx.inquiries",
       ]) {
         await assert.rejects(runtime.query(sql), { code: "42501" });
       }
