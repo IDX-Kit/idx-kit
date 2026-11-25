@@ -14,7 +14,6 @@ jobs:
         shell: bash
     env:
       IDX_TEST_LOG_DIR: /tmp/idx-test-logs
-      IDX_TEST_PG_DIR: ${{ runner.temp }}/idx11-pg
       WRANGLER_SEND_METRICS: "false"
       CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false"
     steps:
@@ -30,6 +29,7 @@ jobs:
           node --input-type=module <<'JS'
           import { randomBytes } from "node:crypto";
           import { appendFileSync } from "node:fs";
+          appendFileSync(process.env.GITHUB_ENV, `IDX_TEST_PG_DIR=${process.env.RUNNER_TEMP}/idx11-pg\n`);
           const password = randomBytes(32).toString("base64url");
           console.log(`::add-mask::${password}`);
           for (const [name, role] of [["DATABASE_URL", "idx_migration"], ["RUNTIME_DATABASE_URL", "idx_runtime"]]) {
