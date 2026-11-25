@@ -132,7 +132,11 @@ test(
       assert.equal(response.status, status);
       const text = await response.text();
       const body = init.method === "HEAD" ? undefined : JSON.parse(text);
-      const route = target.startsWith(path + "/") ? receiptPath : target;
+      const route = target.startsWith(path + "/")
+        ? receiptPath
+        : target.startsWith("/api/v1/listings/")
+          ? "/api/v1/listings/{listingId}"
+          : target;
       validateResponse(
         route,
         response,
@@ -317,6 +321,8 @@ test(
             });
             const result = await response.json();
             validateResponse(path, response, result, false, "post");
+            assert.equal(response.headers.get("Cache-Control"), "no-store");
+            assert.match(response.headers.get("Request-Id")!, /^[0-9a-f-]{36}$/);
             requests.push({
               id: response.headers.get("Request-Id")!,
               status: response.status,
@@ -339,6 +345,8 @@ test(
             new Set(accepted.map((item) => item.body.data.id)).size,
             1,
           );
+          for (const item of accepted)
+            assert.deepEqual(item.body, accepted[0].body);
           for (const item of results.filter(
             (item) => item.response.status !== 201,
           )) {
@@ -663,6 +671,7 @@ test(
           "untrusted-inquiry-request-id",
         ])
           assert.ok(!text.includes(value));
+        assert.equal(new Set(requests.map((item) => item.id)).size, requests.length);
         const records = text
           .split("\n")
           .filter(Boolean)
