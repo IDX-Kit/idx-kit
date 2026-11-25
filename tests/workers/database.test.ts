@@ -29,10 +29,17 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
     assert.equal((await request()).status, 200);
     const create = await fetch("http://127.0.0.1:8787/api/v1/inquiries", {
       method: "POST",
-      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json", "Idempotency-Key": `"${randomUUID()}"` },
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `"${randomUUID()}"`,
+      },
       body: JSON.stringify({
         listingId: "lst_demo_0001",
-        visitor: { name: "Synthetic Worker Visitor", email: "worker@example.invalid" },
+        visitor: {
+          name: "Synthetic Worker Visitor",
+          email: "worker@example.invalid",
+        },
         message: "Synthetic Worker insert privilege proof.",
         context: { pagePath: "/properties/lst_demo_0001" },
       }),
@@ -41,9 +48,12 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
     assert.equal(create.status, 201);
     validateResponse("/api/v1/inquiries", create, receipt, false, "post");
     inquiryId = receipt.data.id;
-    const read = await fetch(`http://127.0.0.1:8787${create.headers.get("Location")}`, {
-      headers: { Authorization: `Bearer ${secret}` },
-    });
+    const read = await fetch(
+      `http://127.0.0.1:8787${create.headers.get("Location")}`,
+      {
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+    );
     const readBody = await read.json();
     assert.equal(read.status, 200);
     validateResponse("/api/v1/inquiries/{inquiryId}", read, readBody);
@@ -71,7 +81,8 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
   } finally {
     await engine?.stop();
     await db.query("GRANT SELECT ON idx.site_secret_keys TO idx_runtime");
-    if (inquiryId) await db.query("DELETE FROM idx.inquiries WHERE id=$1", [inquiryId]);
+    if (inquiryId)
+      await db.query("DELETE FROM idx.inquiries WHERE id=$1", [inquiryId]);
     await restoreKeys();
     await db.end();
     await rm(directory, { recursive: true, force: true });

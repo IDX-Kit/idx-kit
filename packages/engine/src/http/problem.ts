@@ -38,7 +38,9 @@ export function problemResponse(error: unknown, requestId: string) {
     detail,
     code,
     requestId,
-    ...(error instanceof HttpProblem && error.errors ? { errors: error.errors } : {}),
+    ...(error instanceof HttpProblem && error.errors
+      ? { errors: error.errors }
+      : {}),
   };
   const headers = new Headers({
     "Content-Type": "application/problem+json",

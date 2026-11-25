@@ -43,21 +43,9 @@ jobs:
           node --version
           npm ci
       - name: Check formatting and lint
-        id: style
         run: |
           npm run format:check
           npm run lint
-      - name: Prepare formatting patch
-        if: failure() && steps.style.outcome == 'failure'
-        run: |
-          npm run format
-          git diff > "$RUNNER_TEMP/format.patch"
-      - name: Save formatting patch
-        if: failure() && steps.style.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: formatting-patch
-          path: ${{ runner.temp }}/format.patch
       - name: Audit dependencies including development tooling
         run: npm audit --omit=optional
       - name: Compare lint findings with the pre-update dependency tree

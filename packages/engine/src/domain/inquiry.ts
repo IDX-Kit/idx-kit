@@ -6,10 +6,21 @@ import type { Repository } from "../db/read.ts";
 import type { InquiryRow } from "../db/inquiries.ts";
 import { HttpProblem } from "../http/problem.ts";
 
-const sitePath = z.string().min(1).max(256).regex(/^\/[A-Za-z0-9/_-]*$/);
-const token = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
+const sitePath = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^\/[A-Za-z0-9/_-]*$/);
+const token = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9_-]+$/);
 export const inquirySchema = z.strictObject({
-  listingId: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
+  listingId: z
+    .string()
+    .min(1)
+    .regex(/^[A-Za-z0-9_-]+$/),
   visitor: z.strictObject({
     name: z.string().min(1).max(100),
     email: z.email().min(3).max(254),
@@ -24,18 +35,33 @@ export const inquirySchema = z.strictObject({
   }),
 });
 export const inquiryHeaders = z.object({
-  "idempotency-key": z.string().regex(/^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$/),
+  "idempotency-key": z
+    .string()
+    .regex(
+      /^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$/,
+    ),
 });
 export function invalidInquiry(issues: z.core.$ZodIssue[]) {
-  const problem = new HttpProblem(422, "invalid_input", "Check the inquiry fields.");
+  const problem = new HttpProblem(
+    422,
+    "invalid_input",
+    "Check the inquiry fields.",
+  );
   problem.errors = issues.map((issue) => ({
-    pointer: "/" + issue.path.map((part) => String(part).replaceAll("~", "~0").replaceAll("/", "~1")).join("/"),
+    pointer:
+      "/" +
+      issue.path
+        .map((part) => String(part).replaceAll("~", "~0").replaceAll("/", "~1"))
+        .join("/"),
     detail: "Use a valid value for this field.",
   }));
   return problem;
 }
 export function receipt(row: InquiryRow): ReceiptResponse {
-  return { data: { id: row.id, receivedAt: row.received_at.toISOString() }, meta: {} };
+  return {
+    data: { id: row.id, receivedAt: row.received_at.toISOString() },
+    meta: {},
+  };
 }
 export async function createInquiry(
   db: Repository,
@@ -46,7 +72,11 @@ export async function createInquiry(
   const hash = createHash("sha256").update(canonicalize(input)!).digest("hex");
   const compare = (row: InquiryRow) => {
     if (row.body_hash !== hash)
-      throw new HttpProblem(422, "idempotency_mismatch", "This action has different inquiry fields.");
+      throw new HttpProblem(
+        422,
+        "idempotency_mismatch",
+        "This action has different inquiry fields.",
+      );
     return row;
   };
   const existing = await db.inquiryByKey(site, key);
@@ -58,5 +88,9 @@ export async function createInquiry(
   // A new statement gets a fresh Read Committed snapshot after the insert waits.
   const committed = await db.inquiryByKey(site, key);
   if (committed) return compare(committed);
-  throw new HttpProblem(503, "service_unavailable", "Retry the same action when the service is available.");
+  throw new HttpProblem(
+    503,
+    "service_unavailable",
+    "Retry the same action when the service is available.",
+  );
 }
