@@ -1,6 +1,7 @@
 import type pg from "pg";
 import type { DisplayBlock, Listing } from "@idx-kit/client";
 import { HttpProblem } from "../http/problem.ts";
+import { inquiryQueries } from "./inquiries.ts";
 import { searchListings } from "./search.ts";
 import type { SearchQuery } from "../domain/search-query.ts";
 
@@ -72,6 +73,7 @@ export function repository(pool: Database) {
     operation: string,
   ) => readQuery<T>(pool, sql, values, operation);
   return {
+    ...inquiryQueries(pool),
     search: (query: SearchQuery) => searchListings(pool, query),
     async key(hash: string): Promise<SiteKey | undefined> {
       return (

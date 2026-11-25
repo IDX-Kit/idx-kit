@@ -6,6 +6,7 @@ export class HttpProblem extends Error {
   readonly code: string;
   readonly detail: string;
   readonly operation?: string;
+  errors?: Problem["errors"];
   constructor(
     status: number,
     code: string,
@@ -37,6 +38,7 @@ export function problemResponse(error: unknown, requestId: string) {
     detail,
     code,
     requestId,
+    ...(error instanceof HttpProblem && error.errors ? { errors: error.errors } : {}),
   };
   const headers = new Headers({
     "Content-Type": "application/problem+json",

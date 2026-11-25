@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { Buffer } from "node:buffer";
+import { bodyLimit } from "hono/body-limit";
 import { bearerAuth } from "hono/bearer-auth";
 import { HTTPException } from "hono/http-exception";
 import { requestId } from "hono/request-id";
 import { zValidator } from "@hono/zod-validator";
 import type { DiscoveryResponse } from "@idx-kit/client";
 import type { Repository } from "../db/read.ts";
+import { createInquiry, inquiryHeaders, inquirySchema, invalidInquiry, receipt } from "../domain/inquiry.ts";
 import { listingDetail } from "../domain/detail.ts";
 import { listingSearch } from "../domain/search.ts";
 import {
@@ -79,7 +81,9 @@ export function createApp(
             "unauthorized",
             "A valid secret key is required.",
           )
-        : error;
+        : error instanceof HTTPException && error.status === 400
+          ? new HttpProblem(400, "invalid_json", "Use a valid JSON body.")
+          : error;
     c.set(
       "code",
       problem instanceof HttpProblem ? problem.code : "internal_error",
@@ -90,23 +94,30 @@ export function createApp(
       ...failureFields(cause),
       ...(problem instanceof HttpProblem && problem.operation
         ? { operation: problem.operation }
-        : {
+        : c.get("route").startsWith("/api/v1/inquiries")
+          ? { operation: "inquiry.request" }
+          : {
             message: error.message,
             ...(problem instanceof HttpProblem || error instanceof HTTPException
               ? {}
               : { stack: error.stack }),
           }),
     });
-    return problemResponse(problem, c.get("requestId"));
+    const response = problemResponse(problem, c.get("requestId"));
+    if (response.status === 405 && c.get("route") === "/api/v1/inquiries")
+      response.headers.set("Allow", "POST");
+    return response;
   });
   for (const path of [
     "/api",
     "/api/v1/openapi.json",
     "/api/v1/listings",
     "/api/v1/listings/:listingId",
+    "/api/v1/inquiries",
+    "/api/v1/inquiries/:inquiryId",
   ]) {
     app.use(path, async (c, next) => {
-      c.set("route", path.replace(":listingId", "{listingId}"));
+      c.set("route", path.replace(":listingId", "{listingId}").replace(":inquiryId", "{inquiryId}"));
       await next();
     });
   }
@@ -125,11 +136,12 @@ export function createApp(
   app.use("*", async (c, next) => {
     const route = c.get("route");
     if (route !== "/api/*") {
-      if (c.req.method !== "GET")
+      const allowed = route === "/api/v1/inquiries" ? "POST" : "GET";
+      if (c.req.method !== allowed)
         throw new HttpProblem(
           405,
           "method_not_allowed",
-          "Use GET on this resource.",
+          `Use ${allowed} on this resource.`,
         );
       const url = new URL(c.req.url);
       // Preserve raw encoding while Node parses each parameter's name.
@@ -166,7 +178,7 @@ export function createApp(
           {
             major: "v1",
             contractVersion: "1.0.0",
-            capabilities: ["listingSearch", "listingDetail", "displayRulesV1"],
+            capabilities: ["listingSearch", "listingDetail", "displayRulesV1", "inquiryCreate", "inquiryReceipt"],
           },
         ],
       },
@@ -175,7 +187,7 @@ export function createApp(
     return Response.json(body);
   });
   app.get("/api/v1/openapi.json", () => Response.json(contract));
-  const authorize = bearerAuth<AppEnv>({
+  const authorize = (scope: string) => bearerAuth<AppEnv>({
     // Malformed bearer headers have the same 401 problem as missing or invalid keys.
     invalidAuthenticationHeader: {
       message: new Response(null, { status: 401 }),
@@ -183,7 +195,7 @@ export function createApp(
     async verifyToken(token, c) {
       const key = await db.key(await hashSecret(token));
       if (!key) return false;
-      if (!key.scopes.includes("listings:read"))
+      if (!key.scopes.includes(scope))
         throw new HttpProblem(
           403,
           "insufficient_scope",
@@ -195,7 +207,7 @@ export function createApp(
   });
   app.get(
     "/api/v1/listings",
-    authorize,
+    authorize("listings:read"),
     async (c, next) => {
       const url = new URL(c.req.url);
       try {
@@ -218,7 +230,7 @@ export function createApp(
       });
     },
   );
-  app.get("/api/v1/listings/:listingId", authorize, async (c) => {
+  app.get("/api/v1/listings/:listingId", authorize("listings:read"), async (c) => {
     const id = c.req.param("listingId");
     const row = /^[A-Za-z0-9_-]+$/.test(id)
       ? await db.listing(c.get("site"), id)
@@ -234,6 +246,41 @@ export function createApp(
     return Response.json(listingDetail(row), {
       headers: { "Cache-Control": "private, no-store" },
     });
+  });
+  app.post(
+    "/api/v1/inquiries",
+    authorize("inquiries:write"),
+    bodyLimit({
+      maxSize: 16 * 1024,
+      onError: () => {
+        throw new HttpProblem(413, "body_too_large", "The inquiry body is too large.");
+      },
+    }),
+    async (c, next) => {
+      if (!/^application\/json(?:;|$)/i.test(c.req.header("Content-Type") ?? ""))
+        throw new HttpProblem(415, "unsupported_media_type", "Use application/json.");
+      await next();
+    },
+    zValidator("header", inquiryHeaders, (result) => {
+      if (!result.success)
+        throw new HttpProblem(400, "invalid_idempotency_key", "Use a quoted UUIDv4 Idempotency-Key.");
+    }),
+    zValidator("json", inquirySchema, (result) => {
+      if (!result.success) throw invalidInquiry(result.error.issues);
+    }),
+    async (c) => {
+      const row = await createInquiry(db, c.get("site"), c.req.valid("header")["idempotency-key"], c.req.valid("json"));
+      return Response.json(receipt(row), {
+        status: 201,
+        headers: { Location: `/api/v1/inquiries/${row.id}`, "Cache-Control": "no-store" },
+      });
+    },
+  );
+  app.get("/api/v1/inquiries/:inquiryId", authorize("inquiries:read"), async (c) => {
+    const row = await db.inquiryReceipt(c.get("site"), c.req.param("inquiryId"));
+    if (!row)
+      throw new HttpProblem(404, "not_found", "The resource was not found.");
+    return Response.json(receipt(row), { headers: { "Cache-Control": "no-store" } });
   });
   app.notFound((c) => {
     const [, root, version] = c.req.path.split("/");

@@ -107,7 +107,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         {
           major: "v1",
           contractVersion: "1.0.0",
-          capabilities: ["listingSearch", "listingDetail", "displayRulesV1"],
+          capabilities: ["listingSearch", "listingDetail", "displayRulesV1", "inquiryCreate", "inquiryReceipt"],
         },
       ]);
       assert.deepEqual(

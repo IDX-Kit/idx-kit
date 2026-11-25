@@ -44,13 +44,14 @@ export function validateResponse(
   response: Response,
   body: unknown,
   headersOnly = false,
+  method: "get" | "post" = "get",
 ) {
-  const operation = bundled.paths[path]?.get;
+  const operation = bundled.paths[path]?.[method];
   const status = Object.hasOwn(operation?.responses ?? {}, response.status)
     ? response.status
     : "default";
   const reference = operation
-    ? `/paths/${pointer(path)}/get/responses/${status}`
+    ? `/paths/${pointer(path)}/${method}/responses/${status}`
     : "/components/responses/Problem";
   const definition =
     operation?.responses[status] ?? bundled.components.responses.Problem;

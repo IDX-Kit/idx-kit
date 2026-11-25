@@ -85,6 +85,9 @@ test("unexpected exceptions and middleware errors use problems and redacted requ
   const hash = createHash("sha256").update(secret).digest("hex");
   const lines: string[] = [];
   const db: Repository = {
+    inquiryByKey: async () => undefined,
+    inquiryReceipt: async () => undefined,
+    insertInquiry: async () => undefined,
     key: async () => undefined,
     listing: async () => undefined,
     search: async () => ({ feeds: [], rows: [] }),
