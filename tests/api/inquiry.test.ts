@@ -322,7 +322,10 @@ test(
             const result = await response.json();
             validateResponse(path, response, result, false, "post");
             assert.equal(response.headers.get("Cache-Control"), "no-store");
-            assert.match(response.headers.get("Request-Id")!, /^[0-9a-f-]{36}$/);
+            assert.match(
+              response.headers.get("Request-Id")!,
+              /^[0-9a-f-]{36}$/,
+            );
             requests.push({
               id: response.headers.get("Request-Id")!,
               status: response.status,
