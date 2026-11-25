@@ -3,7 +3,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 import type { InquiryInput, ReceiptResponse } from "@idx-kit/client";
 import type { Repository } from "../db/read.ts";
-import type { InquiryRow } from "../db/inquiries.ts";
+import type { InquiryRow, ReceiptRow } from "../db/inquiries.ts";
 import { HttpProblem } from "../http/problem.ts";
 
 const sitePath = z
@@ -57,7 +57,7 @@ export function invalidInquiry(issues: z.core.$ZodIssue[]) {
   }));
   return problem;
 }
-export function receipt(row: InquiryRow): ReceiptResponse {
+export function receipt(row: ReceiptRow): ReceiptResponse {
   return {
     data: { id: row.id, receivedAt: row.received_at.toISOString() },
     meta: {},

@@ -3,14 +3,19 @@ import type { InquiryInput } from "@idx-kit/client";
 import { readQuery } from "./read.ts";
 import type { Database } from "./read.ts";
 
-export interface InquiryRow {
+export interface ReceiptRow {
   id: string;
   received_at: Date;
+}
+export interface InquiryRow extends ReceiptRow {
   body_hash: string;
 }
 export function inquiryQueries(pool: Database) {
   return {
-    async inquiryByKey(site: string, key: string) {
+    async inquiryByKey(
+      site: string,
+      key: string,
+    ): Promise<InquiryRow | undefined> {
       return (
         await readQuery<InquiryRow>(
           pool,
@@ -20,9 +25,12 @@ export function inquiryQueries(pool: Database) {
         )
       )[0];
     },
-    async inquiryReceipt(site: string, id: string) {
+    async inquiryReceipt(
+      site: string,
+      id: string,
+    ): Promise<ReceiptRow | undefined> {
       return (
-        await readQuery<InquiryRow>(
+        await readQuery<ReceiptRow>(
           pool,
           "SELECT id, received_at FROM idx.inquiries WHERE site_id=$1 AND id=$2",
           [site, id],
@@ -35,7 +43,7 @@ export function inquiryQueries(pool: Database) {
       key: string,
       hash: string,
       input: InquiryInput,
-    ) {
+    ): Promise<InquiryRow | undefined> {
       return (
         await readQuery<InquiryRow>(
           pool,
