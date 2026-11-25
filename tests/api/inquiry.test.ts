@@ -671,7 +671,10 @@ test(
           "untrusted-inquiry-request-id",
         ])
           assert.ok(!text.includes(value));
-        assert.equal(new Set(requests.map((item) => item.id)).size, requests.length);
+        assert.equal(
+          new Set(requests.map((item) => item.id)).size,
+          requests.length,
+        );
         const records = text
           .split("\n")
           .filter(Boolean)
