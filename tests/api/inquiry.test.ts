@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { test } from "node:test";
 import pg from "pg";
 import canonicalize from "canonicalize";
@@ -621,6 +622,8 @@ test(
             cluster,
             "-l",
             cluster + ".log",
+            "-o",
+            `-h 127.0.0.1 -p 55432 -k ${dirname(cluster)}`,
             "-w",
             "start",
           ]);
