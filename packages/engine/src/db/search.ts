@@ -29,7 +29,8 @@ export async function searchListings(
   const feedIds = feeds.map((feed) => feed.id);
   const rows: ListingRow[] = [];
   // Separate equality, strict price and null ranges keep each continuation seekable.
-  const combined = process.env.IDX_TEST_SEARCH_VOLUME === "1";
+  const combined =
+    process.env.IDX_TEST_SEARCH_VOLUME === "1" && last?.price != null;
   const ranges = combined
     ? ["combined"]
     : last?.price === null
