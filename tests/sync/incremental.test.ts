@@ -534,13 +534,17 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         number === 1 ? page([first]) : { status: 401 },
       );
       const query = writer.query.bind(writer);
-      t.mock.method(writer, "query", async (sql: string, values?: unknown[]) => {
-        const result = await query(sql, values);
-        if (sql === "COMMIT") {
-          assert.deepEqual(await state.run(feed, peer), stopHttpError);
-        }
-        return result;
-      });
+      t.mock.method(
+        writer,
+        "query",
+        async (sql: string, values?: unknown[]) => {
+          const result = await query(sql, values);
+          if (sql === "COMMIT") {
+            assert.deepEqual(await state.run(feed, peer), stopHttpError);
+          }
+          return result;
+        },
+      );
       assert.deepEqual(await state.run(feed), { code: "complete" });
       await assertOutcome(state, {
         code: "http_error",
@@ -559,7 +563,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         number === 1 ? page([first]) : { status: 401 },
       );
       const grants = await readFile(
-        new URL("../../packages/engine/setup/listing-writer.sql", import.meta.url),
+        new URL(
+          "../../packages/engine/setup/listing-writer.sql",
+          import.meta.url,
+        ),
         "utf8",
       );
       await db.query(
