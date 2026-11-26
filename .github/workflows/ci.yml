@@ -331,7 +331,8 @@ jobs:
               END { print (commit ? commit : tag) }
             ')
           if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
-            echo "Tag $TAG already points to $tag_commit. Bump the client version to publish the tested commit $GITHUB_SHA." >&2
+            echo "Tag $TAG already points to $tag_commit. This run tested $GITHUB_SHA." >&2
+            echo "Bump the client version and merge the change to main to publish under a new tag." >&2
             exit 1
           fi
           release_dir="$RUNNER_TEMP/client-release"
