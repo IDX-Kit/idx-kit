@@ -1,0 +1,25 @@
+{
+  "name": "idx-kit-sync",
+  "main": "src/runtime/sync-worker.ts",
+  "compatibility_date": "2026-11-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["*/30 * * * *"] },
+  "workflows": [
+    {
+      "binding": "LISTING_SYNC",
+      "name": "idx-kit-listing-sync",
+      "class_name": "ListingSync",
+      "concurrency": { "limit": 1 }
+    }
+  ],
+  "hyperdrive": [
+    {
+      "binding": "LISTING_WRITER_HYPERDRIVE",
+      // Placeholder for local builds only. Set the writer configuration id before deployment.
+      "id": "00000000000000000000000000000000"
+    }
+  ]
+}

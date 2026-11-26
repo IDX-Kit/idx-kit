@@ -43,7 +43,18 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
             { placement: undefined },
             { placement: { region: "aws:us-west-1" } },
           ]
-        : [
+        : []),
+      ...(kind === "sync"
+        ? [
+            { routes: [] },
+            { main: "src/runtime/worker.ts" },
+            { workflows: [] },
+            { triggers: { crons: [] } },
+            { hyperdrive: [{ ...config.hyperdrive[0], binding: "HYPERDRIVE" }] },
+          ]
+        : []),
+      ...(kind === "site"
+        ? [
             { routes: [] },
             { routes: [{ pattern: "demo.idxkit.com", custom_domain: false }] },
             {
@@ -54,7 +65,8 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
             { routes: [...config.routes, "synthetic.example.invalid/*"] },
             { placement: { region: "aws:us-east-1" } },
             { services: [] },
-          ]),
+          ]
+        : []),
     ];
     for (const patch of invalid)
       assert.throws(

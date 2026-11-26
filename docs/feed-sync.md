@@ -130,3 +130,51 @@ Each invocation makes one attempt. After an interruption, run the same command
 again to resume after the last saved page. If the feed rejects its continuation,
 the runner clears it. Run the command again to continue from the last completed
 incremental mark or to start a new scan.
+
+## Keep a feed current on Workers
+
+The optional sync Worker runs incremental sync on a schedule. Use the
+database setup above to create the feed and grant access to the writer login.
+Run repair scans with the Node command.
+
+1. Create a separate Hyperdrive configuration using the direct PostgreSQL
+   connection for `idx_listing_writer`. Disable query caching so each run
+   reads the latest saved position and outcome. Replace the placeholder ID for
+   `LISTING_WRITER_HYPERDRIVE` in your copy of
+   [the sync config](../packages/engine/wrangler.sync.jsonc).
+   [Hyperdrive setup](https://developers.cloudflare.com/hyperdrive/get-started/#manage-caching)
+2. Add `IDX_SYNC_FEED_JSON` under `vars` in your protected Wrangler config.
+   Set it to a string containing the JSON equivalent of the YAML above,
+   including the feed ID, Property URL, synthetic flag and disclosures.
+   Optionally add `IDX_SYNC_PAGES_PER_RUN` as a string from `"1"` to `"20"`.
+   It defaults to 10 pages. Put the bearer token in a protected secrets file
+   under the key `IDX_SYNC_FEED_TOKEN`.
+3. Deploy with the sync config and the protected secrets file.
+
+   ```sh
+   npx wrangler deploy --config packages/engine/wrangler.sync.jsonc \
+     --secrets-file /path/to/protected/worker-secrets.json
+   ```
+
+Open `idx-kit-listing-sync` in the Cloudflare Workflows dashboard to see
+instances, step attempts and the run's result. Each result contains a code,
+the next step and the number of pages applied. `waiting` means the saved
+retry delay has yet to elapse. For `stopped`, check the prior run and fix
+the cause, then start one fresh instance by hand.
+
+```sh
+npx wrangler workflows trigger idx-kit-listing-sync '{"resume":true}' \
+  --config packages/engine/wrangler.sync.jsonc
+```
+
+To pause, deploy with an empty `triggers.crons` array and let active runs
+finish. To resume the schedule, restore `*/30 * * * *` and redeploy. The saved
+position carries over. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/#remove-a-cron-trigger)
+
+For a first load, start the feed expired. Each schedule can apply up to
+pages per run times page size listings if the feed honors the requested page
+size. The last page renews freshness and makes the feed available in the API.
+A temporarily more frequent schedule can speed up the initial load.
+Cloudflare lists 10 ms of processor time per step on the Free plan. Start
+cautiously with `pageSize: 25` and measure representative pages on Workers to
+choose the right size. [Cloudflare Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/)

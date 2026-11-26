@@ -8,9 +8,19 @@ import { stripVTControlCharacters } from "node:util";
 import { captureLog } from "../logs.ts";
 
 export const workerRuntime = process.env.IDX_RUNTIME === "worker";
-export async function startWorker(config: string, port: number) {
-  const connection = process.env.RUNTIME_DATABASE_URL!;
-  assert.equal(new URL(connection).username, "idx_runtime");
+export async function startWorker(
+  config: string,
+  port: number,
+  options: { writer?: boolean; readyPath?: string; persistTo?: string } = {},
+) {
+  const connection = options.writer
+    ? process.env.LISTING_WRITER_DATABASE_URL!
+    : process.env.RUNTIME_DATABASE_URL!;
+  assert.equal(
+    new URL(connection).username,
+    options.writer ? "idx_listing_writer" : "idx_runtime",
+  );
+  const binding = options.writer ? "LISTING_WRITER_HYPERDRIVE" : "HYPERDRIVE";
   const child = spawn(
     process.execPath,
     [
@@ -27,12 +37,13 @@ export async function startWorker(config: string, port: number) {
       "0",
       "--log-level",
       "error",
+      ...(options.persistTo ? ["--persist-to", options.persistTo] : []),
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE: connection,
+        [`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${binding}`]: connection,
         WRANGLER_SEND_METRICS: "false",
         NO_COLOR: "1",
       },
@@ -52,14 +63,16 @@ export async function startWorker(config: string, port: number) {
     await exited;
   };
   let readyId: string | null = null;
+  const readyPath = options.readyPath ?? (port === 8787 ? "/api" : "/");
   for (let attempt = 0; attempt < 300; attempt++) {
     if (child.exitCode !== null) break;
     const response = await fetch(
-      `http://127.0.0.1:${port}${port === 8787 ? "/api" : "/"}`,
+      `http://127.0.0.1:${port}${readyPath}`,
     ).catch(() => null);
     if (response?.ok) {
       readyId = response.headers.get("Request-Id");
       return {
+        rawLogs: () => output,
         // Wrangler adds terminal prefixes. Keep only the application's JSON records.
         logs: () =>
           output

@@ -5,7 +5,7 @@ export type FeedNextStep =
 
 export async function readFeedState(client: pg.Client, feedId: string) {
   const { rows } = await client.query<{
-    status: object;
+    status: { lastOutcome: { nextStep: "retry" | "stop" | null } | null };
     waitingSeconds: number | null;
   }>(
     `SELECT jsonb_build_object(

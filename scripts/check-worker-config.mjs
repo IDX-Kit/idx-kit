@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 export const configs = {
   engine: "packages/engine/wrangler.jsonc",
   site: "examples/demo-site/wrangler.jsonc",
+  sync: "packages/engine/wrangler.sync.jsonc",
 };
 export async function readConfig(path) {
   const text = await readFile(path, "utf8");
@@ -30,16 +32,19 @@ export function checkConfig(
     "workers_dev",
     "preview_urls",
     "observability",
-    ...(kind === "engine"
-      ? ["main", "hyperdrive", "placement"]
-      : ["routes", "services"]),
+    ...(kind === "site" ? ["routes", "services"] : ["main", "hyperdrive"]),
+    ...(kind === "engine" ? ["placement"] : []),
+    ...(kind === "sync" ? ["triggers", "workflows"] : []),
   ];
   if (source)
     assert.ok(
       Object.keys(config).every((key) => allowed.includes(key)),
       "Only approved config fields; no account, secrets, vars or overrides",
     );
-  assert.equal(config.name, `idx-kit-demo-${kind}`);
+  assert.equal(
+    config.name,
+    kind === "sync" ? "idx-kit-sync" : `idx-kit-demo-${kind}`,
+  );
   assert.equal(config.compatibility_date, "2026-11-06");
   assert.deepEqual(config.compatibility_flags, ["nodejs_compat"]);
   assert.equal(config.workers_dev, false);
@@ -57,6 +62,21 @@ export function checkConfig(
       { binding: "HYPERDRIVE", id: hyperdriveId },
     ]);
     assert.deepEqual(config.placement, { region: "aws:us-east-1" });
+  } else if (kind === "sync") {
+    assert.ok(!("routes" in config));
+    assert.equal(config.main, "src/runtime/sync-worker.ts");
+    assert.deepEqual(config.triggers, { crons: ["*/30 * * * *"] });
+    assert.deepEqual(config.workflows, [
+      {
+        binding: "LISTING_SYNC",
+        name: "idx-kit-listing-sync",
+        class_name: "ListingSync",
+        concurrency: { limit: 1 },
+      },
+    ]);
+    assert.deepEqual(config.hyperdrive, [
+      { binding: "LISTING_WRITER_HYPERDRIVE", id: hyperdriveId },
+    ]);
   } else {
     assert.deepEqual(config.routes, [
       { pattern: "demo.idxkit.com", custom_domain: true },
@@ -74,8 +94,19 @@ if (
   for (const [kind, path] of Object.entries(configs)) {
     const { text, config } = await readConfig(path);
     checkConfig(config, kind);
-    if (kind === "engine")
+    if (kind !== "site")
       assert.match(text, /\/\/ Placeholder for local builds only\./);
+    if (kind === "sync") {
+      const entry = resolve(dirname(path), config.main);
+      const contents = await readFile(entry, "utf8");
+      const ast = ts.createSourceFile(entry, contents, ts.ScriptTarget.Latest);
+      const handler = ast.statements.find(ts.isExportAssignment)?.expression;
+      assert.ok(handler && ts.isObjectLiteralExpression(handler));
+      assert.deepEqual(
+        handler.properties.map((property) => property.name?.getText(ast)),
+        ["scheduled"],
+      );
+    }
   }
   if (process.argv[2]) {
     const { config } = await readConfig(process.argv[2]);
