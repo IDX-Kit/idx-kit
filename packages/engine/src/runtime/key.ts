@@ -54,7 +54,12 @@ if (action === "sync-demo") {
     if (creating) {
       const secret = "idx_secret_" + randomBytes(32).toString("base64url");
       id = "key_" + randomUUID();
-      const values = [id, site, await hashSecret(secret), [...new Set(requested)]];
+      const values = [
+        id,
+        site,
+        await hashSecret(secret),
+        [...new Set(requested)],
+      ];
       if (listingRequestLimit === undefined)
         await db.query(
           "INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes) VALUES ($1,$2,$3,$4)",
