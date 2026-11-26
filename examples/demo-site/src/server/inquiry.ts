@@ -79,7 +79,7 @@ export async function sendInquiry(request: Request, listingId: string) {
       form.values[field] = typeof value === "string" ? value : "";
     }
     const key = body.get("idempotencyKey");
-    if (typeof key === "string") form.key = key;
+    form.key = typeof key === "string" ? key : "";
     if (body.get("website")) {
       writeLog({
         event: "demo_inquiry_rejected",
