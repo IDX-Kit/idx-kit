@@ -71,9 +71,9 @@ async function finished(id: string) {
 
 async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
   const directory = await mkdtemp(`${tmpdir()}/idx-worker-sync-`);
-  let worker: Awaited<ReturnType<typeof startWorker>> | undefined;
+  let stop = () => Promise.resolve();
   t.after(async () => {
-    await worker?.stop();
+    await stop();
     await rm(directory, { recursive: true, force: true });
   });
   const { config } = ts.parseConfigFileTextToJson(
@@ -89,11 +89,12 @@ async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
   await writeFile(`${directory}/.dev.vars`, bindings.join("\n"), {
     mode: 0o600,
   });
-  worker = await startWorker(path, port, {
+  const worker = await startWorker(path, port, {
     writer: true,
     readyPath: "/cdn-cgi/local/explorer/api/workflows",
     persistTo: `${directory}/state`,
   });
+  stop = worker.stop;
   return { worker, directory };
 }
 

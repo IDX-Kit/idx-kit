@@ -114,7 +114,7 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
           );
           return {
             code: result.code,
-            nextStep: "nextStep" in result ? result.nextStep : { kind: "none" },
+            nextStep: result.nextStep ?? { kind: "none" },
           };
         }),
       );
