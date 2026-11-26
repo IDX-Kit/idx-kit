@@ -82,6 +82,28 @@ test("demo requests use generated operations with server-only authorization and 
     "/api/v1/listings/lst_synthetic",
     "/api/v1/listings",
   ]);
+  for (const [retryAfter, expected] of [
+    [null, null],
+    ["0", null],
+    ["61", null],
+    ["1.5", null],
+    ["1e1", null],
+    ["Sun, 06 Nov 1994 08:49:37 GMT", null],
+    ["1", "1"],
+    ["60", "60"],
+    ["007", "007"],
+  ]) {
+    const headers = new Headers();
+    if (retryAfter !== null) headers.set("Retry-After", retryAfter);
+    globalThis.fetch = async () =>
+      Response.json({ code: "rate_limited" }, { status: 429, headers });
+    await assert.rejects(engine.search({}), (error) => {
+      assert.ok(error instanceof PageFailure);
+      assert.equal(error.status, 429);
+      assert.equal(error.retryAfter, expected);
+      return true;
+    });
+  }
   for (const base of [
     "file:///tmp",
     "http://user:password@127.0.0.1",

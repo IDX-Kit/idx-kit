@@ -108,8 +108,9 @@ history. The shared renderer includes listing disclosures on each result, and pa
 disclosures appear even with no matches. Invalid filters show field guidance, while
 an invalid cursor links to the first page with the same filters. Prices are formatted
 directly from decimal strings. The key stays on the server; all engine requests use
-`@idx-kit/client`, a five-second timeout, no-store and refused redirects. The property
-page saves synthetic inquiries and shows a receipt. The demo sends no email.
+`@idx-kit/client`, a five-second timeout, no-store and refused redirects. Websites
+should leave automatic retries off for a listing `429` and show the visitor a message.
+The property page saves synthetic inquiries and shows a receipt. The demo sends no email.
 `npm run test:demo` runs the runner-only browser checks after building, migrating,
 seeding and installing the pinned Chromium browser.
 

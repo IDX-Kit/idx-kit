@@ -5,12 +5,14 @@ interface Props {
 }
 const { status, subject = "listing" } = Astro.props;
 const message =
-  status === 404
-    ? "Listing not found"
-    : status === 503
-      ? "Listing temporarily unavailable"
-      : `Unable to load ${subject === "listing" ? "this listing" : "these results"}`;
+  status === 429
+    ? "Too many listing requests. Please wait and try again."
+    : status === 404
+      ? "Listing not found"
+      : status === 503
+        ? "Listing temporarily unavailable"
+        : `Unable to load ${subject === "listing" ? "this listing" : "these results"}`;
 ---
 
 <h1>{message}</h1>
-<p>Please try again later.</p>
+{status !== 429 && <p>Please try again later.</p>}

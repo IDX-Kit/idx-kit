@@ -27,6 +27,7 @@ const received = "Received by the demo engine; no message was sent";
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 let secret: string;
+let keyId: string;
 let directory: string;
 let db: pg.Client;
 let engine: Awaited<ReturnType<typeof startEngine>>;
@@ -39,6 +40,7 @@ let code = "invalid_input";
 let posts = 0;
 let upstreamId: string | null = null;
 let lostReceipt: { id: string; receivedAt: string } | undefined;
+let upstreamReads: Response[] | undefined;
 const faultOrigin = "http://127.0.0.1:4322";
 const stub = createServer(async (req, res) => {
   if (req.method !== "POST") {
@@ -49,10 +51,13 @@ const stub = createServer(async (req, res) => {
     const upstream = await fetch(`http://127.0.0.1:8787${path}`, {
       headers: { Authorization: `Bearer ${secret}` },
     });
+    upstreamReads?.push(upstream);
+    const retryAfter = upstream.headers.get("Retry-After");
     // fetch decodes the body; do not forward its wire encoding or length.
     res.writeHead(upstream.status, {
       "Content-Type": "application/json",
       "Request-Id": upstream.headers.get("Request-Id") ?? "",
+      ...(retryAfter === null ? {} : { "Retry-After": retryAfter }),
     });
     res.end(await upstream.text());
     return;
@@ -147,14 +152,14 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     db = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await db.connect();
     await execute("npm", ["run", "--silent", "demo:seed"]);
-    secret = (
-      await keyCommand(
-        directory,
-        "create",
-        "site_demo_primary",
-        "listings:read,inquiries:write,inquiries:read",
-      )
-    ).secret;
+    const key = await keyCommand(
+      directory,
+      "create",
+      "site_demo_primary",
+      "listings:read,inquiries:write,inquiries:read",
+    );
+    secret = key.secret;
+    keyId = key.id;
     // The final CI log scan also rejects visitor data, including injected upstream details.
     for (const value of Object.values(visitor)) registerSecret(value);
     engine = await startEngine();
@@ -179,6 +184,67 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     await engine?.stop();
     await db?.end();
     await rm(directory, { recursive: true, force: true });
+  });
+
+  test("spent listing budget limits both pages once and an open inquiry still submits", async ({
+    context,
+    page,
+  }) => {
+    const listingPage = await context.newPage();
+    expect((await page.goto(property))?.status()).toBe(200);
+    await fillInquiry(page, visitor);
+    const paths = [
+      ["/search", "/api/v1/listings"],
+      [property, "/api/v1/listings/lst_demo_0001"],
+    ];
+    const reads: Response[] = [];
+    upstreamReads = reads;
+    try {
+      const spent = await db.query(
+        `UPDATE idx.listing_request_windows AS w
+        SET window_start = clock_timestamp(), request_count = k.listing_request_limit
+        FROM idx.site_secret_keys AS k
+        WHERE w.key_id = k.id AND w.key_id = $1`,
+        [keyId],
+      );
+      expect(spent.rowCount).toBe(1);
+      for (const [path, upstreamPath] of paths) {
+        reads.length = 0;
+        const response = await listingPage.goto(faultOrigin + path);
+        expect(response?.status()).toBe(429);
+        expect(reads).toHaveLength(1);
+        const [upstream] = reads;
+        expect(upstream.status).toBe(429);
+        expect(new URL(upstream.url).pathname).toBe(upstreamPath);
+        const retryAfter = upstream.headers.get("Retry-After");
+        expect(retryAfter).toMatch(/^(?:[1-9]|[1-5]\d|60)$/);
+        const values = await response!.allHeaders();
+        expect(values["retry-after"]).toBe(retryAfter);
+        expect(values["cache-control"]).toBe("no-store");
+        expect(values).not.toHaveProperty("refresh");
+        await expect(listingPage.locator("main")).toHaveText(
+          "Too many listing requests. Please wait and try again.",
+        );
+        await expect(
+          listingPage.locator(
+            '[data-listing], script, meta[http-equiv="refresh"]',
+          ),
+        ).toHaveCount(0);
+      }
+      expect((await submitInquiry(page, property)).status()).toBe(303);
+      await expect(page.getByRole("heading", { name: received })).toBeVisible();
+      expect(await rows()).toHaveLength(1);
+    } finally {
+      upstreamReads = undefined;
+      await db.query(
+        "UPDATE idx.listing_request_windows SET window_start = clock_timestamp() - interval '61 seconds' WHERE key_id = $1",
+        [keyId],
+      );
+    }
+    for (const [path] of paths) {
+      expect((await listingPage.goto(faultOrigin + path))?.status()).toBe(200);
+      await expect(listingPage.locator("[data-listing]").first()).toBeVisible();
+    }
   });
 
   test("direct entry, reload, send, receipt reload and send another inquiry", async ({

@@ -29,6 +29,8 @@ try {
 } catch (error) {
   logFailure(error, engine?.context());
   status = error instanceof PageFailure ? error.status : 502;
+  if (error instanceof PageFailure && error.retryAfter !== null)
+    Astro.response.headers.set("Retry-After", error.retryAfter);
   restart = status === 400 && searchProblem(error).code === "cursor_invalid";
   if (status === 400 && !restart && !Object.keys(errors).length) {
     if (

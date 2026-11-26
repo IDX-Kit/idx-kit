@@ -17,11 +17,17 @@ export class PageFailure extends Error {
   reason: string;
   requestId: string | null;
   path: string | null;
+  retryAfter: string | null;
   logged = false;
   constructor(
     status = 502,
     reason = "engine_request_failed",
-    options?: { cause?: unknown; requestId?: string | null; path?: string },
+    options?: {
+      cause?: unknown;
+      requestId?: string | null;
+      path?: string;
+      retryAfter?: string | null;
+    },
   ) {
     super(reason, { cause: options?.cause });
     this.name = "PageFailure";
@@ -29,6 +35,7 @@ export class PageFailure extends Error {
     this.reason = reason;
     this.requestId = options?.requestId ?? null;
     this.path = options?.path ?? null;
+    this.retryAfter = options?.retryAfter ?? null;
   }
 }
 
@@ -125,17 +132,31 @@ export function engineClient() {
     try {
       return await call();
     } catch (cause) {
-      const status =
+      const limited =
+        cause instanceof ApiError &&
+        cause.status === 429 &&
+        (requestPath === OPERATIONS.searchListings.path ||
+          requestPath === OPERATIONS.getListing.path);
+      const seconds = Number(retryAfter);
+      const wait =
+        limited &&
+        retryAfter !== null &&
+        /^\d+$/.test(retryAfter) &&
+        seconds >= 1 &&
+        seconds <= 60
+          ? retryAfter
+          : null;
+      const otherStatus =
         cause instanceof ApiError &&
         requestId !== null &&
         [400, 404, 503].includes(cause.status)
           ? cause.status
           : 502;
-      const error = new PageFailure(status, "engine_request_failed", {
-        cause,
-        requestId,
-        path: requestPath,
-      });
+      const error = new PageFailure(
+        limited ? 429 : otherStatus,
+        "engine_request_failed",
+        { cause, requestId, path: requestPath, retryAfter: wait },
+      );
       logFailure(error);
       throw error;
     }

@@ -44,6 +44,8 @@ if (isPost) {
   } catch (error) {
     logFailure(error, engine?.context());
     status = error instanceof PageFailure ? error.status : 502;
+    if (error instanceof PageFailure && error.retryAfter !== null)
+      Astro.response.headers.set("Retry-After", error.retryAfter);
   }
 Astro.response.status = status;
 const message =
