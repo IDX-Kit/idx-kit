@@ -698,6 +698,8 @@ test(
           "Node Type": string;
           "Relation Name"?: string;
           "Index Cond"?: string;
+          "Actual Rows": number;
+          "Rows Removed by Filter"?: number;
           Plans?: Plan[];
         }
         const flatten = (node: Plan): Plan[] => [
@@ -710,7 +712,10 @@ test(
             values: unknown[],
           ) {
             const plan = (
-              await db.query("EXPLAIN (FORMAT JSON) " + sql, values)
+              await db.query(
+                "EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) " + sql,
+                values,
+              )
             ).rows[0]["QUERY PLAN"][0].Plan as Plan;
             const nodes = flatten(plan).filter(
               (node) => node["Relation Name"] === "listings",
@@ -719,12 +724,19 @@ test(
             if (sql.startsWith(listingSelect)) {
               assert.equal(nodes.length, 1, diagnostic);
               const [node] = nodes;
-              const condition = node["Index Cond"] ?? "";
+              const index =
+                node["Node Type"] === "Bitmap Heap Scan" ? node.Plans?.[0] : node;
+              assert.ok(index, diagnostic);
               assert.match(
-                node["Node Type"],
-                /^Index (Only )?Scan$/,
+                index["Node Type"],
+                /^(Index (Only )?|Bitmap Index )Scan$/,
                 diagnostic,
               );
+              assert.ok(
+                index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0) <= 100,
+                diagnostic,
+              );
+              const condition = index["Index Cond"] ?? "";
               assert.match(condition, /price|id/, diagnostic);
               for (const operator of [
                 "price >",
