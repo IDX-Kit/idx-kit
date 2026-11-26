@@ -9,10 +9,12 @@ export function addressProtection(...addresses: Listing["address"][]) {
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = streets.length
     ? new RegExp(
-        streets.flatMap((street) => [
-          street.split(/\s+/).map(escape).join("\\s+"),
-          escape(encodeURIComponent(street)),
-        ]).join("|"),
+        streets
+          .flatMap((street) => [
+            street.split(/\s+/).map(escape).join("\\s+"),
+            escape(encodeURIComponent(street)),
+          ])
+          .join("|"),
         "gi",
       )
     : null;

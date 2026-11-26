@@ -89,14 +89,17 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       await db.query(
         "ALTER TABLE idx.feeds DROP COLUMN oldest_listing_ingested_at",
       );
-      await db.query("DELETE FROM public.schema_migrations WHERE name = ANY($1)", [
-        ["004_feed_freshness.sql", "006_listing_revisions.sql"],
-      ]);
+      await db.query(
+        "DELETE FROM public.schema_migrations WHERE name = ANY($1)",
+        [["004_feed_freshness.sql", "006_listing_revisions.sql"]],
+      );
       await db.query("UPDATE idx.listings SET ingested_at = $1 WHERE id = $2", [
         older,
         "lst_demo_0007",
       ]);
-      const listings = (await snapshot()).filter((row) => row.entire_listing_display);
+      const listings = (await snapshot()).filter(
+        (row) => row.entire_listing_display,
+      );
       await migrate(db);
       const feeds = await db.query(
         "SELECT id, oldest_listing_ingested_at FROM idx.feeds ORDER BY id",

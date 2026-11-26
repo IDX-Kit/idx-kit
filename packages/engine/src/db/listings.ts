@@ -179,7 +179,8 @@ export async function applyListingPage(
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
-  const rejected: { index: number; code: "invalid_key" | "invalid_change" }[] = [];
+  const rejected: { index: number; code: "invalid_key" | "invalid_change" }[] =
+    [];
   await client.query("BEGIN");
   try {
     await lockListingFeeds(client, [feedId]);

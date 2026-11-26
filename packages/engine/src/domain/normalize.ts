@@ -8,9 +8,9 @@ const text = z
 export const sourceKeySchema = text.refine(
   (value) => value.length > 0 && Buffer.byteLength(value) <= 1024,
 );
-export const timestampSchema = z.iso.datetime().refine(
-  (value) => !value.startsWith("0000") && value.length <= 27,
-);
+export const timestampSchema = z.iso
+  .datetime()
+  .refine((value) => !value.startsWith("0000") && value.length <= 27);
 const imageSchema = z.object({
   alt: text.refine((value) => value.length > 0),
   url: text.refine((value) => {
@@ -91,7 +91,10 @@ export function normalize(
       !/^(0|[1-9][0-9]{0,131071})(\.[0-9]{1,16383})?$/.test(source.ListPrice))
   )
     throw new Error("Invalid price");
-  if (source.StandardStatus !== null && !text.safeParse(source.StandardStatus).success)
+  if (
+    source.StandardStatus !== null &&
+    !text.safeParse(source.StandardStatus).success
+  )
     throw new Error("Invalid status");
   if (
     source.BedroomsTotal !== null &&
@@ -124,7 +127,10 @@ export function normalize(
     | "withheldFields"
   > = {
     synthetic: record.synthetic,
-    status: source.StandardStatus === null ? null : protection.text(source.StandardStatus),
+    status:
+      source.StandardStatus === null
+        ? null
+        : protection.text(source.StandardStatus),
     price:
       source.ListPrice === null
         ? null
@@ -146,7 +152,9 @@ export function normalize(
   return {
     facts,
     blocks: z.array(blockSchema).parse(protection.blocks(record.blocks)),
-    pageBlocks: z.array(blockSchema).parse(protection.blocks(record.pageBlocks)),
+    pageBlocks: z
+      .array(blockSchema)
+      .parse(protection.blocks(record.pageBlocks)),
     sourceUpdatedAt: record.sourceUpdatedAt,
     ingestedAt: record.ingestedAt,
   };
