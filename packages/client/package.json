@@ -9,7 +9,7 @@
     "directory": "packages/client"
   },
   "type": "module",
-  "files": ["dist/generated.js", "dist/generated.d.ts", "dist/LICENSE.md"],
+  "files": ["dist/generated.js", "dist/generated.d.ts"],
   "exports": {
     ".": {
       "types": "./dist/generated.d.ts",
@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('../../LICENSE.md', 'dist/LICENSE.md')\"",
-    "prepack": "npm run build"
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build && node -e \"require('node:fs').copyFileSync('../../LICENSE.md', 'LICENSE.md')\""
   }
 }

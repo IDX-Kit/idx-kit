@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -11,7 +11,7 @@ test("the packed client installs, type-checks and calls the engine", async (t) =
   assert.ok(tarball, "Set IDX_CLIENT_TARBALL to the npm pack output");
   const { stdout: files } = await execute("tar", ["-tzf", tarball]);
   assert.deepEqual(files.trim().split("\n").sort(), [
-    "package/dist/LICENSE.md",
+    "package/LICENSE.md",
     "package/dist/generated.d.ts",
     "package/dist/generated.js",
     "package/package.json",
@@ -25,6 +25,14 @@ test("the packed client installs, type-checks and calls the engine", async (t) =
     "npm",
     ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
     options,
+  );
+  const installedLicense = join(
+    directory,
+    "node_modules/@idx-kit/client/LICENSE.md",
+  );
+  assert.equal(
+    await readFile(installedLicense, "utf8"),
+    await readFile("LICENSE.md", "utf8"),
   );
   await writeFile(
     join(directory, "discover.mts"),

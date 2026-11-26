@@ -156,12 +156,8 @@ jobs:
           npm run demo:seed
       - name: Pack client and print release notes
         id: client-package
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           version=$(node -p 'require("./packages/client/package.json").version')
-          base_version=$(git show "$BASE_SHA:packages/client/package.json" |
-            node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')
           tag="client-v$version"
           release_dir="$RUNNER_TEMP/client-release"
           mkdir -p "$release_dir"
@@ -170,17 +166,14 @@ jobs:
           cp "docs/releases/$tag.md" "$release_dir/notes.md"
           cat "$release_dir/notes.md"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-          if [[ "$version" != "$base_version" ]]; then
-            echo "Client version changed from $base_version to $version."
-            echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Install the packed client outside the workspace and call the engine
         env:
           IDX_CLIENT_TARBALL: ${{ steps.client-package.outputs.tarball }}
         run: node --test tests/api/client-install.test.ts
       - name: Save the tested tarball and release notes for publication
         id: client-release-artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.client-package.outputs.tag != ''
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: client-release-${{ github.run_attempt }}
@@ -281,22 +274,31 @@ jobs:
           fi
   release-client:
     needs: [check, clean-demo]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit' && needs.check.outputs.client_tag != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
     concurrency: ${{ needs.check.outputs.client_tag }}
     steps:
-      - name: Check whether the client release already exists
+      - name: Check whether the client release is published with its tarball
         id: lookup
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.check.outputs.client_tag }}
         run: |
-          if lookup=$(gh release view "$TAG" --repo IDX-Kit/idx-kit --json tagName 2>&1); then
-            echo "Release $TAG already exists."
+          asset="idx-kit-client-${TAG#client-v}.tgz"
+          if lookup=$(gh release view "$TAG" --repo IDX-Kit/idx-kit --json isDraft,assets 2>&1); then
+            if jq -e '.isDraft' <<< "$lookup" > /dev/null; then
+              echo "Release $TAG is still a draft. Remove the incomplete draft in GitHub Releases and rerun CI on the latest main commit." >&2
+              exit 1
+            fi
+            if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .state == "uploaded" and .size > 0)' <<< "$lookup" > /dev/null; then
+              echo "Release $TAG is missing $asset. Restore the tested tarball for the tagged commit in GitHub Releases, then rerun CI." >&2
+              exit 1
+            fi
+            echo "Release $TAG is published with $asset."
             exit 0
           fi
           if [[ "$lookup" != 'release not found' ]]; then
