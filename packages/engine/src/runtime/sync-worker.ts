@@ -1,22 +1,18 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import pg from "pg";
 import { z } from "zod";
 import { ResoConnector } from "../connectors/reso.ts";
-import { readFeedState } from "../db/feed-sync-outcomes.ts";
+import { readFeedState, saveFeedOutcome } from "../db/feed-sync-outcomes.ts";
+import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { syncIncrementally } from "../sync/incremental.ts";
 import { feedSettings, feedTokenSchema } from "./sync-feed-settings.ts";
 
-interface SyncEnv {
+interface SyncEnv extends SyncBindings {
   IDX_SYNC_FEED_JSON?: string;
   IDX_SYNC_FEED_TOKEN?: string;
   IDX_SYNC_PAGES_PER_RUN?: string;
-  LISTING_WRITER_HYPERDRIVE: { connectionString: string };
-  LISTING_SYNC: {
-    createBatch(options: {
-      instances: { id: string }[];
-    }): Promise<{ errors: { code: number }[] }>;
-  };
 }
 
 type SyncParams = { resume?: boolean };
@@ -68,55 +64,66 @@ async function withWriter<T>(
 export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
   async run(event: WorkflowEvent<SyncParams>, step: WorkflowStep) {
     const { feed, token, pages } = settings(this.env);
-    const allowResume = event.payload?.resume === true;
-    const hold = await step.do(
-      "check saved feed state",
-      { ...pageStep, retries: { ...pageStep.retries, limit: 0 } },
-      () =>
-        withWriter(this.env, async (client) => {
-          const state = await readFeedState(client, feed.feedId);
-          if (!state) {
-            return {
-              code: "missing_feed",
-              nextStep: { kind: "stop" },
-            } as const;
-          }
-          if (allowResume) return null;
-          if (state.waitingSeconds) {
-            return {
-              code: "waiting",
-              nextStep: { kind: "retry", afterSeconds: state.waitingSeconds },
-            } as const;
-          }
-          if (state.status.lastOutcome?.nextStep === "stop") {
-            return { code: "stopped", nextStep: { kind: "stop" } } as const;
-          }
-          return null;
-        }),
-    );
-    if (hold) return { ...hold, pagesApplied: 0 };
+    if (event.payload?.resume === true) {
+      await step.do(
+        "clear saved feed hold",
+        { ...pageStep, retries: { ...pageStep.retries, limit: 0 } },
+        () =>
+          withWriter(this.env, async (client) => {
+            const { version } = await readFeedCheckpoint(client, feed.feedId);
+            await saveFeedOutcome(
+              client,
+              feed.feedId,
+              version,
+              { code: "resumed" },
+              { kind: "retry" },
+            );
+          }),
+      );
+    }
 
     let last;
     let pagesApplied = 0;
     do {
-      last = await step.do(`apply page ${pagesApplied + 1}`, pageStep, () =>
-        withWriter(this.env, async (client) => {
-          const connector = new ResoConnector(
-            feed.propertyUrl.href,
-            token,
-            undefined,
-            feed.pageSize,
-          );
-          const result = await syncIncrementally(
-            client,
-            { ...feed, connector },
-            1,
-          );
+      last = await step.do(
+        `apply page ${pagesApplied + 1}`,
+        pageStep,
+        async () => {
+          const result = await withWriter(this.env, async (client) => {
+            const state = await readFeedState(client, feed.feedId);
+            if (!state) {
+              return {
+                code: "missing_feed",
+                nextStep: { kind: "stop" },
+              } as const;
+            }
+            if (state.waitingSeconds) {
+              return {
+                code: "waiting",
+                nextStep: {
+                  kind: "retry",
+                  afterSeconds: state.waitingSeconds,
+                },
+              } as const;
+            }
+            if (state.status.lastOutcome?.nextStep === "stop") {
+              return { code: "stopped", nextStep: { kind: "stop" } } as const;
+            }
+            const connector = new ResoConnector(
+              feed.propertyUrl.href,
+              token,
+              undefined,
+              feed.pageSize,
+            );
+            return syncIncrementally(client, { ...feed, connector }, 1);
+          });
+          if ("outcomeSaved" in result && result.outcomeSaved === false)
+            throw new NonRetryableError("Could not save sync outcome");
           return {
             code: result.code,
             nextStep: result.nextStep ?? { kind: "none" },
           };
-        }),
+        },
       );
       if (last.code === "page_limit" || last.code === "complete")
         pagesApplied++;

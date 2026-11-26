@@ -124,7 +124,10 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
     ListingKey: `Synthetic Worker listing ${number}`,
     ModificationTimestamp: "2026-11-03T00:00:00.000001Z",
   }));
-  let reply: ReturnType<typeof page> | { status: number; retryAfter?: string };
+  let reply:
+    | typeof records
+    | ReturnType<typeof page>
+    | { status: number; retryAfter?: string };
   const feed = await standIn(t, () => {
     if (reply) return reply;
     return records;
@@ -193,8 +196,8 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
         nextStep: { kind: "retry" },
         pagesApplied: 2,
       });
-      assert.equal(first.steps.length, 3);
-      for (const step of first.steps.slice(1)) {
+      assert.equal(first.steps.length, 2);
+      for (const step of first.steps) {
         assert.deepEqual(step.output, {
           code: "page_limit",
           nextStep: { kind: "retry" },
@@ -266,11 +269,54 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
     await check(await tick(), "http_error", 0);
     await check(await tick(), "stopped", 0);
     assert.equal(feed.calls.length, start + 3);
-    reply = page([]);
+    reply = records.map((record) => ({
+      ...record,
+      ModificationTimestamp: "2026-11-03T00:00:00.000002Z",
+    }));
     const { id } = await localRequest(instances, { params: { resume: true } });
-    await check(id, "complete", 1);
-    assert.equal(feed.calls.length, start + 4);
+    await check(id, "page_limit", 2);
+    assert.equal(feed.calls.length, start + 5);
+    const { rows } = await db.query(
+      "SELECT code, next_step, retry_after_seconds FROM idx.feed_sync_outcomes WHERE feed_id=$1",
+      [feedId],
+    );
+    assert.deepEqual(rows, [
+      { code: "resumed", next_step: "retry", retry_after_seconds: null },
+    ]);
+    await check(await tick(), "complete", 1);
+    assert.equal(feed.calls.length, start + 6);
+    assert.equal(feed.calls.at(-1)?.query, "?cursor=2");
   });
+
+  await t.test(
+    "a refused outcome write fails the run without retrying",
+    async (t) => {
+      await openSyncWorker(t, vars);
+      const start = feed.calls.length;
+      reply = { status: 401 };
+      await db.query(
+        "REVOKE INSERT ON idx.feed_sync_outcomes FROM idx_listing_writer",
+      );
+      try {
+        const result = await finished(await tick());
+        assert.equal(result.status, "errored");
+        assert.equal(result.output, null);
+        assert.equal(result.steps.length, 1);
+        const [step] = result.steps;
+        assert.equal(step.attempts.length, 1);
+        assert.match(
+          step.attempts[0].error.message,
+          /Could not save sync outcome/,
+        );
+        assert.equal(feed.calls.length, start + 1);
+        checkRedacted(JSON.stringify(result));
+      } finally {
+        await db.query(
+          "GRANT INSERT ON idx.feed_sync_outcomes TO idx_listing_writer",
+        );
+      }
+    },
+  );
 
   const invalidJson = "{synthetic-invalid-feed-settings";
   for (const [name, json, token, pages] of [

@@ -157,10 +157,14 @@ Run repair scans with the Node command.
    ```
 
 Open `idx-kit-listing-sync` in the Cloudflare Workflows dashboard to see
-instances, step attempts and the run's result. Each result contains a code,
+instances, step attempts and the run's result. Each successful run returns a code,
 the next step and the number of pages applied. `waiting` means the saved
 retry delay has yet to elapse. For `stopped`, check the prior run and fix
-the cause, then start one fresh instance by hand.
+the cause, then start one fresh instance by hand. This clears the saved hold
+before reading the next page. The Node `status` command shows `resumed` as the
+last outcome until the next result is saved. If the Worker cannot save an
+outcome, the dashboard shows a failed run and the next schedule can try
+again from the saved position.
 
 ```sh
 npx wrangler workflows trigger idx-kit-listing-sync '{"resume":true}' \
