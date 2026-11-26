@@ -18,7 +18,8 @@ const visitor = {
   message: 'Synthetic inquiry </textarea><script>bad()</script> & "quote"',
 };
 const received = "Received by the demo engine; no message was sent";
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const uuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 let secret: string;
 let directory: string;
 let db: pg.Client;
@@ -77,12 +78,17 @@ const stub = createServer(async (req, res) => {
     "Request-Id": upstreamId,
     ...([409, 429].includes(fault) ? { "Retry-After": "17" } : {}),
   });
-  res.end(JSON.stringify({
-    type: "about:blank", title: "Synthetic failure", status: fault,
-    code, requestId: upstreamId,
-    detail: Object.values(visitor).join(" "),
-    errors: [{ pointer: "/visitor/email", detail: visitor.message }],
-  }));
+  res.end(
+    JSON.stringify({
+      type: "about:blank",
+      title: "Synthetic failure",
+      status: fault,
+      code,
+      requestId: upstreamId,
+      detail: Object.values(visitor).join(" "),
+      errors: [{ pointer: "/visitor/email", detail: visitor.message }],
+    }),
+  );
 });
 
 async function fill(page: Page, message = visitor.message) {
@@ -93,16 +99,26 @@ async function fill(page: Page, message = visitor.message) {
 async function key(page: Page) {
   return page.locator('[name="idempotencyKey"]').inputValue();
 }
-async function retained(page: Page, expectedKey: string, message = visitor.message) {
-  await expect(page.getByLabel("Name", { exact: true })).toHaveValue(visitor.name);
-  await expect(page.getByLabel("Email", { exact: true })).toHaveValue(visitor.email);
-  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(message);
+async function retained(
+  page: Page,
+  expectedKey: string,
+  message = visitor.message,
+) {
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue(
+    visitor.name,
+  );
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue(
+    visitor.email,
+  );
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    message,
+  );
   expect(await key(page)).toBe(expectedKey);
   await expect(page.locator("script, form b")).toHaveCount(0);
 }
 async function send(page: Page, action = "Send") {
-  const response = page.waitForResponse((r) =>
-    r.request().method() === "POST" && r.url().includes(property),
+  const response = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().includes(property),
   );
   await page.getByRole("button", { name: action, exact: true }).click();
   return response;
@@ -115,7 +131,8 @@ async function headers(response: BrowserResponse | null) {
   expect(JSON.stringify(values)).not.toContain(secret);
 }
 async function rows() {
-  return (await db.query("SELECT * FROM idx.inquiries ORDER BY received_at")).rows;
+  return (await db.query("SELECT * FROM idx.inquiries ORDER BY received_at"))
+    .rows;
 }
 
 test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
@@ -124,8 +141,14 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     db = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await db.connect();
     await execute("npm", ["run", "--silent", "demo:seed"]);
-    secret = (await keyCommand(directory, "create", "site_demo_primary",
-      "listings:read,inquiries:write,inquiries:read")).secret;
+    secret = (
+      await keyCommand(
+        directory,
+        "create",
+        "site_demo_primary",
+        "listings:read,inquiries:write,inquiries:read",
+      )
+    ).secret;
     // The final CI log scan also rejects visitor data, including injected upstream details.
     for (const value of Object.values(visitor)) registerSecret(value);
     engine = await startEngine();
@@ -150,9 +173,13 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  test("direct entry, reload, send, receipt reload and send another inquiry", async ({ page }) => {
+  test("direct entry, reload, send, receipt reload and send another inquiry", async ({
+    page,
+  }) => {
     const requests: string[] = [];
-    page.on("request", (r) => requests.push(r.url() + JSON.stringify(r.headers())));
+    page.on("request", (r) =>
+      requests.push(r.url() + JSON.stringify(r.headers())),
+    );
     await headers(await page.goto(property));
     const first = await key(page);
     expect(first).toMatch(uuid);
@@ -161,7 +188,9 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     expect(second).toMatch(uuid);
     expect(second).not.toBe(first);
     expect(await rows()).toHaveLength(0);
-    expect(await page.locator("form").evaluate((n) => n.closest("article"))).toBeNull();
+    expect(
+      await page.locator("form").evaluate((n) => n.closest("article")),
+    ).toBeNull();
     await fill(page);
     expect((await send(page)).status()).toBe(303);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
@@ -192,7 +221,9 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
       expect(requests.join("")).not.toContain(value);
   });
 
-  test("Back to a sent form replays unchanged and requires a fresh Send after a mismatch", async ({ page }) => {
+  test("Back to a sent form replays unchanged and requires a fresh Send after a mismatch", async ({
+    page,
+  }) => {
     await page.goto(property);
     const originalKey = await key(page);
     await fill(page);
@@ -220,7 +251,9 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     const changed = "Synthetic changed message";
     await fill(page, changed);
     expect((await send(page)).status()).toBe(422);
-    await expect(page.getByRole("alert")).toHaveText("Your message has changed. Please send it again.");
+    await expect(page.getByRole("alert")).toHaveText(
+      "Your message has changed. Please send it again.",
+    );
     const fresh = await key(page);
     expect(fresh).toMatch(uuid);
     expect(fresh).not.toBe(originalKey);
@@ -231,13 +264,17 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     expect(await rows()).toHaveLength(2);
   });
 
-  test("lost response after commit retries the same key to the original receipt", async ({ page }) => {
+  test("lost response after commit retries the same key to the original receipt", async ({
+    page,
+  }) => {
     fault = "lost";
     await page.goto(faultOrigin + property);
     const originalKey = await key(page);
     await fill(page);
     await send(page);
-    await expect(page.getByRole("alert")).toHaveText("We can't confirm this was received.");
+    await expect(page.getByRole("alert")).toHaveText(
+      "We can't confirm this was received.",
+    );
     await retained(page, originalKey);
     expect(posts).toBe(1);
     expect(await rows()).toHaveLength(1);
@@ -247,13 +284,30 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     await send(page, "Retry");
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("receipt")).toBe(expected?.id);
-    expect(await page.locator("time").getAttribute("datetime")).toBe(expected?.receivedAt);
+    expect(await page.locator("time").getAttribute("datetime")).toBe(
+      expected?.receivedAt,
+    );
     expect(posts).toBe(2);
     expect(await rows()).toHaveLength(1);
   });
 
-  for (const failure of [400, 422, 401, 403, 404, 409, 429, 500, 503, "network", "timeout", "mismatch"] as const)
-    test(`safe guidance and retained values for ${failure}`, async ({ page }) => {
+  for (const failure of [
+    400,
+    422,
+    401,
+    403,
+    404,
+    409,
+    429,
+    500,
+    503,
+    "network",
+    "timeout",
+    "mismatch",
+  ] as const)
+    test(`safe guidance and retained values for ${failure}`, async ({
+      page,
+    }) => {
       fault = failure === "mismatch" ? 422 : failure;
       code = failure === "mismatch" ? "idempotency_mismatch" : "invalid_input";
       await headers(await page.goto(faultOrigin + property));
@@ -267,43 +321,82 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
         expect(newKey).not.toBe(originalKey);
       } else expect(newKey).toBe(originalKey);
       await retained(page, newKey);
-      const expected = failure === "mismatch"
-        ? "Your message has changed. Please send it again."
-        : failure === 400 || failure === 422 ? "Check this field."
-        : failure === 401 || failure === 403 ? "This form isn't available right now."
-        : failure === 404 ? "This listing is no longer available."
-        : failure === 409 || failure === 429 ? "Please wait, then retry."
-        : "We can't confirm this was received.";
+      const expected =
+        failure === "mismatch"
+          ? "Your message has changed. Please send it again."
+          : failure === 400 || failure === 422
+            ? "Check this field."
+            : failure === 401 || failure === 403
+              ? "This form isn't available right now."
+              : failure === 404
+                ? "This listing is no longer available."
+                : failure === 409 || failure === 429
+                  ? "Please wait, then retry."
+                  : "We can't confirm this was received.";
       if (failure === 400 || failure === 422) {
         await expect(page.locator("#inquiry-email-error")).toHaveText(expected);
-        await expect(page.getByLabel("Email", { exact: true })).toHaveAttribute("aria-describedby", "inquiry-email-error");
+        await expect(page.getByLabel("Email", { exact: true })).toHaveAttribute(
+          "aria-describedby",
+          "inquiry-email-error",
+        );
       } else await expect(page.getByRole("alert")).toHaveText(expected);
-      const retry = [409, 429, 500, 503, "network", "timeout"].includes(failure);
-      await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(retry ? 1 : 0);
+      const retry = [409, 429, 500, 503, "network", "timeout"].includes(
+        failure,
+      );
+      await expect(
+        page.getByRole("button", { name: "Retry", exact: true }),
+      ).toHaveCount(retry ? 1 : 0);
       if (failure === 401 || failure === 403 || failure === 404)
-        await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
-      if (failure === 404) await expect(page.getByRole("link", { name: "Back to search" })).toHaveAttribute("href", "/search");
-      if (failure === 409 || failure === 429) await expect(page.locator("[data-retry-after]")).toHaveText("Retry-After: 17");
+        await expect(
+          page.getByRole("button", { name: "Send", exact: true }),
+        ).toHaveCount(0);
+      if (failure === 404)
+        await expect(
+          page.getByRole("link", { name: "Back to search" }),
+        ).toHaveAttribute("href", "/search");
+      if (failure === 409 || failure === 429)
+        await expect(page.locator("[data-retry-after]")).toHaveText(
+          "Retry-After: 17",
+        );
       expect(posts).toBe(1);
       expect(await rows()).toHaveLength(0);
-      await expect(page.getByRole("heading", { name: received })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: received })).toHaveCount(
+        0,
+      );
       if (typeof failure === "number" || failure === "mismatch") {
-        await expect.poll(() => faultSite.logs()).toContain(`"requestId":"${upstreamId}"`);
+        await expect
+          .poll(() => faultSite.logs())
+          .toContain(`"requestId":"${upstreamId}"`);
         expect(faultSite.logs()).toContain(`"upstreamStatus":${fault}`);
       } else {
-        await expect.poll(() => faultSite.logs()).toContain(failure === "timeout" ? '"errorType":"TimeoutError"' : '"errorType":"TypeError"');
+        await expect
+          .poll(() => faultSite.logs())
+          .toContain(
+            failure === "timeout"
+              ? '"errorType":"TimeoutError"'
+              : '"errorType":"TypeError"',
+          );
       }
-      for (const value of [secret, ...Object.values(visitor)]) expect(faultSite.logs()).not.toContain(value);
+      for (const value of [secret, ...Object.values(visitor)])
+        expect(faultSite.logs()).not.toContain(value);
     });
 
-  test("honeypot and cross-site posts never reach the engine", async ({ page, request }) => {
+  test("honeypot and cross-site posts never reach the engine", async ({
+    page,
+    request,
+  }) => {
     await page.goto(faultOrigin + property);
     await fill(page);
-    await page.locator('[name="website"]').evaluate((n) => { (n as HTMLInputElement).value = "Synthetic bot"; });
+    await page.locator('[name="website"]').evaluate((n) => {
+      (n as HTMLInputElement).value = "Synthetic bot";
+    });
     expect((await send(page)).status()).toBe(403);
     await expect(page.getByRole("heading", { name: received })).toHaveCount(0);
     const crossSite = await request.post(faultOrigin + property, {
-      headers: { Origin: "https://foreign.example.invalid", "Sec-Fetch-Site": "cross-site" },
+      headers: {
+        Origin: "https://foreign.example.invalid",
+        "Sec-Fetch-Site": "cross-site",
+      },
       form: { ...visitor, idempotencyKey: crypto.randomUUID(), website: "" },
     });
     expect(crossSite.status()).toBe(403);

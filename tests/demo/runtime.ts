@@ -3,7 +3,11 @@ import { captureLog } from "../logs.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-export async function startSite(secret: string, base = "http://127.0.0.1:8787", port = 4321) {
+export async function startSite(
+  secret: string,
+  base = "http://127.0.0.1:8787",
+  port = 4321,
+) {
   if (workerRuntime) return startWorkerSite(secret, base, port);
   const child = spawn(process.execPath, ["start.mjs"], {
     cwd: "examples/demo-site",

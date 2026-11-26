@@ -12,7 +12,11 @@ const labels = { name: "Name", email: "Email", message: "Message" };
   <h2 id="inquiry-heading">Send an inquiry</h2>
   <p>Synthetic inquiries only. The demo sends no email.</p>
   {form.message && <p role="alert">{form.message}</p>}
-  {form.missing && <p><a href="/search">Back to search</a></p>}
+  {form.missing && (
+    <p>
+      <a href="/search">Back to search</a>
+    </p>
+  )}
   {form.retryAfter && <p data-retry-after>Retry-After: {form.retryAfter}</p>}
   <form method="post" action={path}>
     <input type="hidden" name="idempotencyKey" value={form.key} />
@@ -24,20 +28,38 @@ const labels = { name: "Name", email: "Email", message: "Message" };
       <div>
         <label for={`inquiry-${field}`}>{labels[field]}</label>
         {field === "message" ? (
-          <textarea id={`inquiry-${field}`} name={field} required maxlength="4000"
+          <textarea
+            id={`inquiry-${field}`}
+            name={field}
+            required
+            maxlength="4000"
             aria-invalid={Boolean(form.errors[field])}
-            aria-describedby={form.errors[field] ? `inquiry-${field}-error` : undefined}
+            aria-describedby={
+              form.errors[field] ? `inquiry-${field}-error` : undefined
+            }
           >{form.values[field]}</textarea>
         ) : (
-          <input id={`inquiry-${field}`} name={field}
+          <input
+            id={`inquiry-${field}`}
+            name={field}
             type={field === "email" ? "email" : "text"}
-            autocomplete={field} required maxlength={field === "email" ? 254 : 100}
-            value={form.values[field]} aria-invalid={Boolean(form.errors[field])}
-            aria-describedby={form.errors[field] ? `inquiry-${field}-error` : undefined} />
+            autocomplete={field}
+            required
+            maxlength={field === "email" ? 254 : 100}
+            value={form.values[field]}
+            aria-invalid={Boolean(form.errors[field])}
+            aria-describedby={
+              form.errors[field] ? `inquiry-${field}-error` : undefined
+            }
+          />
         )}
-        {form.errors[field] && <p id={`inquiry-${field}-error`}>{form.errors[field]}</p>}
+        {form.errors[field] && (
+          <p id={`inquiry-${field}-error`}>{form.errors[field]}</p>
+        )}
       </div>
     ))}
-    {!form.unavailable && !form.missing && <button type="submit">{form.retry ? "Retry" : "Send"}</button>}
+    {!form.unavailable && !form.missing && (
+      <button type="submit">{form.retry ? "Retry" : "Send"}</button>
+    )}
   </form>
 </section>

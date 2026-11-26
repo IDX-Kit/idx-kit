@@ -63,7 +63,6 @@ export function logFailure(
       (error instanceof PageFailure ? error.path : null) ??
       upstream?.path ??
       null,
-
   });
   if (error instanceof PageFailure) error.logged = true;
 }
