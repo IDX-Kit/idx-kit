@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   checkConfig,
@@ -61,4 +62,10 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
         JSON.stringify(patch),
       );
   }
+});
+
+test("the self-hosting guide stores all Worker email settings as secrets", async () => {
+  const guide = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  for (const name of ["RESEND_API_KEY", "INQUIRY_EMAIL_FROM", "INQUIRY_EMAIL_TO"])
+    assert.ok(guide.includes(`wrangler secret put ${name}`));
 });

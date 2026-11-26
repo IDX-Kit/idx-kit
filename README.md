@@ -119,10 +119,18 @@ To email new inquiries through Resend, set all three values on the engine:
 - `INQUIRY_EMAIL_TO` is the inbox that should receive new inquiries.
 
 On Node, set them in the environment of the process running the engine. On
-Workers, add the key as a runtime secret and the two addresses as runtime
-variables or secrets on the engine Worker. Leave all three unset to disable
-email. With only some values set, Node refuses to start and the Worker logs a
-configuration error for each newly saved inquiry.
+Workers, add all three as runtime secrets on your engine Worker. From the
+directory containing your engine's Wrangler configuration, run:
+
+```sh
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put INQUIRY_EMAIL_FROM
+npx wrangler secret put INQUIRY_EMAIL_TO
+```
+
+Wrangler preserves these secrets across code redeploys. Leave all three unset
+to disable email. With only some values set, Node refuses to start and the
+Worker logs a configuration error for each newly saved inquiry.
 
 The engine saves the inquiry and returns its receipt while the email runs in
 the background. Check `inquiry.email` logs by inquiry ID or Request-Id. A failed

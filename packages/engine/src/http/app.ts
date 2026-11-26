@@ -313,23 +313,31 @@ export function createApp(
     }),
     async (c) => {
       const input = c.req.valid("json");
-      const { row, listing } = await createInquiry(
+      const creation = createInquiry(
         db,
         c.get("site"),
         c.req.valid("header")["idempotency-key"],
         input,
       );
-      if (listing && email && email.settings.mode !== "off") {
-        const task = sendInquiryEmail(
-          email.settings,
-          input,
-          row,
-          listing,
-          c.get("requestId"),
-          log,
+      if (email && email.settings.mode !== "off") {
+        const requestId = c.get("requestId");
+        const task = creation.then(
+          ({ row, listing }) => {
+            if (listing)
+              return sendInquiryEmail(
+                email.settings,
+                input,
+                row,
+                listing,
+                requestId,
+                log,
+              );
+          },
+          () => {},
         );
         email.waitUntil?.(task);
       }
+      const { row } = await creation;
       return Response.json(receipt(row), {
         status: 201,
         headers: {

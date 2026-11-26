@@ -38,7 +38,7 @@ export async function startEmailStub() {
         status === 200
           ? { id: "synthetic-email-id" }
           : {
-              statusCode: status,
+              ...(status === 500 ? { statusCode: 500 } : {}),
               name: "application_error",
               // Deliberately echo private fields to exercise log redaction.
               message: JSON.stringify({

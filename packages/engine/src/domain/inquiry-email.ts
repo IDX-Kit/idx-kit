@@ -1,32 +1,57 @@
-import { Resend } from "resend";
+import { Resend, type Response as ResendResponse } from "resend";
 import type { InquiryInput } from "@idx-kit/client";
 import type { ReceiptRow } from "../db/inquiries.ts";
 import type { ListingRow } from "../db/read.ts";
 import { logLine } from "../log.ts";
 
 export interface InquiryEmailEnv {
-  RESEND_API_KEY?: string;
-  INQUIRY_EMAIL_FROM?: string;
-  INQUIRY_EMAIL_TO?: string;
-  RESEND_BASE_URL?: string;
+  RESEND_API_KEY?: unknown;
+  INQUIRY_EMAIL_FROM?: unknown;
+  INQUIRY_EMAIL_TO?: unknown;
 }
 
-export function inquiryEmailSettings(env: InquiryEmailEnv) {
-  const apiKey = env.RESEND_API_KEY?.trim();
-  const from = env.INQUIRY_EMAIL_FROM?.trim();
-  const to = env.INQUIRY_EMAIL_TO?.trim();
+export function inquiryEmailSettings({
+  RESEND_API_KEY: key,
+  INQUIRY_EMAIL_FROM: sender,
+  INQUIRY_EMAIL_TO: recipient,
+}: InquiryEmailEnv) {
+  if (
+    [key, sender, recipient].some(
+      (value) => value !== undefined && typeof value !== "string",
+    )
+  )
+    return { mode: "incomplete" } as const;
+  const apiKey = typeof key === "string" ? key.trim() : "";
+  const from = typeof sender === "string" ? sender.trim() : "";
+  const to = typeof recipient === "string" ? recipient.trim() : "";
   if (!apiKey && !from && !to) return { mode: "off" } as const;
   if (!apiKey || !from || !to) return { mode: "incomplete" } as const;
-  return {
-    mode: "enabled",
-    apiKey,
-    from,
-    to,
-    baseUrl: env.RESEND_BASE_URL,
-  } as const;
+  return { mode: "enabled", apiKey, from, to } as const;
 }
 
 export type InquiryEmailSettings = ReturnType<typeof inquiryEmailSettings>;
+
+class InquiryResend extends Resend {
+  // Keep the wire status even when an error body omits it or cannot be parsed.
+  override async fetchRequest<T>(
+    path: string,
+    options?: RequestInit,
+  ): Promise<ResendResponse<T>> {
+    const response = await fetch(this.baseUrl + path, options).catch(() => null);
+    if (response?.ok)
+      return { data: await response.json(), error: null, headers: null };
+    await response?.body?.cancel().catch(() => {});
+    return {
+      data: null,
+      error: {
+        name: "application_error",
+        message: "Email request failed.",
+        statusCode: response?.status ?? null,
+      },
+      headers: null,
+    };
+  }
+}
 
 export async function sendInquiryEmail(
   settings: InquiryEmailSettings,
@@ -44,6 +69,7 @@ export async function sendInquiryEmail(
     fail("ConfigurationError");
     return;
   }
+  const signal = AbortSignal.timeout(3000);
   try {
     const address =
       listing.rules_version === "1" &&
@@ -75,8 +101,9 @@ export async function sendInquiryEmail(
       "Message:",
       input.message,
     ].join("\n");
-    const resend = new Resend(settings.apiKey, { baseUrl: settings.baseUrl });
-    const signal = AbortSignal.timeout(3000);
+    const resend = new InquiryResend(settings.apiKey, {
+      baseUrl: "https://api.resend.com",
+    });
     // The SDK forwards these fetch options along with the idempotency key.
     const options = {
       idempotencyKey: row.id,
@@ -94,12 +121,7 @@ export async function sendInquiryEmail(
       options,
     );
     const status = error?.statusCode;
-    if (
-      typeof status === "number" &&
-      Number.isInteger(status) &&
-      status >= 300 &&
-      status <= 599
-    ) {
+    if (status) {
       fail("EmailServiceError", status);
     } else if (signal.aborted) {
       fail("TimeoutError");
@@ -110,6 +132,6 @@ export async function sendInquiryEmail(
     }
   } catch {
     // Provider messages and exception details can contain the email payload.
-    fail("EmailSendError");
+    fail(signal.aborted ? "TimeoutError" : "EmailSendError");
   }
 }

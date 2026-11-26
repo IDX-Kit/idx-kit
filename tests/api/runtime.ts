@@ -61,11 +61,15 @@ export async function keyCommand(
   return { id, secret, path };
 }
 export async function startEngine(vars: Record<string, string> = {}) {
-  if (workerRuntime)
-    return startWorker("packages/engine/wrangler.jsonc", 8787, vars);
+  if (workerRuntime) return startWorker("packages/engine/wrangler.jsonc", 8787);
   const child = spawn(
     process.execPath,
-    ["packages/engine/src/runtime/node.ts"],
+    [
+      ...(vars.IDX_TEST_RESEND_URL
+        ? ["--import", "./tests/api/email-fetch.ts"]
+        : []),
+      "packages/engine/src/runtime/node.ts",
+    ],
     {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...vars },

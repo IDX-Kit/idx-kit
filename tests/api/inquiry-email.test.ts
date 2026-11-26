@@ -39,7 +39,11 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
     "inquiries:write,inquiries:read",
   );
   const stub = await startEmailStub();
-  const enabled = { ...emailSettings, RESEND_BASE_URL: stub.baseUrl };
+  const enabled = {
+    ...emailSettings,
+    IDX_TEST_RESEND_URL: stub.baseUrl,
+    RESEND_BASE_URL: stub.baseUrl + "/wrong",
+  };
   const privateValues = [
     ...Object.values(emailSettings),
     input.visitor.name,
@@ -238,12 +242,14 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
   );
 
   await t.test(
-    "upstream 500, timeout and refused connection leave readable receipts",
+    "upstream HTTP errors, timeout and refused connection leave readable receipts",
     async () => {
-      stub.status(500);
-      const rejected = await create();
-      await expectEmail(rejected, "EmailServiceError", 500);
-      await readKept(rejected);
+      for (const status of [500, 502]) {
+        stub.status(status);
+        const rejected = await create();
+        await expectEmail(rejected, "EmailServiceError", status);
+        await readKept(rejected);
+      }
       const release = stub.hold();
       try {
         const timedOut = await create();
@@ -252,14 +258,14 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
       } finally {
         release();
       }
-      assert.equal(stub.sent.length, 4);
+      assert.equal(stub.sent.length, 5);
       await engine.stop();
       logs.push(engine.logs());
       const closedStub = await startEmailStub();
       await closedStub.close();
       engine = await startEngine({
         ...enabled,
-        RESEND_BASE_URL: closedStub.baseUrl,
+        IDX_TEST_RESEND_URL: closedStub.baseUrl,
       });
       const refused = await create();
       await expectEmail(refused, "NetworkError");
@@ -272,10 +278,10 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
     async () => {
       await engine.stop();
       logs.push(engine.logs());
-      engine = await startEngine({ RESEND_BASE_URL: stub.baseUrl });
+      engine = await startEngine({ IDX_TEST_RESEND_URL: stub.baseUrl });
       await readKept(await create());
       assert.ok(!engine.logs().includes('"inquiry.email"'));
-      assert.equal(stub.sent.length, 4);
+      assert.equal(stub.sent.length, 5);
       await assert.rejects(
         execute(process.execPath, ["packages/engine/src/runtime/node.ts"], {
           env: { ...process.env, RESEND_API_KEY: enabled.RESEND_API_KEY },
