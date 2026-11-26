@@ -14,9 +14,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version-file: .nvmrc
       - name: Follow the clean demo quick start
         shell: bash
         run: |
@@ -121,7 +118,8 @@ jobs:
           export PATH="/usr/lib/postgresql/18/bin:$PATH"
           postgres --version
           postgres --version | grep -E '^postgres \(PostgreSQL\) 18\.'
-          initdb -D "$RUNNER_TEMP/idx11-pg" --auth=trust --username=postgres --locale=C --encoding=UTF8
+          initdb -D "$RUNNER_TEMP/idx11-pg" --auth=trust --username=postgres --locale=C --encoding=UTF8 \
+            --locale-provider=builtin --builtin-locale=PG_UNICODE_FAST
           pg_ctl -D "$RUNNER_TEMP/idx11-pg" -l "$RUNNER_TEMP/idx11-pg.log" -o "-h 127.0.0.1 -p 55432 -k $RUNNER_TEMP" -w start
           psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'SELECT version()'
           server_version_num=$(psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 -Atc 'SHOW server_version_num')

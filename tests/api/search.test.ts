@@ -186,6 +186,25 @@ test(
       },
     );
     await t.test(
+      "city matching folds accented case and preserves accents",
+      async () => {
+        // Invented city for the existing synthetic listing.
+        const city = "Élan Springs";
+        const listingId = "lst_demo_0001";
+        await db.query(
+          "UPDATE idx.listings SET address = jsonb_set(address, '{city}', to_jsonb($1::text)) WHERE id = $2",
+          [city, listingId],
+        );
+        for (const name of [city, " éLAN sPRINGS "]) {
+          const query = new URLSearchParams({ city: name });
+          const { body } = await request(query.toString());
+          assert.deepEqual(ids(body), [listingId]);
+        }
+        const { body } = await request("city=Elan%20Springs");
+        assert.deepEqual(ids(body), []);
+      },
+    );
+    await t.test(
       "USD-only numeric filters preserve exact decimal major units and exclude nulls",
       async () => {
         await db.query(

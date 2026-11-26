@@ -1,7 +1,6 @@
 # Demo quick start
 
-Use a fresh checkout on Ubuntu 24.04 with Bash, Git, sudo, and the version of
-Node (with npm) in [`.nvmrc`](../.nvmrc). CI selects Node from the same file.
+Use a fresh checkout on Ubuntu 24.04 (x86-64) with Bash, Git, and sudo.
 Run the commands from the repository root in one Bash session. Ports 55432,
 8787, and 4321 must be free. Use only the synthetic listings and invented form
 values. Both servers listen on loopback.
@@ -10,18 +9,46 @@ CI runs the shell blocks marked `ci` in order on a fresh runner.
 
 ## Install
 
+The commands download the Node release pinned in [`.nvmrc`](../.nvmrc), verify
+its published checksum, and use its bundled npm. The temporary directory holds
+Node and the demo data until you exit the shell.
+
 ```bash ci
 git rev-parse HEAD
 cat /etc/os-release
-test "$(node --version)" = "v$(cat .nvmrc)"
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends ca-certificates curl xz-utils postgresql-common
+
+IDX_DEMO_DIR=$(mktemp -d)
+export IDX_DEMO_DIR
+demo_cleanup() {
+  if [ -f "$IDX_DEMO_DIR/pg/postmaster.pid" ]; then
+    demo_db_stop
+  fi
+  rm -r -- "$IDX_DEMO_DIR"
+}
+trap demo_cleanup EXIT
+
+node_version=$(cat .nvmrc)
+node_release="node-v$node_version-linux-x64"
+node_archive="$node_release.tar.xz"
+node_url="https://nodejs.org/dist/v$node_version"
+(
+  set -euo pipefail
+  cd "$IDX_DEMO_DIR"
+  curl -fsSLO "$node_url/$node_archive"
+  curl -fsSLO "$node_url/SHASUMS256.txt"
+  awk -v archive="$node_archive" '$2 == archive' SHASUMS256.txt | sha256sum --check -
+  tar -xf "$node_archive"
+)
+export PATH="$IDX_DEMO_DIR/$node_release/bin:$PATH"
+test "$(node --version)" = "v$node_version"
 node --version
 npm --version
 npm ci
 npx playwright --version
 npx playwright install --with-deps chromium
 
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends ca-certificates curl postgresql-common
 echo 'create_main_cluster = false' | sudo tee -a /etc/postgresql-common/createcluster.conf
 sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
 sudo apt-get install -y --no-install-recommends postgresql-18
@@ -33,12 +60,13 @@ echo "$postgres_version"
 
 ## Create the database, load listings, and make a site key
 
-The temporary directory holds the cluster, socket, logs, and protected key.
+Use UTF-8 with PostgreSQL's built-in `PG_UNICODE_FAST` database locale for
+city matching with accented letters. The temporary directory holds the
+cluster, socket, logs, and protected key.
 The migration role owns the database. The engine uses the separate runtime
 role, which gets read access to listings and permission to save inquiries.
 
 ```bash ci
-export IDX_DEMO_DIR="$(mktemp -d)"
 export IDX_TEST_LOG_DIR="$IDX_DEMO_DIR/test-logs"
 unset RESEND_API_KEY INQUIRY_EMAIL_FROM INQUIRY_EMAIL_TO TURNSTILE_SECRET_KEY IDX_RUNTIME
 
@@ -49,16 +77,9 @@ demo_db_start() {
 demo_db_stop() {
   pg_ctl -D "$IDX_DEMO_DIR/pg" -m fast -w stop
 }
-demo_cleanup() {
-  if [ -f "$IDX_DEMO_DIR/pg/postmaster.pid" ]; then
-    demo_db_stop
-  fi
-  rm -r -- "$IDX_DEMO_DIR"
-}
-trap demo_cleanup EXIT
-
 initdb -D "$IDX_DEMO_DIR/pg" --auth-local=trust --auth-host=scram-sha-256 \
-  --username=postgres --locale=C --encoding=UTF8
+  --username=postgres --locale=C --encoding=UTF8 \
+  --locale-provider=builtin --builtin-locale=PG_UNICODE_FAST
 demo_db_start
 
 export IDX_MIGRATION_PASSWORD="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"

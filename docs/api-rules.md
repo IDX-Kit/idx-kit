@@ -58,6 +58,11 @@ percent-encoded UTF-8. The filters combine with AND.
 | `limit` | Positive safe integer, default 20. The engine caps the page at 50. |
 | `after` | The previous page's opaque `meta.page.nextCursor`. |
 
+The engine lowercases the trimmed query and compares it with the city
+lowercased under the database's default locale. Use the UTF-8 database locale
+in the [quick start](demo-setup.md) for accented case matching. Accents
+remain significant.
+
 Numeric filters exclude records where the filtered value is null. Unsupported
 or repeated parameters, invalid values, and inverted price bounds return 400.
 The encoded query excluding the `after` pair and its separator is limited to
@@ -147,9 +152,10 @@ A missing receipt or one owned by another Site returns the same generic 404.
 After a lost response or temporary failure, keep the form values and retry
 with the same key and logical JSON body. The engine returns the same receipt
 and Location while the row exists. The Site and key identify the action even
-after a secret key rotation. Reusing the key with a changed body returns
-`422 idempotency_mismatch`. Ask the visitor to submit a new action with a new key
-if they want to send the changed message.
+after a secret key rotation. Reusing the key with a changed body that passes
+validation returns `422 idempotency_mismatch`. Ask the visitor to use a new
+key for a changed submission. A body that fails field validation returns
+`422 invalid_input` before the key lookup.
 
 When the engine's spam check is enabled, send a fresh `Turnstile-Token` for a
 new inquiry. Handle `422 spam_check_failed` by refreshing the challenge and
