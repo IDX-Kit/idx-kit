@@ -119,8 +119,7 @@ async function run() {
         "Could not save the incremental outcome.",
       );
     }
-    const step =
-      "nextStep" in result ? result.nextStep : ({ kind: "none" } as const);
+    const step = result.nextStep ?? { kind: "none" as const };
     const nextStep =
       step.kind === "retry"
         ? { kind: step.kind, afterSeconds: step.afterSeconds }
