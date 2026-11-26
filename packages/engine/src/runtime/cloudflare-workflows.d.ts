@@ -1,9 +1,6 @@
 // The sync Worker's Workflow APIs without Worker globals in the Node typecheck.
 declare module "cloudflare:workers" {
-  type StepOutput =
-    | string
-    | number
-    | { [key: string]: StepOutput | undefined };
+  type StepOutput = string | number | { [key: string]: StepOutput | undefined };
 
   export abstract class WorkflowEntrypoint<Env, Params> {
     protected readonly env: Env;
