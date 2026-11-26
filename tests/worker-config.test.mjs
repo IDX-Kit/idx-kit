@@ -50,7 +50,9 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
             { main: "src/runtime/worker.ts" },
             { workflows: [] },
             { triggers: { crons: [] } },
-            { hyperdrive: [{ ...config.hyperdrive[0], binding: "HYPERDRIVE" }] },
+            {
+              hyperdrive: [{ ...config.hyperdrive[0], binding: "HYPERDRIVE" }],
+            },
           ]
         : []),
       ...(kind === "site"

@@ -22,6 +22,15 @@ const port = 8790;
 const explorer = `http://127.0.0.1:${port}/cdn-cgi/local/explorer/api`;
 const instances = `${explorer}/workflows/idx-kit-listing-sync/instances`;
 
+async function localResult(response: Response) {
+  const data = await response.json();
+  assert.ok(
+    response.ok && data.success,
+    `Local API returned ${response.status}`,
+  );
+  return data.result;
+}
+
 async function localRequest(url: string, body?: object) {
   const response = await fetch(
     url,
@@ -33,12 +42,7 @@ async function localRequest(url: string, body?: object) {
           body: JSON.stringify(body),
         },
   );
-  const data = await response.json();
-  assert.ok(
-    response.ok && data.success,
-    `Local API returned ${response.status}`,
-  );
-  return data.result;
+  return localResult(response);
 }
 
 async function deliver(time: number) {
@@ -52,9 +56,14 @@ async function deliver(time: number) {
 
 async function finished(id: string) {
   for (let attempt = 0; attempt < 200; attempt++) {
-    const result = await localRequest(`${instances}/${id}`);
-    if (["complete", "errored", "terminated"].includes(result.status))
-      return result;
+    const response = await fetch(`${instances}/${id}`);
+    if (response.status === 404) {
+      await response.body?.cancel();
+    } else {
+      const result = await localResult(response);
+      if (["complete", "errored", "terminated"].includes(result.status))
+        return result;
+    }
     await setTimeout(100);
   }
   assert.fail("Workflow did not finish");
@@ -77,7 +86,9 @@ async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
   const bindings = Object.entries(vars).map(
     ([name, value]) => `${name}='${value}'`,
   );
-  await writeFile(`${directory}/.dev.vars`, bindings.join("\n"), { mode: 0o600 });
+  await writeFile(`${directory}/.dev.vars`, bindings.join("\n"), {
+    mode: 0o600,
+  });
   worker = await startWorker(path, port, {
     writer: true,
     readyPath: "/cdn-cgi/local/explorer/api/workflows",
@@ -131,88 +142,103 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
     IDX_SYNC_PAGES_PER_RUN: "2",
   };
   const checkRedacted = (output: string, ...extra: string[]) => {
-    for (const value of [feedToken, feedId, feed.propertyUrl, feedJson, ...extra])
+    for (const value of [
+      feedToken,
+      feedId,
+      feed.propertyUrl,
+      feedJson,
+      ...extra,
+    ])
       assert.ok(!output.includes(value), "Sync diagnostics must omit settings");
   };
   let time = Date.UTC(2026, 10, 3);
   const tick = () => deliver((time += 30 * 60 * 1000));
 
-  await t.test("three pages across two schedules with duplicate delivery", async (t) => {
-    const { worker, directory } = await openSyncWorker(t, vars);
-    const engine = await startWorker("packages/engine/wrangler.jsonc", 8787);
-    t.after(() => engine.stop());
-    const { secret } = await keyCommand(
-      directory,
-      "create",
-      siteId,
-      "listings:read",
-    );
-    const path = "/api/v1/listings";
-    const readApi = async (status: number) => {
-      const response = await fetch(`http://127.0.0.1:8787${path}`, {
-        headers: { Authorization: `Bearer ${secret}` },
-      });
-      const body = await response.json();
-      assert.equal(response.status, status);
-      validateResponse(path, response, body);
-      return body;
-    };
-    const listingIds = async () => {
-      const { rows } = await db.query<{ listing_id: string }>(
-        "SELECT listing_id FROM idx.source_mappings WHERE feed_id=$1 ORDER BY listing_id",
-        [feedId],
+  await t.test(
+    "three pages across two schedules with duplicate delivery",
+    async (t) => {
+      const { worker, directory } = await openSyncWorker(t, vars);
+      const engine = await startWorker("packages/engine/wrangler.jsonc", 8787);
+      t.after(() => engine.stop());
+      const { secret } = await keyCommand(
+        directory,
+        "create",
+        siteId,
+        "listings:read",
       );
-      return rows.map(({ listing_id }) => listing_id);
-    };
-    const firstId = await tick();
-    const first = await finished(firstId);
-    checkRedacted(JSON.stringify(first));
-    assert.equal(first.status, "complete");
-    assert.deepEqual(first.output, {
-      code: "page_limit",
-      nextStep: { kind: "retry" },
-      pagesApplied: 2,
-    });
-    assert.equal(first.steps.length, 3);
-    for (const step of first.steps.slice(1)) {
-      assert.deepEqual(step.output, {
+      const path = "/api/v1/listings";
+      const readApi = async (status: number) => {
+        const response = await fetch(`http://127.0.0.1:8787${path}`, {
+          headers: { Authorization: `Bearer ${secret}` },
+        });
+        const body = await response.json();
+        assert.equal(response.status, status);
+        validateResponse(path, response, body);
+        return body;
+      };
+      const listingIds = async () => {
+        const { rows } = await db.query<{ listing_id: string }>(
+          "SELECT listing_id FROM idx.source_mappings WHERE feed_id=$1 ORDER BY listing_id",
+          [feedId],
+        );
+        return rows.map(({ listing_id }) => listing_id);
+      };
+      const firstId = await tick();
+      const first = await finished(firstId);
+      checkRedacted(JSON.stringify(first));
+      assert.equal(first.status, "complete");
+      assert.deepEqual(first.output, {
         code: "page_limit",
         nextStep: { kind: "retry" },
+        pagesApplied: 2,
       });
-      assert.deepEqual(step.config.retries, {
-        limit: 1,
-        delay: "10 seconds",
-        backoff: "constant",
-      });
-      assert.equal(step.config.timeout, "1 minute");
-    }
-    await deliver(time);
-    const runs = await localRequest(instances);
-    assert.deepEqual(runs.map(({ id }: { id: string }) => id), [firstId]);
-    assert.equal(feed.calls.length, 2);
-    assert.equal((await listingIds()).length, 2);
-    assert.equal((await readApi(503)).code, "feed_expired");
+      assert.equal(first.steps.length, 3);
+      for (const step of first.steps.slice(1)) {
+        assert.deepEqual(step.output, {
+          code: "page_limit",
+          nextStep: { kind: "retry" },
+        });
+        assert.deepEqual(step.config.retries, {
+          limit: 1,
+          delay: "10 seconds",
+          backoff: "constant",
+        });
+        assert.equal(step.config.timeout, "1 minute");
+      }
+      await deliver(time);
+      const runs = await localRequest(instances);
+      assert.deepEqual(
+        runs.map(({ id }: { id: string }) => id),
+        [firstId],
+      );
+      assert.equal(feed.calls.length, 2);
+      assert.equal((await listingIds()).length, 2);
+      assert.equal((await readApi(503)).code, "feed_expired");
 
-    const last = await finished(await tick());
-    checkRedacted(JSON.stringify(last));
-    assert.equal(last.status, "complete");
-    assert.deepEqual(last.output, {
-      code: "complete",
-      nextStep: { kind: "none" },
-      pagesApplied: 1,
-    });
-    assert.deepEqual(
-      feed.calls.map(({ query }) => query),
-      ["", "?cursor=1", "?cursor=2"],
-    );
-    assert.ok(feed.calls.every(({ authorized }) => authorized));
-    assert.deepEqual(feed.preferences, Array(3).fill("odata.maxpagesize=1"));
-    const body = await readApi(200);
-    const ids = await listingIds();
-    assert.equal(ids.length, 3);
-    assert.deepEqual(body.data.map(({ id }: { id: string }) => id).sort(), ids);
-    checkRedacted(worker.rawLogs());
-  });
+      const last = await finished(await tick());
+      checkRedacted(JSON.stringify(last));
+      assert.equal(last.status, "complete");
+      assert.deepEqual(last.output, {
+        code: "complete",
+        nextStep: { kind: "none" },
+        pagesApplied: 1,
+      });
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", "?cursor=1", "?cursor=2"],
+      );
+      assert.ok(feed.calls.every(({ authorized }) => authorized));
+      assert.deepEqual(feed.preferences, Array(3).fill("odata.maxpagesize=1"));
+      const body = await readApi(200);
+      const ids = await listingIds();
+      assert.equal(ids.length, 3);
+      assert.deepEqual(
+        body.data.map(({ id }: { id: string }) => id).sort(),
+        ids,
+      );
+      checkRedacted(worker.rawLogs());
+    },
+  );
 
   await t.test("database wait, saved stop and manual resume", async (t) => {
     await openSyncWorker(t, vars);

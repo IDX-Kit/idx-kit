@@ -43,7 +43,8 @@ export async function startWorker(
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        [`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${binding}`]: connection,
+        [`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${binding}`]:
+          connection,
         WRANGLER_SEND_METRICS: "false",
         NO_COLOR: "1",
       },
@@ -66,9 +67,9 @@ export async function startWorker(
   const readyPath = options.readyPath ?? (port === 8787 ? "/api" : "/");
   for (let attempt = 0; attempt < 300; attempt++) {
     if (child.exitCode !== null) break;
-    const response = await fetch(
-      `http://127.0.0.1:${port}${readyPath}`,
-    ).catch(() => null);
+    const response = await fetch(`http://127.0.0.1:${port}${readyPath}`).catch(
+      () => null,
+    );
     if (response?.ok) {
       readyId = response.headers.get("Request-Id");
       return {

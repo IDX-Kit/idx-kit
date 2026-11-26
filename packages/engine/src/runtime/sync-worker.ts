@@ -33,8 +33,9 @@ const pageStep = {
 
 function settings(env: SyncEnv) {
   try {
+    const json = z.string().parse(env.IDX_SYNC_FEED_JSON);
     return {
-      feed: feedSettings.parse(JSON.parse(env.IDX_SYNC_FEED_JSON ?? "")),
+      feed: feedSettings.parse(JSON.parse(json)),
       token: feedTokenSchema.parse(env.IDX_SYNC_FEED_TOKEN),
       pages: pageCount.parse(env.IDX_SYNC_PAGES_PER_RUN ?? "10"),
     };
@@ -75,7 +76,10 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
         withWriter(this.env, async (client) => {
           const state = await readFeedState(client, feed.feedId);
           if (!state) {
-            return { code: "missing_feed", nextStep: { kind: "stop" } } as const;
+            return {
+              code: "missing_feed",
+              nextStep: { kind: "stop" },
+            } as const;
           }
           if (allowResume) return null;
           if (state.waitingSeconds) {
