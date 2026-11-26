@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      3,
+      4,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -71,6 +71,38 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       0,
     );
   });
+  await t.test(
+    "migration backfills the oldest ingest on populated feeds",
+    async () => {
+      const older = "2026-11-01T00:03:00.000Z";
+      await seed(db, fixtures);
+      await db.query(
+        "ALTER TABLE idx.feeds DROP COLUMN oldest_listing_ingested_at",
+      );
+      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+        "004_feed_freshness.sql",
+      ]);
+      await db.query("UPDATE idx.listings SET ingested_at = $1 WHERE id = $2", [
+        older,
+        "lst_demo_0006",
+      ]);
+      const listings = await snapshot();
+      await migrate(db);
+      const feeds = await db.query(
+        "SELECT id, oldest_listing_ingested_at FROM idx.feeds ORDER BY id",
+      );
+      assert.deepEqual(feeds.rows, [
+        {
+          id: "feed_demo_expired",
+          oldest_listing_ingested_at: new Date(
+            fixtures.listings.at(-1)!.ingestedAt,
+          ),
+        },
+        { id: "feed_demo_primary", oldest_listing_ingested_at: new Date(older) },
+      ]);
+      assert.deepEqual(await snapshot(), listings);
+    },
+  );
   await t.test(
     "runtime reads listings but cannot change schema, sites or accepted inquiries",
     async () => {

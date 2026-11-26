@@ -17,8 +17,7 @@ export async function searchListings(
   const feeds = await readQuery<FeedRow>(
     pool,
     `SELECT f.display_blocks, f.refreshed_at, f.expires_at, f.rules_version,
-    COALESCE((SELECT min(l.ingested_at) FROM idx.listings l
-      JOIN idx.source_mappings m ON m.listing_id = l.id WHERE m.feed_id = f.id), f.refreshed_at) AS ingested_at
+    COALESCE(f.oldest_listing_ingested_at, f.refreshed_at) AS ingested_at
     FROM idx.feeds f JOIN idx.data_licenses d ON d.feed_id = f.id
     WHERE d.site_id = $1 ORDER BY f.id`,
     [c.site],

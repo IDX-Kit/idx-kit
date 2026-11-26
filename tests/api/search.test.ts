@@ -7,11 +7,13 @@ import type { DisplayBlock, Listing, SearchResponse } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { searchListings } from "@idx-kit/engine/src/db/search.ts";
 import { listingSelect } from "@idx-kit/engine/src/db/read.ts";
+import type { Database } from "@idx-kit/engine/src/db/read.ts";
 import {
   searchQuery,
   searchSchema,
   CURSOR_MAX_BYTES,
 } from "@idx-kit/engine/src/domain/search-query.ts";
+import type { SearchQuery } from "@idx-kit/engine/src/domain/search-query.ts";
 import type { FixtureRecord } from "@idx-kit/engine/src/domain/normalize.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { validateResponse } from "./contract.ts";
@@ -256,6 +258,29 @@ test(
             rows.map((item) => item.id),
             ["lst_demo_0001", "lst_demo_0002", "lst_demo_0003"],
           );
+        }
+      },
+    );
+    await t.test(
+      "paging the original fixtures preserves price order and ID ties",
+      async () => {
+        const licensed = fixtures.listings.filter(
+          (item) =>
+            item.feedId === "feed_demo_primary" &&
+            item.source.InternetEntireListingDisplayYN,
+        );
+        for (const sort of ["price", "-price"]) {
+          const price = (item: FixtureRecord) =>
+            item.source.ListPrice === null
+              ? Infinity
+              : Number(item.source.ListPrice) * (sort === "price" ? 1 : -1);
+          const expected = licensed
+            .toSorted(
+              (a, b) => price(a) - price(b) || a.publicId.localeCompare(b.publicId),
+            )
+            .map((item) => item.publicId);
+          const rows = await browse(`sort=${sort}&limit=2`);
+          assert.deepEqual(rows.map((item) => item.id), expected);
         }
       },
     );
@@ -571,6 +596,39 @@ test(
       },
     );
     await t.test(
+      "page freshness follows the oldest mapped ingest, including on empty results",
+      async () => {
+        const record = structuredClone(fixtures.listings[5]);
+        const partial = { feeds: [], sites: [], listings: [record] };
+        const original = record.ingestedAt;
+        record.ingestedAt = "2026-11-01T00:01:00Z";
+        await seed(db, partial);
+        const first = (await request("limit=1")).body;
+        for (const body of [
+          first,
+          (await request(`limit=1&after=${first.meta.page.nextCursor}`)).body,
+          (await request("city=No%20Such%20City")).body,
+        ]) {
+          assert.equal(
+            body.display.freshness.ingestedAt,
+            new Date(record.ingestedAt).toISOString(),
+          );
+        }
+        assert.equal(
+          first.data[0].display.freshness.ingestedAt,
+          new Date(original).toISOString(),
+        );
+        record.ingestedAt = "2026-11-01T01:00:00Z";
+        await seed(db, partial);
+        const { body } = await request("city=No%20Such%20City");
+        assert.deepEqual(body.data, []);
+        assert.equal(
+          body.display.freshness.ingestedAt,
+          new Date(original).toISOString(),
+        );
+      },
+    );
+    await t.test(
       "licensed feed expiry fails closed even for empty results and on continuation",
       async () => {
         const cursor = (await request("limit=1")).body.meta.page.nextCursor;
@@ -631,7 +689,7 @@ test(
     );
     await t.test(
       "every page seeks through listing indexes in both price orders",
-      async () => {
+      async (t) => {
         interface Plan {
           "Node Type": string;
           "Relation Name"?: string;
@@ -642,82 +700,111 @@ test(
           node,
           ...(node.Plans ?? []).flatMap(flatten),
         ];
-        // A page smaller than the data tests ordered seeks rather than a plan
-        // that collects almost the entire tiny contract fixture into a bitmap.
-        const extended = structuredClone(fixtures);
-        for (let i = 0; i < 2000; i++) {
-          const record = structuredClone(fixtures.listings[0]);
-          record.publicId = `lst_search_plan_${i}`;
-          record.source.ListingKey = `Synthetic plan position ${i}`;
-          record.source.ListPrice = String(350000 + i * 100);
-          extended.listings.push(record);
-        }
-        await seed(db, extended);
-        await db.query("ANALYZE idx.listings, idx.source_mappings");
+        const inspecting: Database = {
+          async query<T extends pg.QueryResultRow>(
+            sql: string,
+            values: unknown[],
+          ) {
+            const plan = (
+              await db.query("EXPLAIN (FORMAT JSON) " + sql, values)
+            ).rows[0]["QUERY PLAN"][0].Plan as Plan;
+            const nodes = flatten(plan).filter(
+              (node) => node["Relation Name"] === "listings",
+            );
+            const diagnostic = JSON.stringify({ sql, values, plan });
+            if (sql.startsWith(listingSelect)) {
+              assert.equal(nodes.length, 1, diagnostic);
+              const [node] = nodes;
+              const condition = node["Index Cond"] ?? "";
+              assert.match(
+                node["Node Type"],
+                /^Index (Only )?Scan$/,
+                diagnostic,
+              );
+              assert.match(condition, /price|id/, diagnostic);
+              for (const operator of ["price >", "price <", "price =", "id >"]) {
+                if (sql.includes(`l.${operator}`))
+                  assert.ok(condition.includes(operator), diagnostic);
+              }
+            } else {
+              assert.equal(nodes.length, 0, diagnostic);
+            }
+            return db.query<T>(sql, values);
+          },
+        };
+        const volume =
+          process.env.IDX_TEST_SEARCH_VOLUME === "1" ? 100_000 : 2_000;
+        const started = performance.now();
         await db.query("BEGIN");
         try {
-          for (const sort of ["price", "-price"]) {
-            const boundary = {
-              price: sort === "price" ? "590000" : "0",
-              id: "lst_demo_0023",
-            };
-            for (const last of [
-              null,
-              { price: "425000", id: "lst_demo_0002" },
-              boundary,
-              { price: null, id: "lst_demo_0004" },
-            ]) {
-              let scans = 0;
-              const inspecting = {
-                async query(sql: string, values: unknown[]) {
-                  if (sql.startsWith(listingSelect)) {
-                    assert.ok(!sql.includes("OR l.price IS NULL"));
-                    const plan = (
-                      await db.query("EXPLAIN (FORMAT JSON) " + sql, values)
-                    ).rows[0]["QUERY PLAN"][0].Plan as Plan;
-                    const nodes = flatten(plan).filter(
-                      (node) => node["Relation Name"] === "listings",
-                    );
-                    const diagnostic = JSON.stringify({
-                      sort,
-                      last,
-                      sql,
-                      plan,
-                    });
-                    assert.ok(nodes.length > 0, diagnostic);
-                    for (const node of nodes) {
-                      const condition = node["Index Cond"] ?? "";
-                      assert.match(node["Node Type"], /Index/, diagnostic);
-                      assert.match(condition, /price|id/, diagnostic);
-                      if (last?.price === null)
-                        assert.match(condition, /id > /, diagnostic);
-                      else if (last && !sql.includes("l.price IS NULL")) {
-                        assert.match(condition, /[<>]/, diagnostic);
-                        assert.match(condition, /price [<>=] /, diagnostic);
-                        if (sql.includes("l.id >"))
-                          assert.match(condition, /id > /, diagnostic);
-                      }
-                      scans++;
-                    }
-                  }
-                  return db.query(sql, values);
-                },
-              } as pg.Pool;
+          // Generate synthetic rows on the database runner and roll them back.
+          const loaded = await db.query(
+            `
+            WITH inserted AS (
+              INSERT INTO idx.listings
+                (id, synthetic, price, currency, withheld_fields, entire_listing_display,
+                 display_blocks, page_blocks, ingested_at)
+              SELECT 'lst_search_plan_' || lpad(n::text, 6, '0'), true,
+                350000 + (n % 5000) * 100, 'USD', '{}', true, '[]', '[]',
+                '2026-11-01T00:05:00Z'
+              FROM generate_series(1, $1::int) AS series(n)
+              RETURNING id
+            )
+            INSERT INTO idx.source_mappings (feed_id, source_key, listing_id)
+            SELECT 'feed_demo_primary', id, id FROM inserted
+          `,
+            [volume],
+          );
+          assert.equal(loaded.rowCount, volume);
+          await db.query(
+            "UPDATE idx.listings SET price = 350000, currency = 'USD' WHERE price IS NULL",
+          );
+          for (const withNulls of [false, true]) {
+            if (withNulls) {
+              await db.query(
+                "UPDATE idx.listings SET price = NULL, currency = NULL WHERE id BETWEEN $1 AND $2",
+                ["lst_search_plan_000001", "lst_search_plan_000100"],
+              );
+            }
+            await db.query("ANALYZE idx.listings, idx.source_mappings");
+            for (const sort of ["price", "-price"]) {
               const query = searchQuery(
                 searchSchema.parse({ sort, limit: "50" }),
                 "site_demo_primary",
               );
-              const result = await searchListings(inspecting, {
-                ...query,
-                last,
-              });
-              assert.ok(scans > 0);
-              if (last === boundary)
-                assert.ok(result.rows.some((row) => row.price === null));
+              const fetchSize = query.context.limit + 1;
+              const boundary = {
+                price: sort === "price" ? "900000" : "0",
+                id: "lst_demo_0023",
+              };
+              const positions: SearchQuery["last"][] = [
+                null,
+                { price: "425000", id: "lst_demo_0002" },
+                boundary,
+              ];
+              if (withNulls)
+                positions.push({ price: null, id: "lst_search_plan_000001" });
+              for (const last of positions) {
+                const result = await searchListings(inspecting, {
+                  ...query,
+                  last,
+                });
+                if (last === boundary || last?.price === null) {
+                  assert.equal(result.rows.length, withNulls ? fetchSize : 0);
+                  assert.ok(result.rows.every((row) => row.price === null));
+                } else {
+                  assert.equal(result.rows.length, fetchSize);
+                  assert.ok(result.rows.every((row) => row.price !== null));
+                }
+              }
             }
           }
         } finally {
           await db.query("ROLLBACK");
+          const elapsed = (performance.now() - started) / 1000;
+          t.diagnostic(
+            `Search plan proof with ${volume} synthetic listings took ${elapsed.toFixed(2)}s`,
+          );
         }
       },
     );

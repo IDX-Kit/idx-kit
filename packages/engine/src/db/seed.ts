@@ -8,8 +8,19 @@ import { addressProtection } from "../domain/withholding.ts";
 import { upsertListing } from "./listings.ts";
 
 export async function seed(client: pg.Client, fixtures: Fixtures) {
+  const feedIds = [
+    ...new Set([
+      ...fixtures.feeds.map((feed) => feed.id),
+      ...fixtures.listings.map((listing) => listing.feedId),
+    ]),
+  ];
   await client.query("BEGIN");
   try {
+    // Serialize writes to each feed through the freshness update, including partial seeds.
+    await client.query(
+      "SELECT id FROM idx.feeds WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE",
+      [feedIds],
+    );
     for (const feed of fixtures.feeds) {
       // Feed disclosures are shared: protect every withheld source address in this feed.
       const blocks = fixtures.listings
@@ -25,7 +36,8 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
           feed.blocks,
         );
       await client.query(
-        `INSERT INTO idx.feeds VALUES ($1,$2,$3,$4,$5)
+        `INSERT INTO idx.feeds (id, refreshed_at, expires_at, display_blocks, rules_version)
+      VALUES ($1,$2,$3,$4,$5)
       ON CONFLICT (id) DO UPDATE SET refreshed_at=EXCLUDED.refreshed_at, expires_at=EXCLUDED.expires_at,
         display_blocks=EXCLUDED.display_blocks, rules_version=EXCLUDED.rules_version`,
         [
@@ -50,6 +62,13 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
     }
     for (const record of fixtures.listings)
       await upsertListing(client, normalize(record));
+    await client.query(
+      `UPDATE idx.feeds f SET oldest_listing_ingested_at = (
+        SELECT min(l.ingested_at) FROM idx.source_mappings m
+        JOIN idx.listings l ON l.id = m.listing_id WHERE m.feed_id = f.id
+      ) WHERE f.id = ANY($1::text[])`,
+      [feedIds],
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
