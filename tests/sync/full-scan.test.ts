@@ -93,12 +93,13 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       siteId,
       poll,
       scan: (feed: Feed, maxRemovals?: number, client = writer) =>
-        syncFullScan(client, {
-          ...options(feed),
-          ...(maxRemovals === undefined
-            ? {}
-            : { removeMissing: true as const, maxRemovals }),
-        }),
+        maxRemovals === undefined
+          ? syncFullScan(client, options(feed))
+          : syncFullScan(client, {
+              ...options(feed),
+              removeMissing: true,
+              maxRemovals,
+            }),
       checkpoint: () => readScanCheckpoint(db, feedId),
       async incrementalState() {
         const { rows: feed } = await db.query(
