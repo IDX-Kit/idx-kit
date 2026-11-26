@@ -1,4 +1,5 @@
 import { startSite } from "./runtime.ts";
+import { workerRuntime } from "../workers/runtime.ts";
 import { captureLog } from "../logs.ts";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
