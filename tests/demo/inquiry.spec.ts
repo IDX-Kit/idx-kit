@@ -8,6 +8,7 @@ import pg from "pg";
 import { execute, keyCommand, startEngine } from "../api/runtime.ts";
 import { registerSecret } from "../logs.ts";
 import { startSite } from "./runtime.ts";
+import { workerRuntime } from "../workers/runtime.ts";
 
 const property = "/properties/lst_demo_0001";
 // Invented visitor values and fault details, with no real person or property.
@@ -374,13 +375,22 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
           .toContain(`"requestId":"${upstreamId}"`);
         expect(faultSite.logs()).toContain(`"upstreamStatus":${fault}`);
       } else {
+        // The service-binding bridge turns its dropped HTTP connection into 500.
+        // The Node run observes the direct transport TypeError instead.
+        const expectedType =
+          failure === "timeout"
+            ? "TimeoutError"
+            : workerRuntime
+              ? "ApiError"
+              : "TypeError";
         await expect
-          .poll(() => faultSite.logs())
-          .toContain(
-            failure === "timeout"
-              ? '"errorType":"TimeoutError"'
-              : '"errorType":"TypeError"',
-          );
+          .poll(() => faultSite.logs().trim().split("\n").at(-1))
+          .toContain(`"errorType":"${expectedType}"`);
+        const last = JSON.parse(faultSite.logs().trim().split("\n").at(-1)!);
+        expect(last.requestId).toBeNull();
+        expect(last.upstreamStatus).toBe(
+          failure === "network" && workerRuntime ? 500 : null,
+        );
       }
       for (const value of [secret, ...Object.values(visitor)])
         expect(faultSite.logs()).not.toContain(value);
