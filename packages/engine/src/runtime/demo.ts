@@ -29,7 +29,7 @@ export async function demoKey(db: pg.Client, secret: string) {
     );
     await db.query(
       `INSERT INTO idx.site_secret_keys (id,site_id,secret_hash,scopes)
-       VALUES ($1,$2,$3,ARRAY['listings:read'])
+       VALUES ($1,$2,$3,ARRAY['listings:read','inquiries:write','inquiries:read'])
        ON CONFLICT (secret_hash) DO UPDATE SET scopes=EXCLUDED.scopes, revoked_at=NULL
        WHERE idx.site_secret_keys.site_id=EXCLUDED.site_id AND
          (idx.site_secret_keys.revoked_at IS NOT NULL OR idx.site_secret_keys.scopes<>EXCLUDED.scopes)`,

@@ -10,6 +10,7 @@ export default defineConfig({
     ? cloudflare({ imageService: "passthrough", remoteBindings: false })
     : node({ mode: "standalone" }),
   session: false,
+  security: { checkOrigin: true },
   vite: {
     define: { "import.meta.env.IDX_WORKER": JSON.stringify(worker) },
     build: { rolldownOptions: { external: ["cloudflare:workers"] } },

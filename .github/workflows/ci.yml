@@ -43,9 +43,21 @@ jobs:
           node --version
           npm ci
       - name: Check formatting and lint
+        id: style
         run: |
           npm run format:check
           npm run lint
+      - name: Prepare a formatting patch on the runner
+        if: failure() && steps.style.outcome == 'failure'
+        run: |
+          npm run format
+          git diff --binary > /tmp/formatting.patch
+      - name: Save formatting patch
+        if: failure() && steps.style.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: formatting-patch
+          path: /tmp/formatting.patch
       - name: Audit dependencies including development tooling
         run: npm audit --omit=optional
       - name: Compare lint findings with the pre-update dependency tree
@@ -127,7 +139,7 @@ jobs:
         run: |
           npm run demo:site:build
           npx playwright install --with-deps chromium
-      - name: Prove guide, search, paging and property HTML without JavaScript
+      - name: Prove guide, search, property pages and inquiry receipts without JavaScript
         run: npm run test:demo 2>&1 | tee "$IDX_TEST_LOG_DIR/demo.log"
       - name: Prove search, detail, durable inquiry races, restarts and key lifecycle against the contract
         run: npm run test:api 2>&1 | tee "$IDX_TEST_LOG_DIR/api.log"

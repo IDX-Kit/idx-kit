@@ -1,13 +1,33 @@
 ---
 import { engineClient, logFailure, PageFailure } from "../../server/engine.ts";
 import { displayBlocks } from "../../server/display.ts";
+import Inquiry from "../../components/Inquiry.astro";
+import { emptyInquiry, sendInquiry, inquiryFailure } from "../../server/inquiry.ts";
 import Page from "../../layouts/Page.astro";
 import Listing from "../../components/Listing.astro";
 import Failure from "../../components/Failure.astro";
+const listingId = Astro.params.listingId ?? "";
+const path = `/properties/${listingId}`;
+let form = emptyInquiry();
+let receipt;
 let response;
 let status = 200;
 let engine: ReturnType<typeof engineClient> | undefined;
-try {
+if (Astro.request.method === "POST") {
+  const result = await sendInquiry(Astro.request, listingId);
+  if (result.receipt)
+    return Astro.redirect(`${path}?receipt=${encodeURIComponent(result.receipt.id)}`, 303);
+  form = result.form;
+  status = result.status;
+} else if (Astro.url.searchParams.has("receipt")) {
+  try {
+    engine = engineClient();
+    receipt = await engine.receipt(Astro.url.searchParams.get("receipt") ?? "");
+  } catch (error) {
+    logFailure(error, engine?.context());
+    status = inquiryFailure(error, form, engine?.context().retryAfter ?? null);
+  }
+} else try {
   engine = engineClient();
   response = await engine.listing(Astro.params.listingId ?? "");
   displayBlocks(response.data.display, response.display);
@@ -24,10 +44,29 @@ const message =
       : "Unable to load this listing";
 ---
 
-<Page title={status === 200 ? "Property" : message}>
+<Page title={receipt ? "Inquiry received" : status === 200 ? "Property" : message}>
+  {receipt ? (
+    <section aria-labelledby="receipt-heading">
+      <h1 id="receipt-heading">Received by the demo engine; no message was sent</h1>
+      <p>Received: <time datetime={receipt.data.receivedAt}>{new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium", timeStyle: "long", timeZone: "America/New_York",
+      }).format(new Date(receipt.data.receivedAt))}</time></p>
+      <a href={path}>Send another inquiry</a>
+    </section>
+  ) : Astro.url.searchParams.has("receipt") && Astro.request.method !== "POST" ? (
+    <section>
+      <p role="alert">{form.message}</p>
+      {form.retry && <a href={Astro.url.pathname + Astro.url.search}>Retry</a>}
+      {form.missing && <a href="/search">Back to search</a>}
+    </section>
+  ) : (
+    <>
   {status === 200 && response ? (
     <Listing listing={response.data} pageDisplay={response.display} />
   ) : (
     <Failure status={status} />
+  )}
+  {(response || Astro.request.method === "POST") && <Inquiry form={form} path={path} />}
+    </>
   )}
 </Page>

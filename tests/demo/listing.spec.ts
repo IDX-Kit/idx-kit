@@ -1,8 +1,7 @@
-import { startWorkerSite, workerRuntime } from "../workers/runtime.ts";
+import { startSite } from "./runtime.ts";
 import { captureLog } from "../logs.ts";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,53 +19,6 @@ let directory: string,
   engine: Awaited<ReturnType<typeof startEngine>> | undefined;
 let site: Awaited<ReturnType<typeof startSite>>;
 let db: pg.Client;
-async function startSite(base = "http://127.0.0.1:8787", port = 4321) {
-  if (workerRuntime) return startWorkerSite(secret, base, port);
-  const child = spawn(process.execPath, ["start.mjs"], {
-    cwd: "examples/demo-site",
-    stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      IDX_ENGINE_URL: base,
-      IDX_SECRET_KEY: secret,
-      HOST: "127.0.0.1",
-      PORT: String(port),
-    },
-  });
-  let logs = "";
-  child.stdout.on("data", (chunk) => {
-    logs += chunk;
-    captureLog("site", String(chunk));
-  });
-  child.stderr.on("data", (chunk) => {
-    logs += chunk;
-    captureLog("site", String(chunk));
-  });
-  const exited = once(child, "exit");
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (child.exitCode !== null) break;
-    if (
-      await fetch(`http://127.0.0.1:${port}/`).then(
-        (r) => r.ok,
-        () => false,
-      )
-    ) {
-      return {
-        logs: () => logs,
-        async stop() {
-          child.kill("SIGTERM");
-          await exited;
-        },
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  if (child.exitCode === null) {
-    child.kill("SIGTERM");
-    await exited;
-  }
-  throw new Error("Site did not start: " + logs);
-}
 async function raw(
   request: APIRequestContext,
   path: string,
@@ -96,7 +48,7 @@ test.describe.serial("SSR property pages through the public engine", () => {
       )
     ).secret;
     engine = await startEngine();
-    site = await startSite();
+    site = await startSite(secret);
   });
   test.afterAll(async () => {
     await site?.stop();
@@ -215,6 +167,7 @@ test.describe.serial("SSR property pages through the public engine", () => {
         "Feed refreshed: Oct 31, 2026, 8:00:00 PM EDT",
         "Original synthetic data for IDX Kit. These properties do not exist.",
         record.pageBlocks[0].text,
+        "Send an inquiry Synthetic inquiries only. The demo sends no email. Name Email Message Send",
       ].join(" "),
     );
   });
@@ -455,7 +408,7 @@ test.describe.serial("SSR property pages through the public engine", () => {
         expect(result.stderr).not.toContain(secret);
       }
       versions = [{ major: "v1", capabilities: ["listingDetail"] }];
-      const futureSite = await startSite("http://127.0.0.1:8788", 4322);
+      const futureSite = await startSite(secret, "http://127.0.0.1:8788", 4322);
       try {
         for (const display of [sample.display, sample.data.display]) {
           Object.assign(display, { rulesVersion: "future" });
@@ -883,7 +836,7 @@ test.describe.serial("SSR property pages through the public engine", () => {
   }) => {
     const saved = secret;
     secret = "idx_secret_synthetic_wrong_key";
-    const wrong = await startSite("http://127.0.0.1:8787", 4322);
+    const wrong = await startSite(secret, "http://127.0.0.1:8787", 4322);
     secret = saved;
     try {
       expect(

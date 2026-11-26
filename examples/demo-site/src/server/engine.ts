@@ -2,6 +2,7 @@ import { writeLog } from "./log.ts";
 import { ApiError, createClient, OPERATIONS } from "@idx-kit/client";
 import type {
   Ops,
+  CreateInquiryBody,
   Problem,
   RequestOptions,
   SearchListingsQuery,
@@ -62,7 +63,7 @@ export function logFailure(
       (error instanceof PageFailure ? error.path : null) ??
       upstream?.path ??
       null,
-    message: cause instanceof Error ? cause.message : "Request failed",
+
   });
   if (error instanceof PageFailure) error.logged = true;
 }
@@ -91,13 +92,16 @@ export function engineClient() {
   let requestId: string | null = null;
   let upstreamStatus: number | null = null;
   let path: string | null = null;
+  let retryAfter: string | null = null;
   const client = createClient<Ops>(OPERATIONS, {
     serverUrl: base.origin,
     timeout: 5000,
+    retry: { retries: 0 },
     fetch: binding?.fetch.bind(binding),
     onResponse(response) {
       requestId = response.headers.get("Request-Id");
       upstreamStatus = response.status;
+      retryAfter = response.headers.get("Retry-After");
     },
   });
   const options: RequestOptions = {
@@ -112,6 +116,7 @@ export function engineClient() {
     path = requestPath;
     requestId = null;
     upstreamStatus = null;
+    retryAfter = null;
     try {
       return await call();
     } catch (cause) {
@@ -131,7 +136,22 @@ export function engineClient() {
     }
   }
   return {
-    context: () => ({ status: upstreamStatus, requestId, path }),
+    context: () => ({ status: upstreamStatus, requestId, path, retryAfter }),
+    async createInquiry(body: CreateInquiryBody, key: string) {
+      return request("/api/v1/inquiries", () =>
+        client.createInquiry(
+          { body, headers: { "Idempotency-Key": `"${key}"` } },
+          options,
+        ),
+      );
+    },
+    async receipt(id: string) {
+      if (!/^[A-Za-z0-9_-]+$/.test(id))
+        throw new PageFailure(404, "invalid_receipt_id");
+      return request("/api/v1/inquiries/{inquiryId}", () =>
+        client.getInquiryReceipt({ path: { inquiryId: id } }, options),
+      );
+    },
     async discover() {
       const body = await request("/api", () =>
         client.discoverServer({}, { cache: "no-store", redirect }),

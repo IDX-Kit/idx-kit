@@ -1,0 +1,43 @@
+---
+import { inquiryFields, type InquiryForm } from "../server/inquiry.ts";
+interface Props {
+  form: InquiryForm;
+  path: string;
+}
+const { form, path } = Astro.props;
+const labels = { name: "Name", email: "Email", message: "Message" };
+---
+
+<section aria-labelledby="inquiry-heading">
+  <h2 id="inquiry-heading">Send an inquiry</h2>
+  <p>Synthetic inquiries only. The demo sends no email.</p>
+  {form.message && <p role="alert">{form.message}</p>}
+  {form.missing && <p><a href="/search">Back to search</a></p>}
+  {form.retryAfter && <p data-retry-after>Retry-After: {form.retryAfter}</p>}
+  <form method="post" action={path}>
+    <input type="hidden" name="idempotencyKey" value={form.key} />
+    <div hidden aria-hidden="true">
+      <label for="website">Leave this field empty</label>
+      <input id="website" name="website" tabindex="-1" autocomplete="off" />
+    </div>
+    {inquiryFields.map((field) => (
+      <div>
+        <label for={`inquiry-${field}`}>{labels[field]}</label>
+        {field === "message" ? (
+          <textarea id={`inquiry-${field}`} name={field} required maxlength="4000"
+            aria-invalid={Boolean(form.errors[field])}
+            aria-describedby={form.errors[field] ? `inquiry-${field}-error` : undefined}
+          >{form.values[field]}</textarea>
+        ) : (
+          <input id={`inquiry-${field}`} name={field}
+            type={field === "email" ? "email" : "text"}
+            autocomplete={field} required maxlength={field === "email" ? 254 : 100}
+            value={form.values[field]} aria-invalid={Boolean(form.errors[field])}
+            aria-describedby={form.errors[field] ? `inquiry-${field}-error` : undefined} />
+        )}
+        {form.errors[field] && <p id={`inquiry-${field}-error`}>{form.errors[field]}</p>}
+      </div>
+    ))}
+    {!form.unavailable && !form.missing && <button type="submit">{form.retry ? "Retry" : "Send"}</button>}
+  </form>
+</section>

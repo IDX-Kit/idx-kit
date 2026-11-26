@@ -80,6 +80,17 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
       ),
     );
   };
+  assert.deepEqual(
+    (await db.query("SELECT scopes FROM idx.site_secret_keys WHERE revoked_at IS NULL")).rows[0].scopes,
+    ["listings:read", "inquiries:write", "inquiries:read"],
+  );
+  // Simulate the previous online build; sync upgrades scopes on the same secret.
+  await db.query("UPDATE idx.site_secret_keys SET scopes=ARRAY['listings:read']");
+  command("demo:key", ["--", "sync-demo"]);
+  assert.deepEqual(
+    (await db.query("SELECT scopes FROM idx.site_secret_keys WHERE revoked_at IS NULL")).rows[0].scopes,
+    ["listings:read", "inquiries:write", "inquiries:read"],
+  );
   const first = await snapshot();
   const keyVersion = async () =>
     (await db.query("SELECT xmin::text FROM idx.site_secret_keys")).rows;
