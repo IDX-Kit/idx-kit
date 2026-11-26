@@ -11,6 +11,7 @@
     "yaml": "2.9.1",
     "zod": "4.6.7",
     "@hono/zod-validator": "0.9.1",
-    "canonicalize": "5.1.0"
+    "canonicalize": "5.1.0",
+    "resend": "6.17.2"
   }
 }

@@ -8,9 +8,9 @@ your MLS.
 ## Status
 
 This project is early. The engine serves discovery, its contract, authorized
-synthetic listing detail and search with paging. The plain demo website renders
-guide, search and property pages through the generated API client. Inquiries are
-not implemented.
+synthetic listing detail, search with paging, and durable inquiry receipts. The
+plain demo website renders guide, search and property pages through the generated
+API client.
 
 The first milestone is a demo with clearly fake listings. A visitor goes from
 a guide page to search to a property page, then sends an inquiry. The demo
@@ -109,6 +109,24 @@ headers are sent. Listing responses are private and no-store. Unknown,
 withdrawn and unlicensed listings share a generic 404; expired feeds fail closed.
 Consumers must render permitted facts and both sets of required display blocks
 together, keeping site branding outside the listing body. Fixtures are synthetic.
+
+## Inquiry email
+
+To email new inquiries through Resend, set all three values on the engine:
+
+- `RESEND_API_KEY` is your Resend API key with permission to send email.
+- `INQUIRY_EMAIL_FROM` is an address on a domain verified in Resend.
+- `INQUIRY_EMAIL_TO` is the inbox that should receive new inquiries.
+
+On Node, set them in the environment of the process running the engine. On
+Workers, add the key as a runtime secret and the two addresses as runtime
+variables or secrets on the engine Worker. Leave all three unset to disable
+email. With only some values set, Node refuses to start and the Worker logs a
+configuration error for each newly saved inquiry.
+
+The engine saves the inquiry and returns its receipt while the email runs in
+the background. Check `inquiry.email` logs by inquiry ID or Request-Id. A failed
+email leaves the inquiry saved, and replaying its receipt does not send email.
 
 ## License
 

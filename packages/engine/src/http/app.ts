@@ -15,6 +15,8 @@ import {
   receipt,
 } from "../domain/inquiry.ts";
 import { listingDetail } from "../domain/detail.ts";
+import { sendInquiryEmail } from "../domain/inquiry-email.ts";
+import type { InquiryEmailSettings } from "../domain/inquiry-email.ts";
 import { listingSearch } from "../domain/search.ts";
 import {
   searchQuery,
@@ -43,6 +45,10 @@ export function createApp(
   contract: unknown,
   release: string,
   log: (line: string) => void = console.error,
+  email?: {
+    settings: InquiryEmailSettings;
+    waitUntil?: (task: Promise<void>) => void;
+  },
 ) {
   const app = new Hono<AppEnv>();
   // A zero limit rejects every supplied ID, so the middleware always generates one.
@@ -306,12 +312,24 @@ export function createApp(
       if (!result.success) throw invalidInquiry(result.error.issues);
     }),
     async (c) => {
-      const row = await createInquiry(
+      const input = c.req.valid("json");
+      const { row, listing } = await createInquiry(
         db,
         c.get("site"),
         c.req.valid("header")["idempotency-key"],
-        c.req.valid("json"),
+        input,
       );
+      if (listing && email && email.settings.mode !== "off") {
+        const task = sendInquiryEmail(
+          email.settings,
+          input,
+          row,
+          listing,
+          c.get("requestId"),
+          log,
+        );
+        email.waitUntil?.(task);
+      }
       return Response.json(receipt(row), {
         status: 201,
         headers: {

@@ -80,14 +80,15 @@ export async function createInquiry(
     return row;
   };
   const existing = await db.inquiryByKey(site, key);
-  if (existing) return compare(existing);
-  if (!(await db.listing(site, input.listingId)))
+  if (existing) return { row: compare(existing) };
+  const listing = await db.listing(site, input.listingId);
+  if (!listing)
     throw new HttpProblem(404, "not_found", "The resource was not found.");
   const inserted = await db.insertInquiry(site, key, hash, input);
-  if (inserted) return inserted;
+  if (inserted) return { row: inserted, listing };
   // A new statement gets a fresh Read Committed snapshot after the insert waits.
   const committed = await db.inquiryByKey(site, key);
-  if (committed) return compare(committed);
+  if (committed) return { row: compare(committed) };
   throw new HttpProblem(
     503,
     "service_unavailable",

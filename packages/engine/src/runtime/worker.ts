@@ -3,13 +3,16 @@ import contract from "../../../../.generated/openapi.json" with { type: "json" }
 import metadata from "../../package.json" with { type: "json" };
 import { repository } from "../db/read.ts";
 import type { Database } from "../db/read.ts";
+import { inquiryEmailSettings } from "../domain/inquiry-email.ts";
+import type { InquiryEmailEnv } from "../domain/inquiry-email.ts";
 import { createApp } from "../http/app.ts";
 import { failureFields, logLine } from "../log.ts";
 
 export default {
   async fetch(
     request: Request,
-    env: { HYPERDRIVE: { connectionString: string } },
+    env: InquiryEmailEnv & { HYPERDRIVE: { connectionString: string } },
+    context: { waitUntil(task: Promise<void>): void },
   ) {
     const client = new pg.Client({
       connectionString: env.HYPERDRIVE.connectionString,
@@ -28,7 +31,16 @@ export default {
     };
     let response: Response | undefined;
     try {
-      const app = createApp(repository(db), contract, metadata.version);
+      const app = createApp(
+        repository(db),
+        contract,
+        metadata.version,
+        console.error,
+        {
+          settings: inquiryEmailSettings(env),
+          waitUntil: (task) => context.waitUntil(task),
+        },
+      );
       response = await app.fetch(request);
       return response;
     } finally {

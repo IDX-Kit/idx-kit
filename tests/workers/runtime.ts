@@ -8,7 +8,11 @@ import { stripVTControlCharacters } from "node:util";
 import { captureLog } from "../logs.ts";
 
 export const workerRuntime = process.env.IDX_RUNTIME === "worker";
-export async function startWorker(config: string, port: number) {
+export async function startWorker(
+  config: string,
+  port: number,
+  vars: Record<string, string> = {},
+) {
   const connection = process.env.RUNTIME_DATABASE_URL!;
   assert.equal(new URL(connection).username, "idx_runtime");
   const child = spawn(
@@ -27,6 +31,10 @@ export async function startWorker(config: string, port: number) {
       "0",
       "--log-level",
       "error",
+      ...Object.entries(vars).flatMap(([name, value]) => [
+        "--var",
+        `${name}:${value}`,
+      ]),
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],

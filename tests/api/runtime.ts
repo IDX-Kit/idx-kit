@@ -60,12 +60,16 @@ export async function keyCommand(
   assert.ok(!stdout.includes(secret) && !stderr.includes(secret));
   return { id, secret, path };
 }
-export async function startEngine() {
-  if (workerRuntime) return startWorker("packages/engine/wrangler.jsonc", 8787);
+export async function startEngine(vars: Record<string, string> = {}) {
+  if (workerRuntime)
+    return startWorker("packages/engine/wrangler.jsonc", 8787, vars);
   const child = spawn(
     process.execPath,
     ["packages/engine/src/runtime/node.ts"],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...vars },
+    },
   );
   let stderr = "";
   child.stderr.on("data", (chunk) => {
