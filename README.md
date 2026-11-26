@@ -33,15 +33,21 @@ The dependency URL pins the version. To upgrade or roll back, replace that URL i
 and commit `package.json` and the updated lockfile. Import `@idx-kit/client` from
 your server code and keep your engine key in server configuration.
 
-To release a new client version, update `packages/client/package.json` and the
-`@idx-kit/client` pins in `packages/engine/package.json` and
-`examples/demo-site/package.json`. Refresh the root `package-lock.json` with
-`npm install --package-lock-only --ignore-scripts`. Add
-`docs/releases/client-v<version>.md` using the
-[first release notes](docs/releases/client-v0.1.0.md) as a template. Use the new
-tarball URL in the notes and in the install command above. After both check jobs
-pass on `main`, the workflow creates the missing `client-v<version>` pre-release
-and attaches the tested `idx-kit-client-<version>.tgz` tarball.
+## Client release recovery
+
+1. **Missing tarball.** Find the release tag's commit in GitHub Releases. In
+   Actions, download and unzip the `client-release-*` artifact from the `CI` run
+   for the push to `main` at that commit. Remove any empty
+   `idx-kit-client-<version>.tgz` upload from the release, attach that file from
+   the artifact, then rerun the `release-client` job that reported the missing file.
+2. **Tag conflict.** Set a new version in `packages/client/package.json` and in
+   the `@idx-kit/client` pins in `packages/engine/package.json` and
+   `examples/demo-site/package.json`. Refresh the root `package-lock.json` with
+   `npm install --package-lock-only --ignore-scripts`. Add
+   `docs/releases/client-v<version>.md` using the
+   [first release notes](docs/releases/client-v0.1.0.md) as a template. Update the
+   tag (`client-v<version>`) and filename (`idx-kit-client-<version>.tgz`) in the
+   install URLs in the notes and above, then merge to `main`.
 
 ## Database development
 
