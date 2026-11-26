@@ -77,7 +77,8 @@ export async function standIn(
       query: url.search,
       authorized: request.headers.authorization === `Bearer ${feedToken}`,
     });
-    const prefer = request.headers.prefer;
+    const header = request.headers.prefer;
+    const prefer = Array.isArray(header) ? header.join(", ") : header;
     preferences.push(prefer);
     const size = prefer?.match(/^odata\.maxpagesize=(\d+)$/)?.[1];
     async function reply() {
