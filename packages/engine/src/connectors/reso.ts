@@ -86,13 +86,13 @@ function continuation(base: URL, link: string, from: URL) {
 
 export class ResoConnector {
   private readonly base: URL | null;
+  private readonly token: string;
+  private readonly timeoutMs: number;
 
-  constructor(
-    baseAddress: string,
-    private readonly token: string,
-    private readonly timeoutMs = 30_000,
-  ) {
+  constructor(baseAddress: string, token: string, timeoutMs = 30_000) {
     this.base = URL.parse(baseAddress);
+    this.token = token;
+    this.timeoutMs = timeoutMs;
   }
 
   async readPage(
