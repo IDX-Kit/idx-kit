@@ -62,7 +62,7 @@ export async function keyCommand(
 }
 export async function startEngine(vars: Record<string, string> = {}) {
   if (workerRuntime) return startWorker("packages/engine/wrangler.jsonc", 8787);
-  const child = spawn(
+  return startNodeEngine(
     process.execPath,
     [
       ...(vars.IDX_TEST_RESEND_URL
@@ -73,11 +73,19 @@ export async function startEngine(vars: Record<string, string> = {}) {
         : []),
       "packages/engine/src/runtime/node.ts",
     ],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...vars },
-    },
+    vars,
   );
+}
+
+export async function startNodeEngine(
+  command: string,
+  args: string[],
+  vars: Record<string, string> = {},
+) {
+  const child = spawn(command, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...vars },
+  });
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk;

@@ -16,6 +16,9 @@ The first milestone is a demo with clearly fake listings. A visitor goes from
 a guide page to search to a property page, then sends an inquiry. The demo
 uses only the public API.
 
+Follow the [demo quick start](docs/demo-setup.md) from a fresh checkout.
+See the [repository instructions](AGENTS.md) and the [API rules](docs/api-rules.md).
+
 ## Database development
 
 Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 18. The npm workspace lockfile

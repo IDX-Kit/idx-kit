@@ -1,6 +1,7 @@
 import { startWorkerSite, workerRuntime } from "../workers/runtime.ts";
 import { captureLog } from "../logs.ts";
 import { spawn } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import { once } from "node:events";
 
 export async function startSite(
@@ -9,9 +10,8 @@ export async function startSite(
   port = 4321,
 ) {
   if (workerRuntime) return startWorkerSite(secret, base, port);
-  const child = spawn(process.execPath, ["start.mjs"], {
+  return startNodeSite(port, process.execPath, ["start.mjs"], {
     cwd: "examples/demo-site",
-    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       IDX_ENGINE_URL: base,
@@ -19,6 +19,18 @@ export async function startSite(
       HOST: "127.0.0.1",
       PORT: String(port),
     },
+  });
+}
+
+export async function startNodeSite(
+  port: number,
+  command: string,
+  args: string[],
+  options: Pick<SpawnOptions, "cwd" | "env"> = {},
+) {
+  const child = spawn(command, args, {
+    ...options,
+    stdio: ["ignore", "pipe", "pipe"],
   });
   let logs = "";
   child.stdout.on("data", (chunk) => {
