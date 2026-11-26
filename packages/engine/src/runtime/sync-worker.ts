@@ -9,10 +9,16 @@ import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { syncIncrementally } from "../sync/incremental.ts";
 import { feedSettings, feedTokenSchema } from "./sync-feed-settings.ts";
 
-interface SyncEnv extends SyncBindings {
+interface SyncEnv {
   IDX_SYNC_FEED_JSON?: string;
   IDX_SYNC_FEED_TOKEN?: string;
   IDX_SYNC_PAGES_PER_RUN?: string;
+  LISTING_WRITER_HYPERDRIVE: { connectionString: string };
+  LISTING_SYNC: {
+    createBatch(options: {
+      instances: { id: string }[];
+    }): Promise<{ errors: { code: number }[] }>;
+  };
 }
 
 type SyncParams = { resume?: boolean };
