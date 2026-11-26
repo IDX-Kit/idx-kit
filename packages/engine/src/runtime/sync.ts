@@ -112,13 +112,6 @@ async function run() {
                   maxRemovals: args.maxRemovals,
                 },
           );
-    if ("outcomeSaved" in result && !result.outcomeSaved) {
-      return failRun(
-        feedId,
-        "outcome_not_saved",
-        "Could not save the incremental outcome.",
-      );
-    }
     const step = result.nextStep ?? { kind: "none" as const };
     const nextStep =
       step.kind === "retry"
@@ -128,6 +121,8 @@ async function run() {
       feedId,
       code: result.code,
       nextStep,
+      ...("outcomeSaved" in result &&
+        result.outcomeSaved === false && { outcomeSaved: false }),
       ...("pagesRead" in result && {
         pagesRead: result.pagesRead,
         recordsSeen: result.recordsSeen,

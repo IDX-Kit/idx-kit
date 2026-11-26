@@ -249,6 +249,33 @@ test(
     );
 
     await t.test(
+      "a refused outcome write preserves the provider stop result",
+      async () => {
+        const before = await run(["status"]);
+        respond = () => ({ status: 401, body: feedToken });
+        const offset = feed.calls.length;
+        await db.query(
+          "REVOKE INSERT ON idx.feed_sync_outcomes FROM idx_listing_writer",
+        );
+        try {
+          assert.deepEqual(await run(["incremental"], 4), {
+            feedId: config.feedId,
+            code: "http_error",
+            nextStep: { kind: "stop" },
+            outcomeSaved: false,
+          });
+          assert.equal(feed.calls.length, offset + 1);
+          const after = await run(["status"]);
+          assert.deepEqual(after.lastOutcome, before.lastOutcome);
+        } finally {
+          await db.query(
+            "GRANT INSERT ON idx.feed_sync_outcomes TO idx_listing_writer",
+          );
+        }
+      },
+    );
+
+    await t.test(
       "scan repairs a missed edit and removes only within the explicit limit",
       async () => {
         const missing = (await api()).find(

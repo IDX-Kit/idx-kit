@@ -5,6 +5,16 @@ from the repository root on your Node host.
 
 ## Set up the database
 
+On an empty PostgreSQL server, create a migration login and a database it owns.
+As a PostgreSQL role that can create logins, create the HTTP runtime login
+before running the migrations.
+
+```sql runtime-role
+CREATE ROLE idx_runtime LOGIN;
+```
+
+Set its password interactively with `\password idx_runtime` in `psql`.
+
 Run `npm run demo:db:migrate` with `DATABASE_URL` set to the migration role's
 connection string. As a PostgreSQL role that can create logins, create the
 separate writer login and set its password interactively in `psql`.
@@ -109,7 +119,9 @@ scan numbers, counts, and outcomes are `null`. A scan number is a decimal string
 
 Usage and settings errors print a diagnostic to standard error. Once the
 settings are valid, the command prints a JSON result even if it cannot connect
-to the database, find the feed, or save the incremental outcome.
+to the database or find the feed.
+`outcomeSaved: false` means `status` won't show this run and later invocations
+won't remember any wait requested by this run.
 
 Each invocation makes one attempt. After an interruption, run the same command
 again to resume after the last saved page. If the feed rejects its continuation,
