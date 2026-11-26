@@ -37,7 +37,9 @@ class InquiryResend extends Resend {
     path: string,
     options?: RequestInit,
   ): Promise<ResendResponse<T>> {
-    const response = await fetch(this.baseUrl + path, options).catch(() => null);
+    const response = await fetch(this.baseUrl + path, options).catch(
+      () => null,
+    );
     if (response?.ok)
       return { data: await response.json(), error: null, headers: null };
     await response?.body?.cancel().catch(() => {});

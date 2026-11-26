@@ -65,7 +65,14 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
 });
 
 test("the self-hosting guide stores all Worker email settings as secrets", async () => {
-  const guide = await readFile(new URL("../README.md", import.meta.url), "utf8");
-  for (const name of ["RESEND_API_KEY", "INQUIRY_EMAIL_FROM", "INQUIRY_EMAIL_TO"])
+  const guide = await readFile(
+    new URL("../README.md", import.meta.url),
+    "utf8",
+  );
+  for (const name of [
+    "RESEND_API_KEY",
+    "INQUIRY_EMAIL_FROM",
+    "INQUIRY_EMAIL_TO",
+  ])
     assert.ok(guide.includes(`wrangler secret put ${name}`));
 });
