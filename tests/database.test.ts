@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      7,
+      8,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -96,6 +96,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
             "004_feed_freshness.sql",
             "006_listing_revisions.sql",
             "007_feed_sync_positions.sql",
+            "008_feed_sync_outcomes.sql",
           ],
         ],
       );
@@ -142,6 +143,45 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     },
   );
   await t.test(
+    "the outcome migration preserves an existing sync position",
+    async () => {
+      await db.query(`
+      ALTER TABLE idx.feed_sync_positions
+        DROP COLUMN outcome_code,
+        DROP COLUMN outcome_http_status,
+        DROP COLUMN outcome_next_step,
+        DROP COLUMN outcome_retry_after_seconds,
+        DROP COLUMN consecutive_failures,
+        DROP COLUMN outcome_saved_at,
+        DROP CONSTRAINT feed_sync_positions_version_check,
+        ADD CHECK (version > 0);
+    `);
+      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+        "008_feed_sync_outcomes.sql",
+      ]);
+      const legacy = await db.query(
+        `INSERT INTO idx.feed_sync_positions
+        (feed_id, version, completed_mark, next_link, pending_mark)
+      VALUES ($1, 4, '2026-11-03T00:00:00Z', '?cursor=next', '2026-11-04T00:00:00Z')
+      RETURNING *`,
+        [fixtures.feeds[0].id],
+      );
+      await migrate(db);
+      const upgraded = await db.query("SELECT * FROM idx.feed_sync_positions");
+      assert.deepEqual(upgraded.rows, [
+        {
+          ...legacy.rows[0],
+          outcome_code: null,
+          outcome_http_status: null,
+          outcome_next_step: null,
+          outcome_retry_after_seconds: null,
+          consecutive_failures: "0",
+          outcome_saved_at: null,
+        },
+      ]);
+    },
+  );
+  await t.test(
     "runtime reads listings but cannot change schema, sites or accepted inquiries",
     async () => {
       await runtime.query("SELECT * FROM idx.listings");
@@ -157,8 +197,10 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "UPDATE idx.feeds SET display_blocks='[]'",
         "UPDATE idx.feeds SET refreshed_at=now()",
         "SELECT * FROM idx.feed_sync_positions",
+        "SELECT outcome_code FROM idx.feed_sync_positions",
         "INSERT INTO idx.feed_sync_positions (feed_id, version) VALUES ('feed_demo_primary', 1)",
         "UPDATE idx.feed_sync_positions SET version=2",
+        "UPDATE idx.feed_sync_positions SET outcome_code='complete'",
         "DELETE FROM idx.feed_sync_positions",
         "SELECT idx.renew_feed_freshness('feed_demo_primary')",
         "INSERT INTO idx.sites VALUES ('forbidden')",

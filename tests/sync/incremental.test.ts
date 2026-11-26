@@ -15,6 +15,8 @@ const secondMark = "2026-11-03T00:00:00.000002Z";
 const thirdMark = "2026-11-03T00:00:00.000003Z";
 const initialRefresh = "2000-01-01T00:00:00Z";
 const initialExpiry = "2000-01-01T12:00:00Z";
+const retry = { kind: "retry" } as const;
+const stop = { kind: "stop" } as const;
 
 const filter = (mark: string) =>
   `?${new URLSearchParams({ $filter: `ModificationTimestamp ge ${mark}` })}`;
@@ -109,8 +111,18 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         price,
         revision,
       }));
+    const outcome = async () => {
+      const { rows } = await db.query(
+        `SELECT outcome_code AS code, outcome_http_status AS status,
+          outcome_next_step AS step, outcome_retry_after_seconds AS "afterSeconds",
+          consecutive_failures::int AS count, outcome_saved_at AS "savedAt"
+        FROM idx.feed_sync_positions WHERE feed_id = $1`,
+        [feedId],
+      );
+      return rows[0];
+    };
     return {
-      run: ({ connector }: StandIn, client = writer) =>
+      run: ({ connector }: Pick<StandIn, "connector">, client = writer) =>
         syncIncrementally(client, {
           feedId,
           synthetic: true,
@@ -118,11 +130,27 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           disclosures,
         }),
       checkpoint: () => readFeedCheckpoint(db, feedId),
+      outcome,
       setOldFreshness,
       freshness,
       listings,
       facts,
     };
+  }
+
+  async function assertOutcome(
+    state: Awaited<ReturnType<typeof setup>>,
+    expected: {
+      code: string;
+      status: number | null;
+      step: "retry" | "stop" | null;
+      count: number;
+      afterSeconds?: number;
+    },
+  ) {
+    const { savedAt, ...outcome } = await state.outcome();
+    assert.ok(savedAt instanceof Date);
+    assert.deepEqual(outcome, { afterSeconds: null, ...expected });
   }
 
   async function assertFresh(state: Awaited<ReturnType<typeof setup>>) {
@@ -184,7 +212,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         return page([first]);
       });
       const oldFreshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      assert.deepEqual(await state.run(feed), {
+        code: "http_error",
+        nextStep: retry,
+      });
       assert.deepEqual(await state.freshness(), oldFreshness);
       const saved = await state.checkpoint();
       assert.equal(saved.version, 1n);
@@ -234,7 +265,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         },
       );
       try {
-        assert.deepEqual(await state.run(feed), { code: "write_failed" });
+        assert.deepEqual(await state.run(feed), {
+          code: "write_failed",
+          nextStep: retry,
+        });
       } finally {
         fault.mock.restore();
       }
@@ -242,6 +276,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const [before] = await state.listings();
       assert.equal(before.key, first.ListingKey);
       assert.equal((await state.checkpoint()).version, 1n);
+      assert.equal((await state.outcome()).code, null);
 
       const peer = await connectWriter(t);
       assert.deepEqual(await state.run(feed, peer), { code: "complete" });
@@ -279,11 +314,20 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         },
       );
       try {
-        assert.deepEqual(await state.run(feed), { code: "write_failed" });
+        assert.deepEqual(await state.run(feed), {
+          code: "write_failed",
+          nextStep: retry,
+        });
       } finally {
         fault.mock.restore();
       }
       assert.equal((await state.checkpoint()).version, 0n);
+      await assertOutcome(state, {
+        code: "write_failed",
+        status: null,
+        step: "retry",
+        count: 1,
+      });
       assert.deepEqual(await state.listings(), []);
       assert.deepEqual(await state.freshness(), oldFreshness);
       assert.deepEqual(await state.run(feed), { code: "complete" });
@@ -339,7 +383,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         return page([second]);
       });
       assert.deepEqual(await state.run(feed), { code: "complete" });
-      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      assert.deepEqual(await state.run(feed), {
+        code: "http_error",
+        nextStep: retry,
+      });
       const { position } = await state.checkpoint();
       assert.equal(position.completedMark, thirdMark);
       assert.equal(position.pendingMark, thirdMark);
@@ -367,6 +414,13 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         const freshness = await state.freshness();
         assert.deepEqual(await state.run(feed), {
           code: "continuation_rejected",
+          nextStep: retry,
+        });
+        await assertOutcome(state, {
+          code: "continuation_rejected",
+          status,
+          step: "retry",
+          count: 1,
         });
         assert.deepEqual(await state.checkpoint(), {
           version: 3n,
@@ -425,16 +479,26 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 4) return page([second], "?cursor=3");
         return page([third]);
       });
-      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      assert.deepEqual(await state.run(feed), {
+        code: "http_error",
+        nextStep: retry,
+      });
       const losing = state.run(feed, peer);
+      let winningOutcome;
       try {
         await Promise.race([arrived, losing]);
         assert.deepEqual(await state.run(feed), { code: "complete" });
+        winningOutcome = await state.outcome();
       } finally {
         release();
       }
       const freshness = await state.freshness();
-      assert.deepEqual(await losing, { code: "position_changed" });
+      assert.deepEqual(await losing, {
+        code: "position_changed",
+        nextStep: { kind: "none" },
+      });
+      assert.equal(winningOutcome.code, "complete");
+      assert.deepEqual(await state.outcome(), winningOutcome);
       assert.deepEqual(await state.checkpoint(), {
         version: 3n,
         position: complete(thirdMark),
@@ -450,6 +514,27 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       );
     },
   );
+
+  await t.test("a stale failed fetch leaves the newer outcome intact", async (t) => {
+    const state = await setup(t, "stale_outcome");
+    const peer = await connectWriter(t);
+    const winner = await standIn(t, () => page([first]));
+    let winningOutcome;
+    const stale = await standIn(t, async () => {
+      assert.deepEqual(await state.run(winner, peer), { code: "complete" });
+      winningOutcome = await state.outcome();
+      return { status: 503 };
+    });
+    assert.deepEqual(await state.run(stale), {
+      code: "http_error",
+      nextStep: retry,
+    });
+    assert.deepEqual(await state.outcome(), winningOutcome);
+    assert.deepEqual(await state.checkpoint(), {
+      version: 1n,
+      position: complete(firstMark),
+    });
+  });
 
   await t.test(
     "a complete empty poll renews freshness and keeps the completed mark",
@@ -494,9 +579,16 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       });
       const freshness = await state.freshness();
       for (const link of links) {
-        assert.deepEqual(await state.run(feed), { code: "invalid_link" }, link);
+        assert.deepEqual(
+          await state.run(feed),
+          { code: "invalid_link", nextStep: stop },
+          link,
+        );
       }
-      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      assert.deepEqual(await state.run(feed), {
+        code: "http_error",
+        nextStep: stop,
+      });
       assert.deepEqual(outsideRequests, []);
       assert.deepEqual(
         feed.calls,
@@ -515,6 +607,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   await t.test(
     "remote HTTP is refused before fetch and loopback HTTP works",
     async (t) => {
+      const state = await setup(t, "refused");
+      const checkpoint = await state.checkpoint();
+      const freshness = await state.freshness();
       const feed = await standIn(t, () => page([]));
       const remote = new ResoConnector(
         "http://feed.example.invalid/Property",
@@ -529,10 +624,22 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         assert.deepEqual(await remote.readPage(null, null), {
           code: "invalid_link",
         });
+        assert.deepEqual(await state.run({ connector: remote }), {
+          code: "invalid_link",
+          nextStep: stop,
+        });
         assert.equal(fetch.mock.callCount(), 0);
       } finally {
         fetch.mock.restore();
       }
+      await assertOutcome(state, {
+        code: "invalid_link",
+        status: null,
+        step: "stop",
+        count: 1,
+      });
+      assert.deepEqual(await state.checkpoint(), checkpoint);
+      assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(await feed.connector.readPage(null, null), {
         code: "page",
         records: [],
@@ -556,17 +663,92 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 4) return page([second], cursor);
         return page([second]);
       });
-      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      assert.deepEqual(await state.run(feed), {
+        code: "http_error",
+        nextStep: retry,
+      });
       const checkpoint = await state.checkpoint();
       const listings = await state.listings();
       const freshness = await state.freshness();
       for (const requestCount of [3, 4]) {
-        assert.deepEqual(await state.run(feed), { code: "invalid_page" });
+        assert.deepEqual(await state.run(feed), {
+          code: "invalid_page",
+          nextStep: retry,
+        });
         assert.equal(feed.calls.length, requestCount);
         assert.deepEqual(await state.checkpoint(), checkpoint);
         assert.deepEqual(await state.listings(), listings);
         assert.deepEqual(await state.freshness(), freshness);
       }
+    },
+  );
+
+  await t.test(
+    "HTTP failures make one request, save safe guidance and count until completion",
+    async (t) => {
+      const state = await setup(t, "http_outcomes");
+      const retryIn120 = { ...retry, afterSeconds: 120 };
+      const cases = [
+        { status: 429, retryAfter: "120", nextStep: retryIn120 },
+        { status: 503, retryAfter: "120", nextStep: retryIn120 },
+        { status: 429, retryAfter: "0", nextStep: { ...retry, afterSeconds: 1 } },
+        {
+          status: 503,
+          retryAfter: "9".repeat(400),
+          nextStep: { ...retry, afterSeconds: 86_400 },
+        },
+        {
+          status: 503,
+          retryAfter: "Sun, 06 Nov 1994 08:49:37 GMT",
+          nextStep: retry,
+        },
+        { status: 429, retryAfter: "synthetic retry header", nextStep: retry },
+        { status: 500, retryAfter: "120", nextStep: retry },
+        { status: 408, nextStep: retry },
+        { status: 400, nextStep: stop },
+        { status: 401, nextStep: stop },
+        { status: 403, nextStep: stop },
+        { status: 404, nextStep: stop },
+      ];
+      const feed = await standIn(
+        t,
+        (_url, number) => cases[number - 1] ?? page([]),
+      );
+      const methods = ["log", "warn", "error"] as const;
+      const logs = methods.map((method) =>
+        t.mock.method(console, method, () => {}),
+      );
+      const checkpoint = await state.checkpoint();
+      const freshness = await state.freshness();
+      for (const [index, { status, nextStep }] of cases.entries()) {
+        const count = index + 1;
+        assert.deepEqual(await state.run(feed), {
+          code: "http_error",
+          nextStep,
+        });
+        assert.equal(feed.calls.length, count);
+        await assertOutcome(state, {
+          code: "http_error",
+          status,
+          step: nextStep.kind,
+          count,
+          ...("afterSeconds" in nextStep && {
+            afterSeconds: nextStep.afterSeconds,
+          }),
+        });
+        assert.deepEqual(await state.checkpoint(), checkpoint);
+        assert.deepEqual(await state.freshness(), freshness);
+      }
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      await assertOutcome(state, {
+        code: "complete",
+        status: null,
+        step: null,
+        count: 0,
+      });
+      assert.equal((await state.checkpoint()).version, 1n);
+      await assertFresh(state);
+      assert.deepEqual(logs.map(({ mock }) => mock.calls), [[], [], []]);
     },
   );
 
@@ -588,16 +770,32 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         1_000,
       );
       const freshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      assert.deepEqual(await state.run(feed), {
+        code: "http_error",
+        nextStep: retry,
+      });
+      await assertOutcome(state, {
+        code: "http_error",
+        status: 429,
+        step: "retry",
+        count: 1,
+      });
       const checkpoint = await state.checkpoint();
       const before = await state.listings();
-      for (const code of [
+      const failures = [
         "fetch_failed",
         "invalid_page",
         "invalid_page",
         "fetch_timeout",
-      ]) {
-        assert.deepEqual(await state.run(feed), { code });
+      ];
+      for (const [index, code] of failures.entries()) {
+        assert.deepEqual(await state.run(feed), { code, nextStep: retry });
+        await assertOutcome(state, {
+          code,
+          status: 200,
+          step: "retry",
+          count: index + 2,
+        });
         assert.deepEqual(await state.checkpoint(), checkpoint);
         assert.deepEqual(await state.listings(), before);
         assert.deepEqual(await state.freshness(), freshness);

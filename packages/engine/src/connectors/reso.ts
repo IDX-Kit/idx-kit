@@ -58,7 +58,15 @@ type FetchFailure =
 
 type PageResult =
   | { code: "page"; records: unknown[]; nextLink: string | null }
-  | { code: FetchFailure };
+  | { code: FetchFailure; status?: number; afterSeconds?: number };
+
+function retryAfterSeconds(response: Response) {
+  if (response.status !== 429 && response.status !== 503) return;
+  const header = response.headers.get("Retry-After");
+  if (header !== null && /^\d+$/.test(header)) {
+    return Math.min(86_400, Math.max(1, Number(header)));
+  }
+}
 
 function safeAddress(url: URL) {
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -117,26 +125,32 @@ export class ResoConnector {
     }
 
     const signal = AbortSignal.timeout(this.timeoutMs);
+    let status: number | undefined;
     try {
       const response = await fetch(url, {
         headers: { Authorization: `Bearer ${this.token}` },
         redirect: "manual",
         signal,
       });
+      status = response.status;
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
-        if (nextLink !== null && [400, 410].includes(response.status)) {
-          return { code: "continuation_rejected" };
+        if (nextLink !== null && [400, 410].includes(status)) {
+          return { code: "continuation_rejected", status };
         }
-        return { code: "http_error" };
+        return {
+          code: "http_error",
+          status,
+          afterSeconds: retryAfterSeconds(response),
+        };
       }
       const page = pageSchema.safeParse(await response.json());
-      if (!page.success) return { code: "invalid_page" };
+      if (!page.success) return { code: "invalid_page", status };
       const link = page.data["@odata.nextLink"];
       const target = link ? continuation(this.base, link, url) : null;
-      if (link && !target) return { code: "invalid_link" };
+      if (link && !target) return { code: "invalid_link", status };
       if (target?.pathname === url.pathname && target.search === url.search) {
-        return { code: "invalid_page" };
+        return { code: "invalid_page", status };
       }
       return {
         code: "page",
@@ -144,9 +158,9 @@ export class ResoConnector {
         nextLink: target?.href ?? null,
       };
     } catch (error) {
-      if (signal.aborted) return { code: "fetch_timeout" };
-      if (error instanceof SyntaxError) return { code: "invalid_page" };
-      return { code: "fetch_failed" };
+      if (signal.aborted) return { code: "fetch_timeout", status };
+      if (error instanceof SyntaxError) return { code: "invalid_page", status };
+      return { code: "fetch_failed", status };
     }
   }
 }

@@ -9,7 +9,7 @@ interface Page {
 
 type Reply =
   | Page
-  | { status: number; location?: string }
+  | { status: number; location?: string; retryAfter?: string }
   | "disconnect"
   | "invalid_json"
   | "stall";
@@ -51,6 +51,8 @@ export async function standIn(
       }
       if ("status" in result) {
         if (result.location) response.setHeader("Location", result.location);
+        if (result.retryAfter !== undefined)
+          response.setHeader("Retry-After", result.retryAfter);
         response.writeHead(result.status);
         response.end("synthetic response detail");
         return;

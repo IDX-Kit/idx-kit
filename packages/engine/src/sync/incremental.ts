@@ -5,7 +5,9 @@ import {
   FeedPositionChanged,
   readFeedCheckpoint,
   saveFeedCheckpoint,
+  saveFeedOutcome,
 } from "../db/feed-sync-positions.ts";
+import type { FeedNextStep } from "../db/feed-sync-positions.ts";
 import {
   applyListingPage,
   listingFeedTransaction,
@@ -21,13 +23,33 @@ interface IncrementalFeed {
   connector: Pick<ResoConnector, "readPage">;
 }
 
+type StoppedRun =
+  | Exclude<Awaited<ReturnType<ResoConnector["readPage"]>>, { code: "page" }>
+  | { code: "write_failed"; status?: number };
+
+function nextStepFor(outcome: StoppedRun): FeedNextStep {
+  if (outcome.code === "invalid_link") return { kind: "stop" };
+  if (outcome.code === "http_error" && outcome.status !== undefined) {
+    const { status, afterSeconds } = outcome;
+    if (afterSeconds !== undefined) return { kind: "retry", afterSeconds };
+    if (status !== 408 && status !== 429 && (status < 500 || status >= 600)) {
+      return { kind: "stop" };
+    }
+  }
+  return { kind: "retry" };
+}
+
 // Each run uses its own connected writer client.
 export async function syncIncrementally(
   client: pg.Client,
   { feedId, synthetic, disclosures, connector }: IncrementalFeed,
 ) {
+  let version: bigint | undefined;
+  let outcome: StoppedRun | { code: "complete"; status?: number };
   try {
-    let { position, version } = await readFeedCheckpoint(client, feedId);
+    const checkpoint = await readFeedCheckpoint(client, feedId);
+    let { position } = checkpoint;
+    version = checkpoint.version;
     const blocks = disclosures.approvedListingBlocks.filter(({ id }) =>
       disclosures.requiredListingBlockIds.includes(id),
     );
@@ -41,11 +63,16 @@ export async function syncIncrementally(
       );
       if (page.code === "continuation_rejected" && position.nextLink !== null) {
         const cleared = { ...position, nextLink: null, pendingMark: null };
+        const checkpoint = { position: cleared, version };
         await listingFeedTransaction(client, feedId, () =>
-          saveFeedCheckpoint(client, feedId, { position: cleared, version }),
+          saveFeedCheckpoint(client, feedId, checkpoint),
         );
+        version += 1n;
       }
-      if (page.code !== "page") return { code: page.code } as const;
+      if (page.code !== "page") {
+        outcome = page;
+        break;
+      }
 
       const metadata = {
         synthetic,
@@ -82,13 +109,29 @@ export async function syncIncrementally(
       await applyListingPage(client, feedId, changes, disclosures, {
         checkpoint: { position, version },
       });
-      if (complete) return { code: "complete" } as const;
       version += 1n;
+      if (complete) {
+        outcome = { code: "complete" };
+        break;
+      }
     }
   } catch (error) {
     if (error instanceof FeedPositionChanged) {
-      return { code: "position_changed" } as const;
+      return { code: "position_changed", nextStep: { kind: "none" } } as const;
     }
-    return { code: "write_failed" } as const;
+    outcome = { code: "write_failed" };
   }
+  const result =
+    outcome.code === "complete"
+      ? ({ code: "complete" } as const)
+      : { code: outcome.code, nextStep: nextStepFor(outcome) };
+  if (version !== undefined) {
+    try {
+      const nextStep = result.code === "complete" ? null : result.nextStep;
+      await saveFeedOutcome(client, feedId, version, outcome, nextStep);
+    } catch {
+      return { code: "write_failed", nextStep: { kind: "retry" } } as const;
+    }
+  }
+  return result;
 }
