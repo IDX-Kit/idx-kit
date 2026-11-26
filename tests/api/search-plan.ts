@@ -10,6 +10,8 @@ interface Plan {
   "Actual Loops": number;
   "Rows Removed by Filter"?: number;
   "Rows Removed by Index Recheck"?: number;
+  "Shared Hit Blocks"?: number;
+  "Shared Read Blocks"?: number;
   Plans?: Plan[];
 }
 
@@ -23,7 +25,7 @@ export function explainSearch(db: pg.Client) {
   const database: Database = {
     async query<T extends pg.QueryResultRow>(sql: string, values: unknown[]) {
       const result = await db.query(
-        "EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) " + sql,
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) " + sql,
         values,
       );
       const explain = result.rows[0]["QUERY PLAN"][0];
@@ -61,6 +63,14 @@ export function summarizeSearch(
   );
   return {
     rows: Math.ceil(scans.reduce((sum, scan) => sum + rowsVisited(scan), 0)),
+    // Each root includes its children and repeated accesses to the same block.
+    sharedBlocks: queries.reduce(
+      (sum, { plan }) =>
+        sum +
+        (plan["Shared Hit Blocks"] ?? 0) +
+        (plan["Shared Read Blocks"] ?? 0),
+      0,
+    ),
     listingSeqScan: scans.some(
       (scan) =>
         scan["Relation Name"] === "listings" &&

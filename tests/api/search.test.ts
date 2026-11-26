@@ -744,9 +744,12 @@ test(
           process.env.IDX_TEST_SEARCH_VOLUME === "1" ? 100_000 : 2_000;
         const allFeeds = "site_search_plan_all";
         const smallFeed = "site_search_plan_small";
+        const dropBedroomIndex = () =>
+          db.query("DROP INDEX idx.listings_price_bedrooms_id");
         const started = performance.now();
         await db.query("BEGIN");
         try {
+          if (volume === 100_000) await dropBedroomIndex();
           await db.query(`
             INSERT INTO idx.feeds
               (id, refreshed_at, expires_at, display_blocks, rules_version)
@@ -795,6 +798,21 @@ test(
             [volume],
           );
           assert.equal(loaded.rowCount, volume);
+          if (volume === 100_000) {
+            const migration = await readFile(
+              new URL(
+                "../../packages/engine/migrations/005_listings_price_bedrooms_id.sql",
+                import.meta.url,
+              ),
+              "utf8",
+            );
+            const buildStarted = performance.now();
+            await db.query(migration);
+            const buildMs = performance.now() - buildStarted;
+            t.diagnostic(
+              `Bedroom index build with ${volume} synthetic listings took ${buildMs.toFixed(1)} ms`,
+            );
+          }
           await db.query(
             "UPDATE idx.listings SET price = 350000, currency = 'USD' WHERE price IS NULL",
           );
@@ -845,6 +863,9 @@ test(
           if (volume === 100_000) {
             const measurements: string[] = [];
             const violations: string[] = [];
+            // Allow several B-tree and heap accesses per row of the 500-listing
+            // feed, plus the license lookup and any continuation tie query.
+            const blockBudget = 4096;
             const measure = async (
               label: string,
               filters: Record<string, string>,
@@ -869,7 +890,7 @@ test(
                   const result = summarizeSearch(queries);
                   const name = `${label} | ${sort} | ${page}`;
                   measurements.push(
-                    `| ${name} | ${result.rows} | ${result.ms.toFixed(3)} | ${result.plan} |`,
+                    `| ${name} | ${result.rows} | ${result.sharedBlocks} | ${result.ms.toFixed(3)} | ${result.plan} |`,
                   );
                   if (result.listingSeqScan || result.rows > budget) {
                     const scan = result.listingSeqScan
@@ -877,6 +898,11 @@ test(
                       : "";
                     violations.push(
                       `${name} examined ${result.rows}/${budget} rows${scan}`,
+                    );
+                  }
+                  if (result.sharedBlocks > blockBudget) {
+                    violations.push(
+                      `${name} accessed ${result.sharedBlocks}/${blockBudget} shared blocks`,
                     );
                   }
                   assert.equal(rows.length, fetchSize, name);
@@ -922,11 +948,32 @@ test(
             );
             t.diagnostic(
               [
-                "| Search | Sort | Page | Rows examined | PostgreSQL ms | Plan |",
-                "| --- | --- | --- | ---: | ---: | --- |",
+                "| Search | Sort | Page | Rows examined | Shared blocks | PostgreSQL ms | Plan |",
+                "| --- | --- | --- | ---: | ---: | ---: | --- |",
                 ...measurements,
               ].join("\n"),
             );
+            // Compare the same sparse search against the same rows and stats.
+            // The surrounding rollback also restores the original index.
+            await dropBedroomIndex();
+            const { database, queries } = explainSearch(db);
+            const query = searchQuery(
+              searchSchema.parse({
+                minPrice,
+                maxPrice,
+                minBedrooms,
+                city,
+                sort: "-price",
+                limit: "50",
+              }),
+              allFeeds,
+            );
+            const { rows } = await searchListings(database, query);
+            assert.equal(rows.length, query.context.limit + 1);
+            const control = summarizeSearch(queries);
+            const diagnostic = `Sparse search without the bedroom index accessed ${control.sharedBlocks} shared blocks (budget ${blockBudget})`;
+            t.diagnostic(diagnostic);
+            assert.ok(control.sharedBlocks > blockBudget, diagnostic);
             assert.deepEqual(violations, []);
           }
         } finally {
