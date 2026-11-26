@@ -7,10 +7,13 @@ import { test } from "node:test";
 import pg from "pg";
 import canonicalize from "canonicalize";
 import type { InquiryInput } from "@idx-kit/client";
+import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import { applyListingPage } from "@idx-kit/engine/src/db/listings.ts";
 import { registerSecret } from "../logs.ts";
 import { workerRuntime } from "../workers/runtime.ts";
 import { execute, keyCommand, startEngine } from "./runtime.ts";
 import { valid, validateResponse } from "./contract.ts";
+import { fixtureDisclosures } from "./listing-page.ts";
 
 const path = "/api/v1/inquiries";
 const receiptPath = path + "/{inquiryId}";
@@ -246,7 +249,7 @@ test(
       },
     );
     await t.test(
-      "aged receipts replay after listing removal, without changing key or hash",
+      "aged receipts replay after writer-driven removal, without changing key or hash",
       async () => {
         const agedKey = actionKey();
         const created = await request(path, post(agedKey));
@@ -256,11 +259,32 @@ test(
         );
         const before = await rows(agedKey);
         const listing = await db.query(
-          "DELETE FROM idx.listings l WHERE id=$1 RETURNING to_jsonb(l) AS facts",
+          `SELECT to_jsonb(l) AS facts, m.feed_id, m.source_key, m.source_revision::text AS revision
+          FROM idx.listings l JOIN idx.source_mappings m ON m.listing_id=l.id
+          WHERE l.id=$1`,
           [input.listingId],
         );
         assert.equal(listing.rowCount, 1);
+        const original = listing.rows[0];
+        const fixtures = await new FixtureConnector().read();
+        const writer = new pg.Client({
+          connectionString: process.env.LISTING_WRITER_DATABASE_URL,
+        });
+        await writer.connect();
         try {
+          await applyListingPage(writer, original.feed_id, [{
+            kind: "withdrawn",
+            sourceKey: original.source_key,
+            revision: "2026-11-02T00:00:00Z",
+          }], fixtureDisclosures(fixtures, original.feed_id));
+          assert.equal(
+            (await db.query("SELECT id FROM idx.listings WHERE id=$1", [input.listingId])).rowCount,
+            0,
+          );
+          assert.deepEqual((await request(created.response.headers.get("Location")!, {}, 200)).body.data, {
+            id: before[0].id,
+            receivedAt: before[0].received_at.toISOString(),
+          });
           const replay = await request(path, post(agedKey));
           assert.deepEqual(replay.body.data, {
             id: before[0].id,
@@ -284,9 +308,14 @@ test(
             "idempotency_mismatch",
           );
         } finally {
+          await writer.end();
           await db.query(
-            "INSERT INTO idx.listings SELECT * FROM jsonb_populate_record(NULL::idx.listings, $1)",
-            [listing.rows[0].facts],
+            "INSERT INTO idx.listings SELECT * FROM jsonb_populate_record(NULL::idx.listings, $1) ON CONFLICT DO NOTHING",
+            [original.facts],
+          );
+          await db.query(
+            "UPDATE idx.source_mappings SET source_revision=$2 WHERE listing_id=$1",
+            [input.listingId, original.revision],
           );
         }
         for (const listingId of ["lst_missing_synthetic", "lst_demo_0006"])

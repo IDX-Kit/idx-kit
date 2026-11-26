@@ -144,6 +144,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "INSERT INTO idx.source_mappings (feed_id, source_key, listing_id) SELECT 'a', 'b', 'c'",
         "UPDATE idx.source_mappings SET source_revision=now()",
         "UPDATE idx.feeds SET oldest_listing_ingested_at=now()",
+        "UPDATE idx.feeds SET display_blocks='[]'",
         "INSERT INTO idx.sites VALUES ('forbidden')",
         "UPDATE idx.inquiries SET message='forbidden'",
         "DELETE FROM idx.inquiries",

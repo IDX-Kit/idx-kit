@@ -5,15 +5,14 @@ import { addressProtection } from "./withholding.ts";
 const text = z
   .string()
   .refine((value) => !value.includes("\0") && !/[\uD800-\uDFFF]/u.test(value));
-export const sourceKeySchema = text.refine(
-  (value) => value.length > 0 && Buffer.byteLength(value) <= 1024,
-);
+export const sourceKeySchema = text.min(1);
+const boundedText = text.refine((value) => Buffer.byteLength(value) <= 1024);
 export const timestampSchema = z.iso
   .datetime()
   .refine((value) => !value.startsWith("0000") && value.length <= 27);
 const imageSchema = z.object({
-  alt: text.refine((value) => value.length > 0),
-  url: text.refine((value) => {
+  alt: boundedText.min(1),
+  url: text.max(2048).refine((value) => {
     if (/[\s\\]/.test(value) || /%(?![\da-f]{2})/i.test(value)) return false;
     if (value.startsWith("/") && !value.startsWith("//")) return true;
     const url = URL.parse(value);
@@ -21,23 +20,32 @@ const imageSchema = z.object({
   }),
 });
 const blockSchema = z.object({
-  id: z.string().regex(/^[A-Za-z0-9_-]+$/),
-  text: text.refine((value) => value.length > 0),
+  id: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/),
+  text: text.min(1).max(8192),
   placement: z.enum(["adjacent", "afterListing", "pageFooter"]),
   prominence: z.enum(["normal", "medianListingText", "largestListingText"]),
   image: imageSchema.optional(),
 });
 const addressSchema = z.object({
-  line1: text,
-  city: text,
-  region: text,
-  postalCode: text,
+  line1: boundedText,
+  city: boundedText,
+  region: boundedText,
+  postalCode: boundedText,
   country: z.string().regex(/^[A-Z]{2}$/),
 });
+export const disclosureSchema = z.array(blockSchema).max(32);
+export const disclosureIds = z
+  .array(z.object({ id: blockSchema.shape.id }))
+  .max(32);
+const imagesSchema = z.array(imageSchema).max(128).nullable();
+const fieldsSchema = z
+  .array(z.enum(["status", "price", "address", "bedrooms", "images"]))
+  .max(5);
+export type WithheldField = z.infer<typeof fieldsSchema>[number];
 
 export interface ListingRecord {
   synthetic: boolean;
-  withheldFields?: ("status" | "price" | "address" | "bedrooms" | "images")[];
+  withheldFields?: WithheldField[];
   sourceUpdatedAt: string | null;
   ingestedAt: string;
   blocks: DisplayBlock[];
@@ -61,7 +69,7 @@ export interface FixtureRecord extends ListingRecord {
 
 export function normalize(
   record: ListingRecord,
-  previousAddress: Listing["address"] = null,
+  feedPage = false,
 ) {
   const source = record.source;
   for (const name of [
@@ -88,12 +96,12 @@ export function normalize(
   if (
     source.ListPrice !== null &&
     (typeof source.ListPrice !== "string" ||
-      !/^(0|[1-9][0-9]{0,131071})(\.[0-9]{1,16383})?$/.test(source.ListPrice))
+      !/^(0|[1-9][0-9]{0,63})(\.[0-9]{1,32})?$/.test(source.ListPrice))
   )
     throw new Error("Invalid price");
   if (
     source.StandardStatus !== null &&
-    !text.safeParse(source.StandardStatus).success
+    !boundedText.safeParse(source.StandardStatus).success
   )
     throw new Error("Invalid status");
   if (
@@ -107,15 +115,18 @@ export function normalize(
   )
     throw new Error("Missing display permission");
   const address = addressSchema.nullable().parse(source.Address);
-  const fields = z
-    .array(z.enum(["status", "price", "address", "bedrooms", "images"]))
-    .optional()
-    .parse(record.withheldFields);
+  const fields = new Set(fieldsSchema.optional().parse(record.withheldFields));
   const hideAddress =
-    !source.InternetAddressDisplayYN || fields?.includes("address");
-  const protection = hideAddress
-    ? addressProtection(address, previousAddress)
-    : addressProtection();
+    !source.InternetAddressDisplayYN || fields.has("address");
+  const protection = addressProtection(hideAddress && !feedPage ? address : null);
+  // Feed media and text cannot be checked for a street once it has been cleared.
+  const unverified = feedPage && (hideAddress || !address?.line1.trim());
+  const images = feedPage
+    ? imagesSchema.parse(source.Images)
+    : imagesSchema.parse(source.Images?.map(protection.image) ?? null);
+  if (hideAddress) fields.add("address");
+  if (unverified && images?.length) fields.add("images");
+  if (unverified && source.StandardStatus !== null) fields.add("status");
   const facts: Pick<
     Listing,
     | "synthetic"
@@ -124,8 +135,7 @@ export function normalize(
     | "address"
     | "bedrooms"
     | "images"
-    | "withheldFields"
-  > = {
+  > & { withheldFields: WithheldField[] } = {
     synthetic: record.synthetic,
     status:
       source.StandardStatus === null
@@ -135,26 +145,20 @@ export function normalize(
       source.ListPrice === null
         ? null
         : { amount: source.ListPrice, currency: "USD" },
-    address: hideAddress ? null : address,
+    address,
     bedrooms: source.BedroomsTotal,
-    images:
-      source.Images === null
-        ? null
-        : z.array(imageSchema).parse(source.Images.map(protection.image)),
-    withheldFields: hideAddress ? ["address"] : [],
+    images: images?.map((image) => {
+      return feedPage ? { url: image.url, alt: "Property photo" } : image;
+    }) ?? null,
+    withheldFields: [...fields].sort(),
   };
   for (const field of fields ?? []) {
     facts[field] = null;
   }
-  facts.withheldFields = [
-    ...new Set([...facts.withheldFields, ...(fields ?? [])]),
-  ];
   return {
     facts,
-    blocks: z.array(blockSchema).parse(protection.blocks(record.blocks)),
-    pageBlocks: z
-      .array(blockSchema)
-      .parse(protection.blocks(record.pageBlocks)),
+    blocks: disclosureSchema.min(1).parse(protection.blocks(record.blocks)),
+    pageBlocks: disclosureSchema.parse(protection.blocks(record.pageBlocks)),
     sourceUpdatedAt: record.sourceUpdatedAt,
     ingestedAt: record.ingestedAt,
   };
