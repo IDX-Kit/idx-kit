@@ -279,7 +279,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-    concurrency: ${{ needs.check.outputs.client_tag }}
+    concurrency:
+      group: ${{ needs.check.outputs.client_tag }}
+      queue: max
     steps:
       - name: Check whether the client release is published with its tarball
         id: lookup
@@ -295,7 +297,9 @@ jobs:
               exit 1
             fi
             if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .state == "uploaded" and .size > 0)' <<< "$lookup" > /dev/null; then
-              echo "Release $TAG is missing $asset. Restore the tested tarball for the tagged commit in GitHub Releases, then rerun CI." >&2
+              echo "Release $TAG is missing $asset." >&2
+              echo "Download the tarball from the client-release-* artifact of the main push CI run for the tagged commit." >&2
+              echo "Remove any empty upload named $asset before uploading the replacement to GitHub Releases. Then rerun CI." >&2
               exit 1
             fi
             echo "Release $TAG is published with $asset."
@@ -318,6 +322,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.check.outputs.client_tag }}
         run: |
+          ref="refs/tags/$TAG"
+          tag_commit=$(git ls-remote --tags "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$ref" "$ref^{}" |
+            awk -v ref="$ref" '
+              $2 == ref { tag = $1 }
+              $2 == ref "^{}" { commit = $1 }
+              END { print (commit ? commit : tag) }
+            ')
+          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Tag $TAG already points to $tag_commit. Bump the client version to publish the tested commit $GITHUB_SHA." >&2
+            exit 1
+          fi
           release_dir="$RUNNER_TEMP/client-release"
           gh release create "$TAG" "$release_dir/idx-kit-client-${TAG#client-v}.tgz" \
             --repo IDX-Kit/idx-kit --target "$GITHUB_SHA" --title "$TAG" \
