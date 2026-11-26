@@ -97,7 +97,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
           ...options(feed),
           ...(maxRemovals === undefined
             ? {}
-            : { removeMissing: true, maxRemovals }),
+            : { removeMissing: true as const, maxRemovals }),
         }),
       checkpoint: () => readScanCheckpoint(db, feedId),
       async incrementalState() {
@@ -223,12 +223,10 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const pending = await state.checkpoint();
       assert.equal(pending.active, true);
       assert.equal(new URL(pending.nextLink!).search, "?cursor=2");
-      assert.deepEqual(
-        (await state.listings()).map(
-          ({ stamp: _stamp, ...listing }) => listing,
-        ),
-        before.map(({ stamp: _stamp, ...listing }) => listing),
-      );
+      assert.deepEqual(await state.listings(), [
+        { ...before[0], stamp: pending.scanNumber.toString() },
+        ...before.slice(1),
+      ]);
       assert.deepEqual(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
