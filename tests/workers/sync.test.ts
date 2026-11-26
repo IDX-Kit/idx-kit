@@ -132,13 +132,14 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
     if (reply) return reply;
     return records;
   });
-  const feedJson = JSON.stringify({
+  const feedSettings = {
     feedId,
     propertyUrl: feed.propertyUrl,
     synthetic: true,
     pageSize: 1,
     disclosures: fixtureDisclosures(fixtures, fixture.id),
-  });
+  };
+  const feedJson = JSON.stringify(feedSettings);
   registerSecret(feedToken);
   const vars = {
     IDX_SYNC_FEED_JSON: feedJson,
@@ -286,6 +287,26 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
     await check(await tick(), "complete", 1);
     assert.equal(feed.calls.length, start + 6);
     assert.equal(feed.calls.at(-1)?.query, "?cursor=2");
+  });
+
+  await t.test("manual resume reports a missing feed", async (t) => {
+    await openSyncWorker(t, {
+      ...vars,
+      IDX_SYNC_FEED_JSON: JSON.stringify({
+        ...feedSettings,
+        feedId: `missing_${suffix}`,
+      }),
+    });
+    const start = feed.calls.length;
+    const { id } = await localRequest(instances, { params: { resume: true } });
+    const result = await finished(id);
+    assert.equal(result.status, "complete");
+    assert.deepEqual(result.output, {
+      code: "missing_feed",
+      nextStep: { kind: "stop" },
+      pagesApplied: 0,
+    });
+    assert.equal(feed.calls.length, start);
   });
 
   await t.test(

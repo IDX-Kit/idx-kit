@@ -76,6 +76,8 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
         { ...pageStep, retries: { ...pageStep.retries, limit: 0 } },
         () =>
           withWriter(this.env, async (client) => {
+            const state = await readFeedState(client, feed.feedId);
+            if (!state) return;
             const { version } = await readFeedCheckpoint(client, feed.feedId);
             await saveFeedOutcome(
               client,
