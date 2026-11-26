@@ -1,22 +1,22 @@
 openapi: 3.2.1
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
-  title: IDX Kit first-demo API
+  title: IDX Kit API
   version: 1.0.0
-  summary: AI-made first-demo contract; unreleased implementation baseline.
-  description: AI-made technical choices revised under the lead's review decisions. Core names Secret key,
-    Data license and landingPagePath are owner-approved 2026-11-05; a guide is website content. The owner-approved outcome is
-    a synthetic guide-to-search-to-property-to-inquiry journey using only this API. Public means documented and
-    authorized, not unrestricted data access. RESO is a standard, not a data license. All examples are invented.
-    No runtime or deployment is claimed. Responses are open for extension; clients ignore unfamiliar members and handle any array/string length
-    unless a bound is explicitly promised. Unknown request members and duplicate query keys are rejected. Every
-    business call specifies /api/v1. All operations return Request-Id. Search and listing detail share a
-    request limit per key. S01 has no conditional requests, CORS headers, browser keys, sync or external delivery.
+  summary: Search and display real estate listings, submit inquiries, and read receipts.
+  description: The API is publicly documented. Call protected operations from your server with a secret key
+    that has the required scope. A site's data licenses determine which listings it can read. RESO defines the
+    data standard. You need a data license to display live listings. All examples are invented. Responses may
+    gain new members. Ignore unfamiliar response members and handle arrays and strings of any length unless
+    the contract specifies a bound. The API rejects unknown request members and duplicate query keys. All
+    business endpoints are under /api/v1. Every operation returns a Request-Id header. Search and listing
+    detail share a request limit per key. Version 1 does not support conditional requests or browser keys.
+    It sends no CORS headers.
   contact: {name: IDX Kit repository maintainers, url: 'https://github.com/IDX-Kit/idx-kit'}
   license: {name: FSL-1.1-ALv2, url: 'https://github.com/IDX-Kit/idx-kit/blob/main/LICENSE.md'}
 servers:
-- {url: 'http://127.0.0.1:8787', description: Planned loopback-only demo engine; not currently running.}
-- {url: 'https://engine.example.invalid', description: Synthetic production-shaped origin; no deployment exists.}
+- {url: 'http://127.0.0.1:8787', description: Local engine address.}
+- {url: 'https://engine.example.invalid', description: Example production address.}
 tags:
 - {name: Discovery, description: Public bootstrap and the installed release's contract.}
 - {name: Listings, description: Authorized display reads with mandatory display rules metadata.}
@@ -29,10 +29,8 @@ paths:
       operationId: discoverServer
       tags: [Discovery]
       summary: Discover implemented API versions and capabilities
-      description: Static bootstrap with engine release, supported majors, contract versions and implemented capability
-        names only. No permissions or customer/feed inventory. The demo site reads it at startup and fails clearly
-        if v1 is absent. Optional future features must be advertised before callers rely on them; no negotiation
-        lifecycle.
+      description: Returns the engine release and the supported major versions, with the contract version and
+        available capabilities for each. Check the major version and capabilities your integration uses.
       security: []
       responses:
         '200':
@@ -60,13 +58,7 @@ paths:
       operationId: getContract
       tags: [Discovery]
       summary: Read the installed release's exact v1 contract
-      description: 'A JSON conversion of the release''s canonical YAML, never a copy of a later
-
-        repository head. This machine artifact is exempt from the success envelope.
-
-        No credentials, customer data or runtime secrets may enter the document.
-
-        '
+      description: Returns the installed engine's v1 OpenAPI contract as raw JSON, without the success envelope.
       security: []
       responses:
         '200':
@@ -93,14 +85,13 @@ paths:
       summary: Search display-permitted listings
       description: Requires listings:read. AND combines filters; unknown/duplicate parameters, malformed values
         and minPrice greater than maxPrice return 400. City is trimmed case-insensitive exact match. Numeric price
-        filters compare the demo's USD major-unit values, exclude nulls and do not convert currencies. Later currency
-        handling is optional input preserving this default. Effective limit is min(requested, 50). ID ascending breaks price ties; null prices
-        sort last in either direction. Live keyset continuation uses the last price/ID tuple and normalized search/site
+        filters compare USD prices in major units and exclude listings with null prices or other currencies.
+        Effective limit is min(requested, 50). ID ascending breaks price ties; null prices sort last in either
+        direction. Live keyset continuation uses the last price/ID tuple and normalized search/site
         context. Results can shift between pages as records change; this is not a snapshot or exhaustive download.
-        Each page rechecks visibility. The opaque cursor has no dataset revision, time expiry, signature or traversal
-        count in S01; clients never parse or construct it. Malformed/mismatched cursors return 400 cursor_invalid
-        and tell the client to restart. Signing may be added later without a wire change. Every page uses the
-        same per-key request budget as listing detail. Raw search terms, excluding the after
+        Each page rechecks visibility. In version 1, the cursor has no dataset revision, expiration time, signature
+        or traversal count. Treat the cursor as opaque. If the API returns 400 cursor_invalid, restart at the
+        first page. Every page uses the same per-key request budget as listing detail. Raw search terms, excluding the after
         pair and its separating ampersand, have a maximum of 2,048 bytes on every page; exceeding this limit returns
         400 invalid_query. The after cursor has a maximum of 4,096 bytes. Its raw pair, including after= and any
         extra percent encoding, has a maximum of 4,102 bytes; an oversized cursor or pair returns 400 cursor_invalid.
@@ -110,7 +101,7 @@ paths:
       parameters:
       - name: city
         in: query
-        description: Exact synthetic city name after trim/case folding.
+        description: Exact city name match after trimming whitespace and ignoring case.
         schema: {type: string, minLength: 1, maxLength: 100}
         example: Example Springs
       - name: minPrice
@@ -212,11 +203,9 @@ paths:
         idempotency_mismatch. Concurrent duplicates wait for the transaction, then a separate Read Committed SELECT
         reads and compares the row; no in-progress 409. Database wait/timeout failures use 503. Failures with no
         commit create no accepted inquiry. After authentication/authorization, existing-row lookup precedes the
-        optional Turnstile check, other new-inquiry checks and any future quota charge. A lost response is resolved
+        optional Turnstile check and other new-inquiry checks. A lost response is resolved
         with the same key/body. When enabled, a failed token check returns 422 spam_check_failed and an unavailable
         check returns 503 service_unavailable.
-        The random key and hashed fingerprint are not personal data. Retention/deletion and retries after deletion
-        must be settled with real-lead retention before real people; synthetic rows remain until explicit reset.
         Each fresh empty form gets a new key; failure re-renders preserve key and entered values. Confirmation
         offers a fresh form. An old form with changed body gets 422, then the site preserves values, supplies a new
         key and asks the visitor to send again. Form/result pages are no-store. Direct property entry is valid:
@@ -301,9 +290,7 @@ paths:
       tags: [Inquiries]
       summary: Read a durable receipt without personal data
       description: Requires inquiries:read for the inquiry's site. A different site or missing ID returns generic
-        404. This is not an inquiry list or visitor-details endpoint. The receipt is only id and receivedAt; it
-        means accepted, never delivered. Optional delivery fields can be added later. The inquiry row also retains
-        its idempotency key and hashed body fingerprint; retention/deletion rules are settled before real people.
+        404. The receipt contains id and receivedAt and confirms durable acceptance. Delivery is separate.
       x-required-scopes: ['inquiries:read']
       parameters:
       - name: inquiryId
@@ -332,14 +319,9 @@ paths:
         default: {$ref: '#/components/responses/Problem'}
 components:
   securitySchemes:
-    secretKey: {type: http, scheme: bearer, bearerFormat: Opaque site-scoped server secret, description: 'Explicit
-        listings:read, inquiries:write and/or inquiries:read grants resolved
-
-        server-side. Not OAuth. No key in URLs or browser code. Origin-bearing calls
-
-        are refused. Browser keys are not implemented or accepted by this demo.
-
-        '}
+    secretKey: {type: http, scheme: bearer, bearerFormat: Opaque site-scoped server secret, description: 'Use a secret
+        key from server code with the required listings:read, inquiries:write or inquiries:read scope. Keep keys out
+        of URLs and browser code. The API rejects requests that carry both a bearer credential and an Origin header.'}
   parameters:
     ListingId:
       name: listingId
@@ -359,7 +341,7 @@ components:
       required: true
       schema: {type: string, const: no-store}
     ListingCache:
-      description: Private response; no storage or conditional read in S01.
+      description: Listing responses are private. Do not store them. Version 1 does not support conditional requests.
       required: true
       schema: {type: string, const: 'private, no-store'}
     RetryAfter:
@@ -473,8 +455,7 @@ components:
         amount: {$ref: '#/components/schemas/DecimalAmount'}
         currency: {type: string, pattern: '^[A-Z]{3}$', description: Open ISO 4217 alphabetic currency code. Format
             the amount using this currency and its minor units; demo values are USD., examples: [USD]}
-    EmptyMeta: {type: object, additionalProperties: true, description: Empty today; clients must accept future metadata
-        members.}
+    EmptyMeta: {type: object, additionalProperties: true, description: Accept an empty object and ignore unfamiliar metadata members.}
     DiscoveryResponse:
       type: object
       additionalProperties: true
@@ -687,8 +668,7 @@ components:
           properties:
             id: {$ref: '#/components/schemas/OpaqueId'}
             receivedAt: {$ref: '#/components/schemas/UtcTimestamp'}
-          description: Durable acceptance only, never delivery. No visitor details or message echo. Optional delivery
-            information may be added later.
+          description: Confirms durable acceptance. Delivery is separate. The receipt omits visitor details and the message.
         meta: {$ref: '#/components/schemas/EmptyMeta'}
     Problem:
       type: object

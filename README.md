@@ -1,20 +1,14 @@
 # IDX Kit
 
-IDX Kit is an early project to build a free, self-hostable listings engine and
-API for real estate agents, teams and brokerages. It is designed around the
-RESO data standard. Showing real listings requires your own data license from
-your MLS.
+IDX Kit is a free, self-hostable listings engine and API for real estate agents,
+teams and brokerages. It uses the RESO data standard. Showing real listings
+requires your own data license from your MLS.
 
-## Status
+## Try the demo
 
-This project is early. The engine serves discovery, its contract, authorized
-synthetic listing detail, search with paging, and durable inquiry receipts. The
-plain demo website renders guide, search and property pages through the generated
-API client.
-
-The first milestone is a demo with clearly fake listings. A visitor goes from
-a guide page to search to a property page, then sends an inquiry. The demo
-uses only the public API.
+The demo website uses the generated client to call the public API. Start on a
+guide page, search invented listings, open a property page, and submit an
+inquiry to see its receipt.
 
 Follow the [demo quick start](docs/demo-setup.md) from a fresh checkout.
 See [Operate a listing feed](docs/feed-sync.md) to load, repair and check a feed on Node.
@@ -22,7 +16,7 @@ See the [repository instructions](AGENTS.md) and the [API rules](docs/api-rules.
 
 ## Install the client in your website
 
-Install the early test version of `@idx-kit/client` from its GitHub release:
+Install `@idx-kit/client` from its GitHub release:
 
 ```sh
 npm install --save-exact https://github.com/IDX-Kit/idx-kit/releases/download/client-v0.1.0/idx-kit-client-0.1.0.tgz
@@ -222,5 +216,5 @@ Free plan's 3 MiB limit. These commands do not deploy anything. Config checks
 also reject public engine routes, alternate site addresses, embedded credentials,
 and changes to logging, database placement or the marked Hyperdrive placeholder.
 The fixed Worker names are `idx-kit-demo-engine` and `idx-kit-demo-site`.
-Online setup, the real Hyperdrive id, deploy commands and Access verification
-belong to a separate task. Local test results do not measure production CPU time.
+See [private demo setup](docs/demo-online.md) for online configuration. Local
+test results do not measure production CPU time.

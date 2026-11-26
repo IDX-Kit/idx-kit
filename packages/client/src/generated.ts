@@ -2,8 +2,8 @@
 // Source: OpenAPI description. Re-run `redocly generate-client` to update.
 
 /**
- * IDX Kit first-demo API (v1.0.0)
- * AI-made technical choices revised under the lead's review decisions. Core names Secret key, Data license and landingPagePath are owner-approved 2026-11-05; a guide is website content. The owner-approved outcome is a synthetic guide-to-search-to-property-to-inquiry journey using only this API. Public means documented and authorized, not unrestricted data access. RESO is a standard, not a data license. All examples are invented. No runtime or deployment is claimed. Responses are open for extension; clients ignore unfamiliar members and handle any array/string length unless a bound is explicitly promised. Unknown request members and duplicate query keys are rejected. Every business call specifies /api/v1. All operations return Request-Id. Search and listing detail share a request limit per key. S01 has no conditional requests, CORS headers, browser keys, sync or external delivery.
+ * IDX Kit API (v1.0.0)
+ * The API is publicly documented. Call protected operations from your server with a secret key that has the required scope. A site's data licenses determine which listings it can read. RESO defines the data standard. You need a data license to display live listings. All examples are invented. Responses may gain new members. Ignore unfamiliar response members and handle arrays and strings of any length unless the contract specifies a bound. The API rejects unknown request members and duplicate query keys. All business endpoints are under /api/v1. Every operation returns a Request-Id header. Search and listing detail share a request limit per key. Version 1 does not support conditional requests or browser keys. It sends no CORS headers.
  */
 
 /**
@@ -36,7 +36,7 @@ export type Money = {
 };
 
 /**
- * Empty today; clients must accept future metadata members.
+ * Accept an empty object and ignore unfamiliar metadata members.
  */
 export type EmptyMeta = Record<string, unknown>;
 
@@ -242,7 +242,7 @@ export type AttributionToken = string;
 
 export type ReceiptResponse = {
     /**
-     * Durable acceptance only, never delivery. No visitor details or message echo. Optional delivery information may be added later.
+     * Confirms durable acceptance. Delivery is separate. The receipt omits visitor details and the message.
      */
     data: {
         id: OpaqueId;
@@ -309,7 +309,7 @@ export type SearchListingsResult = SearchResponse;
 
 export type SearchListingsQuery = {
     /**
-     * Exact synthetic city name after trim/case folding.
+     * Exact city name match after trimming whitespace and ignoring case.
      * @minLength 1
      * @maxLength 100
      */
