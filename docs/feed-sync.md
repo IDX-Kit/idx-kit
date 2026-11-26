@@ -107,6 +107,10 @@ scan numbers, counts, and outcomes are `null`. A scan number is a decimal string
 | `3` | Try again later. A `waiting` result gives `secondsLeft` before an incremental request can be made. |
 | `4` | Check the result and address the cause before running again. |
 
+Usage and settings errors print a diagnostic to standard error. Once the
+settings are valid, the command prints a JSON result even if it cannot connect
+to the database, find the feed, or save the incremental outcome.
+
 Each invocation makes one attempt. After an interruption, run the same command
 again to resume after the last saved page. If the feed rejects its continuation,
 the runner clears it. Run the command again to continue from the last completed

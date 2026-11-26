@@ -129,18 +129,24 @@ test(
       args: string[],
       code = 0,
       overrides?: NodeJS.ProcessEnv,
+      failure?: string,
     ) {
       const result = await start(args, overrides).done;
       assert.equal(result.code, code);
       if (code === 1 || code === 2) {
-        assert.equal(result.stdout, "");
         assert.match(result.stderr, /^[^\n]+\n$/);
-        return;
+        if (!failure) {
+          assert.equal(result.stdout, "");
+          return;
+        }
+      } else {
+        assert.equal(result.stderr, "");
       }
-      assert.equal(result.stderr, "");
       assert.match(result.stdout, /^\{[^\n]+\}\n$/);
       const body = JSON.parse(result.stdout);
       assert.equal(body.feedId, config.feedId);
+      if (failure)
+        assert.deepEqual(body, { feedId: config.feedId, code: failure });
       return body;
     }
 
@@ -304,14 +310,17 @@ test(
         });
         const database = new URL(process.env.LISTING_WRITER_DATABASE_URL!);
         database.searchParams.set("sslmode", "require");
-        await run(["status"], 1, { LISTING_WRITER_DATABASE_URL: database.href });
+        await run(
+          ["status"],
+          1,
+          { LISTING_WRITER_DATABASE_URL: database.href },
+          "database_failed",
+        );
         await writeFile(feedFile, stringify({ ...config, synthetic: "true" }));
         await run(["status"], 1);
-        await writeFile(
-          feedFile,
-          stringify({ ...config, feedId: "feed_absent" }),
-        );
-        await run(["incremental"], 1);
+        config.feedId = "feed_absent";
+        await writeFile(feedFile, stringify(config));
+        await run(["incremental"], 1, undefined, "missing_feed");
         assert.equal(feed.calls.length, offset);
       },
     );

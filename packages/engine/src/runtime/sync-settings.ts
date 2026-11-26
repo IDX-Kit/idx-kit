@@ -40,7 +40,10 @@ const feedSettings = z
   );
 const path = z.string().min(1);
 const token = z.string().regex(/^[A-Za-z0-9._~+/-]+=*$/);
-const database = z.string().regex(/^postgres(?:ql)?:\/\/\S+$/).pipe(z.url());
+const database = z
+  .string()
+  .regex(/^postgres(?:ql)?:\/\/\S+$/)
+  .pipe(z.url());
 
 export async function readSyncSettings(statusOnly: boolean) {
   const connectionString = database.parse(
