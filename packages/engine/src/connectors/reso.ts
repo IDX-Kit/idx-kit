@@ -4,7 +4,10 @@ import type { ListingChange } from "../db/listings.ts";
 
 const pageSchema = z.object({
   value: z.array(z.unknown()).max(listingPageLimit),
-  "@odata.nextLink": z.string().refine((link) => link.trim() !== "").nullish(),
+  "@odata.nextLink": z
+    .string()
+    .refine((link) => link.trim() !== "")
+    .nullish(),
 });
 
 const recordSchema = z.object({
