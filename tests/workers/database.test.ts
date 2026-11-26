@@ -9,6 +9,7 @@ import pg from "pg";
 import ts from "typescript";
 import { keyCommand, preserveKeys } from "../api/runtime.ts";
 import { validateResponse } from "../api/contract.ts";
+import { postInquiry } from "../api/inquiry-request.ts";
 import {
   emailSettings,
   startEmailStub,
@@ -79,25 +80,18 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
     assert.equal((await request()).status, 200);
     const createInquiry = async (token?: string, status = 201) => {
       const key = `"${randomUUID()}"`;
-      const headers = new Headers({
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": key,
-      });
-      if (token) headers.set("Turnstile-Token", token);
-      const response = await fetch("http://127.0.0.1:8787/api/v1/inquiries", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
+      const { response, content: receipt } = await postInquiry(
+        secret,
+        key,
+        {
           listingId: "lst_demo_0001",
           visitor,
           message,
           context: { pagePath: "/properties/lst_demo_0001" },
-        }),
-      });
-      const receipt = await response.json();
-      assert.equal(response.status, status);
-      validateResponse("/api/v1/inquiries", response, receipt, false, "post");
+        },
+        status,
+        { headers: token ? { "Turnstile-Token": token } : undefined },
+      );
       if (status === 201) inquiryIds.push(receipt.data.id);
       else {
         const { rowCount } = await db.query(

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
 import type { InquiryInput } from "@idx-kit/client";
-import { validateResponse } from "./contract.ts";
+import { postInquiry } from "./inquiry-request.ts";
 import { keyCommand, startEngine } from "./runtime.ts";
 import {
   startTurnstileStub,
@@ -14,7 +14,6 @@ import {
 } from "./turnstile-stub.ts";
 
 const site = "site_demo_primary";
-const path = "/api/v1/inquiries";
 // The visitor and inquiry details are invented test data.
 const input: InquiryInput = {
   listingId: "lst_demo_0001",
@@ -69,20 +68,9 @@ test("inquiry spam check through Turnstile", { timeout: 60_000 }, async (t) => {
     code?: string;
   } = {}) {
     keys.push(key);
-    const headers = new Headers({
-      Authorization: `Bearer ${apiKey.secret}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": key,
+    const { response, content } = await postInquiry(apiKey.secret, key, body, status, {
+      headers: token === undefined ? undefined : { "Turnstile-Token": token },
     });
-    if (token !== undefined) headers.set("Turnstile-Token", token);
-    const response = await fetch(`http://127.0.0.1:8787${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-    assert.equal(response.status, status);
-    const content = await response.json();
-    validateResponse(path, response, content, false, "post");
     const requestId = response.headers.get("Request-Id");
     assert.ok(requestId);
     if (code) {

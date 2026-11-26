@@ -7,12 +7,12 @@ import { setTimeout } from "node:timers/promises";
 import pg from "pg";
 import type { InquiryInput } from "@idx-kit/client";
 import { registerSecret } from "../logs.ts";
-import { validateResponse } from "./contract.ts";
 import {
   emailSettings,
   startEmailStub,
   waitForEmailLog,
 } from "./email-stub.ts";
+import { postInquiry } from "./inquiry-request.ts";
 import { execute, keyCommand, startEngine } from "./runtime.ts";
 
 const path = "/api/v1/inquiries";
@@ -74,19 +74,9 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
     signal?: AbortSignal,
   ) {
     keys.add(key);
-    const response = await fetch(origin + path, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": key,
-      },
-      body: JSON.stringify(body),
+    const { response, content } = await postInquiry(secret, key, body, status, {
       signal,
     });
-    assert.equal(response.status, status);
-    const content = await response.json();
-    validateResponse(path, response, content, false, "post");
     return {
       receipt: content,
       requestId: response.headers.get("Request-Id"),
