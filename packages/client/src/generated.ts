@@ -383,6 +383,10 @@ export type CreateInquiryHeaders = {
      * @pattern ^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$
      */
     "Idempotency-Key": string;
+    /**
+     * Required for new inquiries when the engine has a Turnstile secret. Kept inquiries can replay without it.
+     */
+    "Turnstile-Token"?: string;
 };
 
 export type CreateInquiryResponseHeaders = {
@@ -489,7 +493,7 @@ export const OPERATIONS = {
     getContract: { id: "getContract", method: "GET", path: "/api/v1/openapi.json", tags: ["Discovery"], responseHeaders: [{ name: "request-id", key: "requestId", type: "string" }, { name: "cache-control", key: "cacheControl", type: "string" }] },
     searchListings: { id: "searchListings", method: "GET", path: "/api/v1/listings", tags: ["Listings"], params: [{ name: "city", in: "query" }, { name: "minPrice", in: "query" }, { name: "maxPrice", in: "query" }, { name: "minBedrooms", in: "query" }, { name: "sort", in: "query" }, { name: "limit", in: "query" }, { name: "after", in: "query" }], security: [[{ scheme: "secretKey", kind: "bearer" }]], responseHeaders: [{ name: "request-id", key: "requestId", type: "string" }, { name: "cache-control", key: "cacheControl", type: "string" }] },
     getListing: { id: "getListing", method: "GET", path: "/api/v1/listings/{listingId}", tags: ["Listings"], params: [{ name: "listingId", in: "path" }], security: [[{ scheme: "secretKey", kind: "bearer" }]], responseHeaders: [{ name: "request-id", key: "requestId", type: "string" }, { name: "cache-control", key: "cacheControl", type: "string" }] },
-    createInquiry: { id: "createInquiry", method: "POST", path: "/api/v1/inquiries", tags: ["Inquiries"], params: [{ name: "Idempotency-Key", in: "header" }], body: { contentType: "application/json" }, security: [[{ scheme: "secretKey", kind: "bearer" }]], responseHeaders: [{ name: "location", key: "location", type: "string" }, { name: "request-id", key: "requestId", type: "string" }, { name: "cache-control", key: "cacheControl", type: "string" }] },
+    createInquiry: { id: "createInquiry", method: "POST", path: "/api/v1/inquiries", tags: ["Inquiries"], params: [{ name: "Idempotency-Key", in: "header" }, { name: "Turnstile-Token", in: "header" }], body: { contentType: "application/json" }, security: [[{ scheme: "secretKey", kind: "bearer" }]], responseHeaders: [{ name: "location", key: "location", type: "string" }, { name: "request-id", key: "requestId", type: "string" }, { name: "cache-control", key: "cacheControl", type: "string" }] },
     getInquiryReceipt: { id: "getInquiryReceipt", method: "GET", path: "/api/v1/inquiries/{inquiryId}", tags: ["Inquiries"], params: [{ name: "inquiryId", in: "path" }], security: [[{ scheme: "secretKey", kind: "bearer" }]], responseHeaders: [{ name: "request-id", key: "requestId", type: "string" }, { name: "cache-control", key: "cacheControl", type: "string" }] }
 } as const satisfies Record<string, OperationDescriptor>;
 
