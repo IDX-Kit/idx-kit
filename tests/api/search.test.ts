@@ -746,8 +746,11 @@ test(
             },
           };
         };
+        // A broad price continuation can make a sequential scan and sort cheap
+        // on a 2,000-row table. Use four full cycles of the 5,000-price fixture
+        // so a bounded seek is cheaper under PostgreSQL's default planner costs.
         const volume =
-          process.env.IDX_TEST_SEARCH_VOLUME === "1" ? 100_000 : 2_000;
+          process.env.IDX_TEST_SEARCH_VOLUME === "1" ? 100_000 : 20_000;
         const allFeeds = "site_search_plan_all";
         const smallFeed = "site_search_plan_small";
         const dropBedroomIndex = () =>
