@@ -276,11 +276,15 @@ test(
               : Number(item.source.ListPrice) * (sort === "price" ? 1 : -1);
           const expected = licensed
             .toSorted(
-              (a, b) => price(a) - price(b) || a.publicId.localeCompare(b.publicId),
+              (a, b) =>
+                price(a) - price(b) || a.publicId.localeCompare(b.publicId),
             )
             .map((item) => item.publicId);
           const rows = await browse(`sort=${sort}&limit=2`);
-          assert.deepEqual(rows.map((item) => item.id), expected);
+          assert.deepEqual(
+            rows.map((item) => item.id),
+            expected,
+          );
         }
       },
     );
@@ -722,7 +726,12 @@ test(
                 diagnostic,
               );
               assert.match(condition, /price|id/, diagnostic);
-              for (const operator of ["price >", "price <", "price =", "id >"]) {
+              for (const operator of [
+                "price >",
+                "price <",
+                "price =",
+                "id >",
+              ]) {
                 if (sql.includes(`l.${operator}`))
                   assert.ok(condition.includes(operator), diagnostic);
               }

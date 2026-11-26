@@ -98,7 +98,10 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
             fixtures.listings.at(-1)!.ingestedAt,
           ),
         },
-        { id: "feed_demo_primary", oldest_listing_ingested_at: new Date(older) },
+        {
+          id: "feed_demo_primary",
+          oldest_listing_ingested_at: new Date(older),
+        },
       ]);
       assert.deepEqual(await snapshot(), listings);
     },
