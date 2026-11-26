@@ -13,5 +13,8 @@
     "@hono/zod-validator": "0.9.1",
     "canonicalize": "5.1.0",
     "resend": "6.17.2"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.3"
   }
 }

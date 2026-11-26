@@ -57,8 +57,12 @@ export async function startEmailStub() {
   return {
     sent,
     baseUrl: `http://127.0.0.1:${address.port}`,
-    hold(pending: Promise<void>) {
-      gate = pending;
+    hold() {
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
     },
     status(value: number) {
       status = value;

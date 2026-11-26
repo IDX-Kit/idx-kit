@@ -66,15 +66,14 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       inquiryIds.push(receipt.data.id);
       return { response, receipt };
     };
-    const gate = Promise.withResolvers<void>();
-    stub.hold(gate.promise);
+    const release = stub.hold();
     let created;
     try {
       created = await createInquiry();
       await stub.waitForSends(1);
       assert.ok(!engine.logs().includes('"inquiry.email"'));
     } finally {
-      gate.resolve();
+      release();
     }
     const { response: create, receipt } = created;
     const requestId = create.headers.get("Request-Id");

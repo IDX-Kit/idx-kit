@@ -49,9 +49,9 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
   privateValues.forEach(registerSecret);
   const logs: string[] = [];
   const keys = new Set<string>();
-  let engine = await startEngine(enabled);
+  let engine: Awaited<ReturnType<typeof startEngine>>;
   t.after(async () => {
-    await engine.stop();
+    await engine?.stop();
     await stub.close();
     await db.query(
       "DELETE FROM idx.inquiries WHERE site_id='site_demo_primary' AND idempotency_key=ANY($1)",
@@ -61,6 +61,7 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
     await db.end();
     await rm(directory, { recursive: true, force: true });
   });
+  engine = await startEngine(enabled);
 
   async function create(
     key = `"${randomUUID()}"`,
@@ -125,8 +126,7 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
   await t.test(
     "the receipt and row are available while Resend holds its response",
     async () => {
-      const gate = Promise.withResolvers<void>();
-      stub.hold(gate.promise);
+      const release = stub.hold();
       let created;
       try {
         created = await create(key, input, 201, AbortSignal.timeout(2000));
@@ -134,7 +134,7 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
         await stub.waitForSends(1);
         assert.ok(!engine.logs().includes('"inquiry.email"'));
       } finally {
-        gate.resolve();
+        release();
       }
       await expectEmail(created);
       assert.equal(stub.sent.length, 1);
@@ -244,14 +244,13 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
       const rejected = await create();
       await expectEmail(rejected, "EmailServiceError", 500);
       await readKept(rejected);
-      const gate = Promise.withResolvers<void>();
-      stub.hold(gate.promise);
+      const release = stub.hold();
       try {
         const timedOut = await create();
         await expectEmail(timedOut, "TimeoutError");
         await readKept(timedOut);
       } finally {
-        gate.resolve();
+        release();
       }
       assert.equal(stub.sent.length, 4);
       await engine.stop();
