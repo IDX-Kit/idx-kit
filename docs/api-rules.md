@@ -115,6 +115,8 @@ When the budget is spent, listing reads return `429 rate_limited` and
 engine's request log records the internal `keyId` and UTC `timestamp` for
 admitted and rate-limited listing requests.
 
+See [Limit and report suspected scraping](scraping.md) for edge limits and log counts.
+
 ## Errors and Request-Id
 
 Errors use `application/problem+json` with `type`, `title`, `status`, `detail`,
