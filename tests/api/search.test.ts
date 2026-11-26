@@ -7,7 +7,6 @@ import type { DisplayBlock, Listing, SearchResponse } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { searchListings } from "@idx-kit/engine/src/db/search.ts";
 import { listingSelect } from "@idx-kit/engine/src/db/read.ts";
-import type { Database } from "@idx-kit/engine/src/db/read.ts";
 import {
   searchQuery,
   searchSchema,
@@ -18,6 +17,7 @@ import type { FixtureRecord } from "@idx-kit/engine/src/domain/normalize.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { validateResponse } from "./contract.ts";
 import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
+import { explainSearch, flatten, summarizeSearch } from "./search-plan.ts";
 
 test(
   "real HTTP search and live continuation acceptance",
@@ -694,88 +694,103 @@ test(
     await t.test(
       "every page seeks through listing indexes in both price orders",
       async (t) => {
-        interface Plan {
-          "Node Type": string;
-          "Relation Name"?: string;
-          "Index Cond"?: string;
-          "Actual Rows": number;
-          "Rows Removed by Filter"?: number;
-          Plans?: Plan[];
-        }
-        const flatten = (node: Plan): Plan[] => [
-          node,
-          ...(node.Plans ?? []).flatMap(flatten),
-        ];
-        const inspect = (last: SearchQuery["last"]): Database => ({
-          async query<T extends pg.QueryResultRow>(
-            sql: string,
-            values: unknown[],
-          ) {
-            const plan = (
-              await db.query(
-                "EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) " + sql,
-                values,
-              )
-            ).rows[0]["QUERY PLAN"][0].Plan as Plan;
-            const nodes = flatten(plan).filter(
-              (node) => node["Relation Name"] === "listings",
-            );
-            const diagnostic = JSON.stringify({ sql, values, plan });
-            if (sql.startsWith(listingSelect)) {
-              assert.equal(nodes.length, 1, diagnostic);
-              const [node] = nodes;
-              const index =
-                node["Node Type"] === "Bitmap Heap Scan"
-                  ? node.Plans?.[0]
-                  : node;
-              assert.ok(index, diagnostic);
-              assert.match(
-                index["Node Type"],
-                /^(Index (Only )?|Bitmap Index )Scan$/,
-                diagnostic,
-              );
-              const visited =
-                index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0);
-              assert.ok(visited <= 128, diagnostic);
-              const condition = index["Index Cond"] ?? "";
-              assert.match(condition, /price|id/, diagnostic);
-              if (last?.price === null)
-                assert.match(condition, /id > /, diagnostic);
-              for (const operator of [
-                "price >",
-                "price <",
-                "price =",
-                "id >",
-              ]) {
-                if (sql.includes(`l.${operator}`))
-                  assert.ok(condition.includes(operator), diagnostic);
+        const inspect = (last: SearchQuery["last"]) => {
+          const { database, queries } = explainSearch(db);
+          return {
+            database,
+            check() {
+              for (const { sql, plan } of queries) {
+                const nodes = flatten(plan).filter(
+                  (node) => node["Relation Name"] === "listings",
+                );
+                const diagnostic = JSON.stringify({ sql, plan });
+                if (!sql.startsWith(listingSelect)) {
+                  assert.equal(nodes.length, 0, diagnostic);
+                  continue;
+                }
+                assert.equal(nodes.length, 1, diagnostic);
+                const [node] = nodes;
+                const index =
+                  node["Node Type"] === "Bitmap Heap Scan"
+                    ? node.Plans?.[0]
+                    : node;
+                assert.ok(index, diagnostic);
+                assert.match(
+                  index["Node Type"],
+                  /^(Index (Only )?|Bitmap Index )Scan$/,
+                  diagnostic,
+                );
+                const visited =
+                  index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0);
+                assert.ok(visited <= 128, diagnostic);
+                const condition = index["Index Cond"] ?? "";
+                assert.match(condition, /price|id/, diagnostic);
+                if (last?.price === null)
+                  assert.match(condition, /id > /, diagnostic);
+                for (const operator of [
+                  "price >",
+                  "price <",
+                  "price =",
+                  "id >",
+                ]) {
+                  if (sql.includes(`l.${operator}`))
+                    assert.ok(condition.includes(operator), diagnostic);
+                }
               }
-            } else {
-              assert.equal(nodes.length, 0, diagnostic);
-            }
-            return db.query<T>(sql, values);
-          },
-        });
+            },
+          };
+        };
         const volume =
           process.env.IDX_TEST_SEARCH_VOLUME === "1" ? 100_000 : 2_000;
+        const allFeeds = "site_search_plan_all";
+        const smallFeed = "site_search_plan_small";
         const started = performance.now();
         await db.query("BEGIN");
         try {
-          // Generate synthetic rows on the database runner and roll them back.
+          await db.query(`
+            INSERT INTO idx.feeds
+              (id, refreshed_at, expires_at, display_blocks, rules_version)
+            SELECT new_id.id, f.refreshed_at, f.expires_at, '[]', f.rules_version
+            FROM idx.feeds f
+            CROSS JOIN (VALUES ('feed_search_plan_second'), ('feed_search_plan_small'))
+              AS new_id(id)
+            WHERE f.id = 'feed_demo_primary';
+            INSERT INTO idx.sites VALUES ('site_search_plan_all'), ('site_search_plan_small');
+            INSERT INTO idx.data_licenses VALUES
+              ('site_search_plan_all', 'feed_demo_primary'),
+              ('site_search_plan_all', 'feed_search_plan_second'),
+              ('site_search_plan_all', 'feed_search_plan_small'),
+              ('site_search_plan_small', 'feed_search_plan_small');
+          `);
+          // Invented runner-only data with a few common cities and rare bedroom counts.
           const loaded = await db.query(
             `
             WITH inserted AS (
               INSERT INTO idx.listings
-                (id, synthetic, price, currency, withheld_fields, entire_listing_display,
-                 display_blocks, page_blocks, ingested_at)
+                (id, synthetic, price, currency, address, bedrooms, withheld_fields,
+                 entire_listing_display, display_blocks, page_blocks, ingested_at)
               SELECT 'lst_search_plan_' || lpad(n::text, 6, '0'), true,
-                350000 + (n % 5000) * 100, 'USD', '{}', true, '[]', '[]',
-                '2026-11-01T00:05:00Z'
+                350000 + (n % 5000) * 100, 'USD',
+                jsonb_build_object('city', CASE
+                  WHEN city_bucket < 45 THEN 'Synthetic City'
+                  WHEN city_bucket < 80 THEN 'Synthetic Town'
+                  ELSE 'Synthetic Place ' || (n % 101)
+                END),
+                CASE WHEN bedroom_bucket = 0 THEN 7 ELSE 2 + bedroom_bucket % 4 END,
+                '{}', true, '[]', '[]', '2026-11-01T00:05:00Z'
               FROM generate_series(1, $1::int) AS series(n)
+              CROSS JOIN LATERAL (
+                SELECT (hashint4(n)::bigint & 2147483647) % 100 AS city_bucket,
+                  (hashint4(n + 100000)::bigint & 2147483647) % 100 AS bedroom_bucket
+              ) buckets
               RETURNING id
             )
             INSERT INTO idx.source_mappings (feed_id, source_key, listing_id)
-            SELECT 'feed_demo_primary', id, id FROM inserted
+            SELECT CASE
+              WHEN right(id, 6)::int % 200 = 0 THEN 'feed_search_plan_small'
+              WHEN right(id, 6)::int % 3 = 0 THEN 'feed_search_plan_second'
+              ELSE 'feed_demo_primary'
+            END, id, id FROM inserted
           `,
             [volume],
           );
@@ -790,11 +805,13 @@ test(
                 ["lst_search_plan_000001", "lst_search_plan_000100"],
               );
             }
-            await db.query("ANALYZE idx.listings, idx.source_mappings");
+            await db.query(
+              "ANALYZE idx.listings, idx.source_mappings, idx.data_licenses",
+            );
             for (const sort of ["price", "-price"]) {
               const query = searchQuery(
                 searchSchema.parse({ sort, limit: "50" }),
-                "site_demo_primary",
+                allFeeds,
               );
               const fetchSize = query.context.limit + 1;
               const boundary = {
@@ -809,10 +826,9 @@ test(
               if (withNulls)
                 positions.push({ price: null, id: "lst_search_plan_000001" });
               for (const last of positions) {
-                const result = await searchListings(inspect(last), {
-                  ...query,
-                  last,
-                });
+                const { database, check } = inspect(last);
+                const result = await searchListings(database, { ...query, last });
+                check();
                 if (last === boundary || last?.price === null) {
                   assert.equal(result.rows.length, withNulls ? fetchSize : 0);
                   assert.ok(result.rows.every((row) => row.price === null));
@@ -822,6 +838,91 @@ test(
                 }
               }
             }
+          }
+          if (volume === 100_000) {
+            const measurements: string[] = [];
+            const violations: string[] = [];
+            const measure = async (
+              label: string,
+              filters: Record<string, string>,
+              site = allFeeds,
+            ) => {
+              for (const sort of ["price", "-price"]) {
+                const query = searchQuery(
+                  searchSchema.parse({ ...filters, sort, limit: "50" }),
+                  site,
+                );
+                const fetchSize = query.context.limit + 1;
+                // Count both listing rows and source mappings. Allow some extra
+                // candidates for selective filters and sites with few licenses.
+                const budget = 32 * fetchSize;
+                let last: SearchQuery["last"] = null;
+                for (const page of [1, 2]) {
+                  const { database, queries } = explainSearch(db);
+                  const { rows } = await searchListings(database, {
+                    ...query,
+                    last,
+                  });
+                  const result = summarizeSearch(queries);
+                  const name = `${label} | ${sort} | ${page}`;
+                  measurements.push(
+                    `| ${name} | ${result.rows} | ${result.ms.toFixed(3)} | ${result.plan} |`,
+                  );
+                  if (result.listingSeqScan || result.rows > budget) {
+                    const scan = result.listingSeqScan ? " (listings Seq Scan)" : "";
+                    violations.push(
+                      `${name} examined ${result.rows}/${budget} rows${scan}`,
+                    );
+                  }
+                  assert.equal(rows.length, fetchSize, name);
+                  const { price, id } = rows[query.context.limit - 1];
+                  last = { price, id };
+                }
+              }
+            };
+            const minPrice = "375000";
+            const maxPrice = "824900";
+            const city = "Synthetic City";
+            const minBedrooms = "7";
+            const ranges: [string, Record<string, string>][] = [
+              ["plain", {}],
+              ["min price", { minPrice }],
+              ["max price", { maxPrice }],
+              ["wide price range", { minPrice, maxPrice }],
+            ];
+            for (const [priceLabel, prices] of ranges) {
+              await measure(priceLabel, prices);
+              await measure(`${priceLabel} + rare bedrooms`, {
+                ...prices,
+                minBedrooms,
+              });
+              await measure(`${priceLabel} + common city`, { ...prices, city });
+              await measure(`${priceLabel} + rare bedrooms + common city`, {
+                ...prices,
+                minBedrooms,
+                city,
+              });
+            }
+            await measure("rare city", { city: "Synthetic Place 50" });
+            await measure("common bedrooms", { minBedrooms: "3" });
+            await measure("narrow price range", {
+              minPrice: "400000",
+              maxPrice: "450000",
+            });
+            await measure("small feed", {}, smallFeed);
+            await measure(
+              "small feed + wide range + common city",
+              { minPrice, maxPrice, city },
+              smallFeed,
+            );
+            t.diagnostic(
+              [
+                "| Search | Sort | Page | Rows examined | PostgreSQL ms | Plan |",
+                "| --- | --- | --- | ---: | ---: | --- |",
+                ...measurements,
+              ].join("\n"),
+            );
+            assert.deepEqual(violations, []);
           }
         } finally {
           await db.query("ROLLBACK");
