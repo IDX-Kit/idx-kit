@@ -56,7 +56,7 @@ test(
         response,
         body,
       );
-      return body.data;
+      return status === 200 ? body.data : body;
     }
 
     const { listings } = await new FixtureConnector().read();
@@ -161,7 +161,7 @@ test(
         assert.equal(before.recordsSeen, null);
         assert.equal(before.lastOutcome, null);
         assert.equal(feed.calls.length, 0);
-        assert.deepEqual(await api(), []);
+        assert.equal((await api(search, 503)).code, "feed_expired");
         assert.deepEqual(await run(["incremental"]), {
           feedId: config.feedId,
           code: "complete",
@@ -292,7 +292,7 @@ test(
           "1",
         ]);
         assert.equal(removed.listingsRemoved, 1);
-        await api(detail, 404);
+        assert.equal((await api(detail, 404)).code, "not_found");
       },
     );
 
