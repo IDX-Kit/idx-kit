@@ -176,4 +176,22 @@ test("site failures log once with status, request ID, path and redacted causes",
   );
   assert.equal(JSON.parse(logs[3]).upstreamStatus, 503);
   assert.equal(JSON.parse(logs[3]).requestId, null);
+  const privateText = "Synthetic private inquiry text";
+  registerSecret(privateText);
+  globalThis.fetch = async () => {
+    throw new TypeError(privateText);
+  };
+  await assert.rejects(
+    engine.createInquiry(
+      {
+        listingId: "lst_synthetic",
+        visitor: { name: "Synthetic Visitor", email: "visitor@example.invalid" },
+        message: privateText,
+        context: { pagePath: "/properties/lst_synthetic" },
+      },
+      crypto.randomUUID(),
+    ),
+  );
+  assert.equal(JSON.parse(logs[4]).message, undefined);
+  assert.ok(!logs.join("").includes(privateText));
 });

@@ -44,6 +44,8 @@ export function logFailure(
   if (error instanceof PageFailure && error.logged) return;
   const status =
     cause instanceof ApiError ? cause.status : (upstream?.status ?? null);
+  const path =
+    (error instanceof PageFailure ? error.path : null) ?? upstream?.path ?? null;
   writeLog({
     event: "demo_request_failed",
     category:
@@ -59,10 +61,12 @@ export function logFailure(
       (error instanceof PageFailure ? error.requestId : null) ??
       upstream?.requestId ??
       null,
-    path:
-      (error instanceof PageFailure ? error.path : null) ??
-      upstream?.path ??
-      null,
+    path,
+    message: path?.startsWith("/api/v1/inquiries")
+      ? undefined
+      : cause instanceof Error
+        ? cause.message
+        : "Request failed",
   });
   if (error instanceof PageFailure) error.logged = true;
 }
