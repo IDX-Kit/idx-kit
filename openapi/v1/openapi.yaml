@@ -213,8 +213,10 @@ paths:
         receivedAt for as long as the inquiry is retained, without a time limit. Changed body returns 422
         idempotency_mismatch. Concurrent duplicates wait for the transaction, then a separate Read Committed SELECT
         reads and compares the row; no in-progress 409. Database wait/timeout failures use 503. Failures with no
-        commit create no accepted inquiry. After authentication/authorization, existing-row lookup precedes new-inquiry
-        domain/listing checks and any future quota charge. A lost response is resolved with the same key/body.
+        commit create no accepted inquiry. After authentication/authorization, existing-row lookup precedes the
+        optional Turnstile check, other new-inquiry checks and any future quota charge. A lost response is resolved
+        with the same key/body. When enabled, a failed token check returns 422 spam_check_failed and an unavailable
+        check returns 503 service_unavailable.
         The random key and hashed fingerprint are not personal data. Retention/deletion and retries after deletion
         must be settled with real-lead retention before real people; synthetic rows remain until explicit reset.
         Each fresh empty form gets a new key; failure re-renders preserve key and entered values. Confirmation
@@ -229,6 +231,11 @@ paths:
         description: A new UUIDv4 per logical action, as a quoted Structured Field string.
         schema: {type: string, pattern: '^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$'}
         example: '"4de8a43c-b73d-41a4-9237-32f8e1556c09"'
+      - name: Turnstile-Token
+        in: header
+        required: false
+        description: Required for new inquiries when the engine has a Turnstile secret. Kept inquiries can replay without it.
+        schema: {type: string}
       requestBody:
         required: true
         content:
@@ -270,7 +277,23 @@ paths:
         '404': {$ref: '#/components/responses/Problem'}
         '413': {$ref: '#/components/responses/Problem'}
         '415': {$ref: '#/components/responses/Problem'}
-        '422': {$ref: '#/components/responses/Problem'}
+        '422':
+          description: Invalid inquiry fields, changed body under a kept key, or a failed Turnstile token check.
+          headers:
+            Request-Id: {$ref: '#/components/headers/RequestId'}
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+              examples:
+                spamCheckFailed:
+                  value:
+                    type: about:blank
+                    title: Unprocessable Entity
+                    status: 422
+                    detail: Complete the spam check and try again.
+                    code: spam_check_failed
+                    requestId: req_demo_0004
         '405': {$ref: '#/components/responses/MethodNotAllowed'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}

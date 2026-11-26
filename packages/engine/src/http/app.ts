@@ -17,6 +17,7 @@ import {
 import { listingDetail } from "../domain/detail.ts";
 import { sendInquiryEmail } from "../domain/inquiry-email.ts";
 import type { InquiryEmailSettings } from "../domain/inquiry-email.ts";
+import { checkInquirySpam } from "../domain/inquiry-spam.ts";
 import { listingSearch } from "../domain/search.ts";
 import {
   searchQuery,
@@ -45,10 +46,16 @@ export function createApp(
   contract: unknown,
   release: string,
   log: (line: string) => void = console.error,
-  email?: {
-    settings: InquiryEmailSettings;
-    waitUntil?: (task: Promise<void>) => void;
-  },
+  {
+    email,
+    turnstileSecret,
+  }: {
+    email?: {
+      settings: InquiryEmailSettings;
+      waitUntil?: (task: Promise<void>) => void;
+    };
+    turnstileSecret?: unknown;
+  } = {},
 ) {
   const app = new Hono<AppEnv>();
   // A zero limit rejects every supplied ID, so the middleware always generates one.
@@ -313,14 +320,18 @@ export function createApp(
     }),
     async (c) => {
       const input = c.req.valid("json");
-      const creation = createInquiry(
-        db,
-        c.get("site"),
-        c.req.valid("header")["idempotency-key"],
-        input,
+      const key = c.req.valid("header")["idempotency-key"];
+      const requestId = c.get("requestId");
+      const creation = createInquiry(db, c.get("site"), key, input, () =>
+        checkInquirySpam(
+          turnstileSecret,
+          c.req.header("Turnstile-Token"),
+          key,
+          requestId,
+          log,
+        ),
       );
       if (email && email.settings.mode !== "off") {
-        const requestId = c.get("requestId");
         const task = creation.then(
           ({ row, listing }) => {
             if (listing)

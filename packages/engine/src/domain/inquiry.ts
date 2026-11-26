@@ -68,6 +68,7 @@ export async function createInquiry(
   site: string,
   key: string,
   input: InquiryInput,
+  checkSpam: () => Promise<void>,
 ) {
   const hash = createHash("sha256").update(canonicalize(input)!).digest("hex");
   const compare = (row: InquiryRow) => {
@@ -81,6 +82,7 @@ export async function createInquiry(
   };
   const existing = await db.inquiryByKey(site, key);
   if (existing) return { row: compare(existing) };
+  await checkSpam();
   const listing = await db.listing(site, input.listingId);
   if (!listing)
     throw new HttpProblem(404, "not_found", "The resource was not found.");

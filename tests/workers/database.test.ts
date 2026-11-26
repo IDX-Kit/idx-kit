@@ -14,7 +14,11 @@ import {
   startEmailStub,
   waitForEmailLog,
 } from "../api/email-stub.ts";
-import { registerSecret } from "../logs.ts";
+import {
+  startTurnstileStub,
+  tokens,
+  turnstileSettings,
+} from "../api/turnstile-stub.ts";
 import { startWorker } from "./runtime.ts";
 
 test("Hyperdrive uses idx_runtime and logs the correlated database denial", async () => {
@@ -29,9 +33,15 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
     email: "worker@example.invalid",
   };
   const message = "Synthetic Worker insert privilege proof.";
-  const privateValues = [visitor.name, visitor.email, message];
-  privateValues.forEach(registerSecret);
+  const privateValues = [
+    visitor.name,
+    visitor.email,
+    message,
+    tokens.valid,
+    turnstileSettings.TURNSTILE_SECRET_KEY,
+  ];
   const stub = await startEmailStub();
+  const turnstile = await startTurnstileStub(privateValues);
   let engine: Awaited<ReturnType<typeof startWorker>> | undefined;
   const { config, error } = ts.readConfigFile(
     "packages/engine/wrangler.jsonc",
@@ -45,7 +55,10 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       JSON.stringify({
         ...config,
         main: resolve("tests/workers/email-entry.ts"),
-        define: { IDX_TEST_RESEND_URL: JSON.stringify(stub.baseUrl) },
+        define: {
+          IDX_TEST_RESEND_URL: JSON.stringify(stub.baseUrl),
+          IDX_TEST_TURNSTILE_URL: JSON.stringify(turnstile.baseUrl),
+        },
         vars: { ...vars, RESEND_BASE_URL: stub.baseUrl + "/wrong" },
       }),
     );
@@ -58,20 +71,23 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       "site_demo_primary",
       "listings:read,inquiries:write,inquiries:read",
     );
-    engine = await start(emailSettings);
+    engine = await start({ ...emailSettings, ...turnstileSettings });
     const request = () =>
       fetch("http://127.0.0.1:8787/api/v1/listings/lst_demo_0001", {
         headers: { Authorization: `Bearer ${secret}` },
       });
     assert.equal((await request()).status, 200);
-    const createInquiry = async () => {
+    const createInquiry = async (token?: string, status = 201) => {
+      const key = `"${randomUUID()}"`;
+      const headers = new Headers({
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": key,
+      });
+      if (token) headers.set("Turnstile-Token", token);
       const response = await fetch("http://127.0.0.1:8787/api/v1/inquiries", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${secret}`,
-          "Content-Type": "application/json",
-          "Idempotency-Key": `"${randomUUID()}"`,
-        },
+        headers,
         body: JSON.stringify({
           listingId: "lst_demo_0001",
           visitor,
@@ -80,9 +96,16 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
         }),
       });
       const receipt = await response.json();
-      assert.equal(response.status, 201);
+      assert.equal(response.status, status);
       validateResponse("/api/v1/inquiries", response, receipt, false, "post");
-      inquiryIds.push(receipt.data.id);
+      if (status === 201) inquiryIds.push(receipt.data.id);
+      else {
+        const { rowCount } = await db.query(
+          "SELECT 1 FROM idx.inquiries WHERE site_id=$1 AND idempotency_key=$2",
+          ["site_demo_primary", key],
+        );
+        assert.equal(rowCount, 0);
+      }
       return { response, receipt };
     };
     const release = stub.hold();
@@ -90,7 +113,7 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
     try {
       await db.query("BEGIN");
       await db.query("LOCK TABLE idx.inquiries IN SHARE MODE");
-      const pending = createInquiry();
+      const pending = createInquiry(tokens.valid);
       void pending.catch(() => {});
       try {
         for (let attempt = 0; attempt < 100; attempt++) {
@@ -112,6 +135,8 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       release();
     }
     const { response: create, receipt } = created;
+    assert.equal(turnstile.checks.length, 1);
+    assert.equal(turnstile.checks[0].body.response, tokens.valid);
     const requestId = create.headers.get("Request-Id");
     assert.deepEqual(await waitForEmailLog(engine, requestId), {
       operation: "inquiry.email",
@@ -176,9 +201,37 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       await engine.stop();
     }
     assert.equal(stub.sent.length, 1);
+    for (const invalid of [73, {}]) {
+      engine = await start({ TURNSTILE_SECRET_KEY: invalid });
+      const { response, receipt } = await createInquiry(tokens.valid, 503);
+      assert.equal(receipt.code, "service_unavailable");
+      assert.equal(receipt.requestId, response.headers.get("Request-Id"));
+      await engine.stop();
+      const records = engine
+        .logs()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        records.filter((record) => record.operation === "inquiry.spam_check"),
+        [
+          {
+            operation: "inquiry.spam_check",
+            outcome: "failure",
+            requestId: receipt.requestId,
+            errorType: "ConfigurationError",
+            upstreamStatus: null,
+            turnstileErrorCodes: [],
+          },
+        ],
+      );
+      for (const value of privateValues)
+        assert.ok(!engine.logs().includes(value));
+    }
+    assert.equal(turnstile.checks.length, 1);
   } finally {
     await engine?.stop();
     await stub.close();
+    await turnstile.close();
     await db.query("GRANT SELECT ON idx.site_secret_keys TO idx_runtime");
     await db.query("DELETE FROM idx.inquiries WHERE id=ANY($1)", [inquiryIds]);
     await restoreKeys();

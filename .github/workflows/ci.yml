@@ -145,6 +145,8 @@ jobs:
         run: npm run test:api 2>&1 | tee "$IDX_TEST_LOG_DIR/api.log"
       - name: Prove inquiry email and failure isolation with a loopback stand-in
         run: node --test tests/api/inquiry-email.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/inquiry-email.log"
+      - name: Prove inquiry spam checks and replays with a loopback stand-in
+        run: node --test tests/api/inquiry-spam.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/inquiry-spam.log"
       - name: Prove detail then search on the same database without reseeding
         run: |
           started=$SECONDS
@@ -168,7 +170,7 @@ jobs:
         env:
           IDX_RUNTIME: worker
         run: npm run test:demo 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-demo.log"
-      - name: Prove Worker database permissions, failure logs and background inquiry email
+      - name: Prove Worker database permissions, failure logs, inquiry email and spam checks
         env:
           IDX_RUNTIME: worker
         run: node --test tests/workers/database.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-database.log"

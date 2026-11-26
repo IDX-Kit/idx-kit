@@ -136,6 +136,24 @@ The engine saves the inquiry and returns its receipt while the email runs in
 the background. Check `inquiry.email` logs by inquiry ID or Request-Id. A failed
 email leaves the inquiry saved, and replaying its receipt does not send email.
 
+## Inquiry spam check
+
+Set `TURNSTILE_SECRET_KEY` to your Turnstile widget's secret in the environment
+of the Node engine process. On Workers, add it as a runtime secret on the
+engine Worker. From the directory containing its Wrangler configuration, run:
+
+```sh
+npx wrangler secret put TURNSTILE_SECRET_KEY
+```
+
+The Worker secret persists across code redeploys. Leave the setting unset to
+disable the engine check. Your website renders the Turnstile widget with its
+public site key and forwards the token from its server in the `Turnstile-Token`
+header when creating an inquiry. If the engine returns `422 spam_check_failed`,
+refresh the widget and ask the visitor to submit again with a fresh token. A
+retry with the same inquiry body and key can replay a kept receipt without a
+token. Use the Request-Id to find failures in the `inquiry.spam_check` logs.
+
 ## License
 
 IDX Kit is source available under FSL-1.1-ALv2. Anyone may use, copy, change

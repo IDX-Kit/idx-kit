@@ -11,7 +11,10 @@ import { failureFields, logLine } from "../log.ts";
 export default {
   async fetch(
     request: Request,
-    env: InquiryEmailEnv & { HYPERDRIVE: { connectionString: string } },
+    env: InquiryEmailEnv & {
+      HYPERDRIVE: { connectionString: string };
+      TURNSTILE_SECRET_KEY?: unknown;
+    },
     context: { waitUntil(task: Promise<void>): void },
   ) {
     const client = new pg.Client({
@@ -37,8 +40,11 @@ export default {
         metadata.version,
         console.error,
         {
-          settings: inquiryEmailSettings(env),
-          waitUntil: (task) => context.waitUntil(task),
+          email: {
+            settings: inquiryEmailSettings(env),
+            waitUntil: (task) => context.waitUntil(task),
+          },
+          turnstileSecret: env.TURNSTILE_SECRET_KEY,
         },
       );
       response = await app.fetch(request);

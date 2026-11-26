@@ -68,6 +68,9 @@ export async function startEngine(vars: Record<string, string> = {}) {
       ...(vars.IDX_TEST_RESEND_URL
         ? ["--import", "./tests/api/email-fetch.ts"]
         : []),
+      ...(vars.IDX_TEST_TURNSTILE_URL
+        ? ["--import", "./tests/api/turnstile-fetch.ts"]
+        : []),
       "packages/engine/src/runtime/node.ts",
     ],
     {
