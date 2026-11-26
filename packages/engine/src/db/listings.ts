@@ -5,6 +5,7 @@ import {
   addressSchema,
   disclosureIds,
   disclosureSchema,
+  genericPhotoAlt,
   normalize,
   sourceKeySchema,
   timestampSchema,
@@ -401,14 +402,17 @@ export async function applyListingPage(
         authoritativeSnapshot === true ? "snapshot" : "stream",
       );
       if (!selected) continue;
-      if (selected.listing) {
-        const { facts } = selected.listing;
-        const protection = addressProtection(...addresses);
-        facts.images = protection.photos(
-          facts.images,
-          facts.withheldFields.includes("address"),
-        );
-        if (facts.status !== null) facts.status = protection.text(facts.status);
+      const facts = selected.listing?.facts;
+      if (facts?.images && facts.withheldFields.includes("address")) {
+        const checks = addresses.map(addressProtection);
+        facts.images = facts.images.flatMap(({ url }) => {
+          try {
+            for (const { checkReference } of checks) checkReference(url);
+            return [{ url, alt: genericPhotoAlt }];
+          } catch {
+            return [];
+          }
+        });
       }
       rows.push(selected);
     }

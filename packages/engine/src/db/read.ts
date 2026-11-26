@@ -85,11 +85,6 @@ export function repository(
         throw unavailable(cause, "search.connect");
       });
       const db = client ?? pool;
-      let connectionError: Error | undefined;
-      const onError = (error: Error) => {
-        connectionError = error;
-      };
-      client?.on("error", onError);
       let discard = false;
       try {
         await readQuery(
@@ -103,14 +98,13 @@ export function repository(
         return result;
       } catch (error) {
         try {
-          if (!connectionError) await db.query("ROLLBACK", []);
+          await db.query("ROLLBACK", []);
         } catch {
           discard = true;
         }
         throw error;
       } finally {
-        client?.release(connectionError ?? discard);
-        client?.off("error", onError);
+        client?.release(discard);
       }
     },
     async key(hash: string): Promise<SiteKey | undefined> {

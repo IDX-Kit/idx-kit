@@ -25,6 +25,10 @@ const pool = new pg.Pool({
   query_timeout: 2000,
   statement_timeout: 2000,
 });
+pool.on("connect", (client) => {
+  // Keep an error listener across checkout. Queries and the idle pool report failures.
+  client.on("error", () => {});
+});
 pool.on("error", (error) => {
   console.error(
     logLine({ operation: "database.idle", ...failureFields(error) }),

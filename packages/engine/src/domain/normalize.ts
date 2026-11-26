@@ -1,6 +1,6 @@
 import type { Listing, DisplayBlock } from "@idx-kit/client";
 import { z } from "zod";
-import { addressProtection, genericPhotoAlt } from "./withholding.ts";
+import { addressProtection } from "./withholding.ts";
 
 const text = z
   .string()
@@ -21,6 +21,7 @@ const mediaUrl = imageFields.shape.url.refine((value) => {
   return url?.protocol === "https:" && !url.username && !url.password;
 });
 const imageSchema = imageFields.extend({ url: mediaUrl });
+export const genericPhotoAlt = "Property photo";
 const photoInput = imageFields.extend({
   alt: z
     .string()
@@ -28,6 +29,23 @@ const photoInput = imageFields.extend({
     .transform((value) => (value?.trim() ? value : genericPhotoAlt))
     .pipe(boundedText),
 });
+const hiddenPhotoInput = photoInput.extend({
+  alt: z.unknown().optional().transform(() => genericPhotoAlt),
+});
+// RESO StandardStatus lookup values in the lowercase form used by fixtures.
+const standardStatuses = new Set([
+  "active",
+  "active under contract",
+  "canceled",
+  "closed",
+  "coming soon",
+  "delete",
+  "expired",
+  "hold",
+  "incomplete",
+  "pending",
+  "withdrawn",
+]);
 const blockSchema = z.object({
   id: z
     .string()
@@ -109,6 +127,7 @@ export function normalize(record: ListingRecord, feedPage = false) {
   )
     throw new Error("Invalid price");
   if (
+    !feedPage &&
     source.StandardStatus !== null &&
     !boundedText.safeParse(source.StandardStatus).success
   )
@@ -129,7 +148,8 @@ export function normalize(record: ListingRecord, feedPage = false) {
   const protection = addressProtection(
     hideAddress && !feedPage ? address : null,
   );
-  const photos = z.array(photoInput).max(128).nullable().parse(source.Images);
+  const photoSchema = feedPage ? (hideAddress ? hiddenPhotoInput : photoInput) : imageFields;
+  const photos = z.array(photoSchema).max(128).nullable().parse(source.Images);
   const images =
     feedPage && hideAddress
       ? (photos?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null)
@@ -137,15 +157,17 @@ export function normalize(record: ListingRecord, feedPage = false) {
           feedPage ? photos : (photos?.map(protection.image) ?? null),
         );
   if (hideAddress) fields.add("address");
+  let status = source.StandardStatus;
+  if (feedPage) {
+    status = typeof status === "string" ? status.trim().toLowerCase() : null;
+    if (status !== null && !standardStatuses.has(status)) status = null;
+  }
   const facts: Pick<
     Listing,
     "synthetic" | "status" | "price" | "address" | "bedrooms" | "images"
   > & { withheldFields: WithheldField[] } = {
     synthetic: record.synthetic,
-    status:
-      source.StandardStatus === null
-        ? null
-        : protection.text(source.StandardStatus),
+    status,
     price:
       source.ListPrice === null
         ? null
@@ -160,8 +182,8 @@ export function normalize(record: ListingRecord, feedPage = false) {
   }
   return {
     facts,
-    blocks: disclosureSchema.min(1).parse(protection.blocks(record.blocks)),
-    pageBlocks: disclosureSchema.parse(protection.blocks(record.pageBlocks)),
+    blocks: disclosureSchema.min(1).parse(feedPage ? record.blocks : protection.blocks(record.blocks)),
+    pageBlocks: disclosureSchema.parse(feedPage ? record.pageBlocks : protection.blocks(record.pageBlocks)),
     sourceUpdatedAt: record.sourceUpdatedAt,
     ingestedAt: record.ingestedAt,
   };
