@@ -33,7 +33,8 @@ let lostReceipt: { id: string; receivedAt: string } | undefined;
 const faultOrigin = "http://127.0.0.1:4322";
 const stub = createServer(async (req, res) => {
   if (req.method !== "POST") {
-    const upstream = await fetch(`http://127.0.0.1:8787${req.url}`, {
+    const path = req.url === "/" ? "/api" : req.url;
+    const upstream = await fetch(`http://127.0.0.1:8787${path}`, {
       headers: { Authorization: `Bearer ${secret}` },
     });
     res.writeHead(upstream.status, Object.fromEntries(upstream.headers));
@@ -128,6 +129,7 @@ async function headers(response: BrowserResponse | null) {
   expect(values["cache-control"]).toBe("no-store");
   expect(values["referrer-policy"]).toBe("no-referrer");
   expect(JSON.stringify(values)).not.toContain(secret);
+  expect(response!.url() + (await response!.text())).not.toContain(secret);
 }
 async function rows() {
   return (await db.query("SELECT * FROM idx.inquiries ORDER BY received_at"))
