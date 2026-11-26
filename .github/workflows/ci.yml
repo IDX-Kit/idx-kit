@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       client_tag: ${{ steps.client-package.outputs.tag }}
+      client_artifact: ${{ steps.client-release-artifact.outputs.artifact-id }}
     defaults:
       run:
         shell: bash
@@ -178,10 +179,11 @@ jobs:
           IDX_CLIENT_TARBALL: ${{ steps.client-package.outputs.tarball }}
         run: node --test tests/api/client-install.test.ts
       - name: Save the tested tarball and release notes for publication
+        id: client-release-artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.client-package.outputs.tag != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: client-release
+          name: client-release-${{ github.run_attempt }}
           path: ${{ runner.temp }}/client-release/
           if-no-files-found: error
       - name: Build server-rendered demo and install its pinned browser
@@ -286,11 +288,8 @@ jobs:
       contents: write
     concurrency: ${{ needs.check.outputs.client_tag }}
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: client-release
-          path: ${{ runner.temp }}/client-release
-      - name: Publish the client pre-release if missing
+      - name: Check whether the client release already exists
+        id: lookup
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -304,6 +303,19 @@ jobs:
             printf '%s\n' "$lookup" >&2
             exit 1
           fi
+          echo 'missing=true' >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: steps.lookup.outputs.missing == 'true'
+        with:
+          artifact-ids: ${{ needs.check.outputs.client_artifact }}
+          path: ${{ runner.temp }}/client-release
+      - name: Publish the client pre-release
+        if: steps.lookup.outputs.missing == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.client_tag }}
+        run: |
           release_dir="$RUNNER_TEMP/client-release"
           gh release create "$TAG" "$release_dir/idx-kit-client-${TAG#client-v}.tgz" \
             --repo IDX-Kit/idx-kit --target "$GITHUB_SHA" --title "$TAG" \
