@@ -157,6 +157,8 @@ jobs:
           npm run demo:db:migrate
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
           npm run demo:seed
+      - name: Prove incremental feed recovery against a loopback stand-in
+        run: node --test tests/sync/incremental.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/incremental-sync.log"
       - name: Pack client and print release notes
         id: client-package
         run: |

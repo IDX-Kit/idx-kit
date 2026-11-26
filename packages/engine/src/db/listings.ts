@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import type { DisplayBlock, Listing } from "@idx-kit/client";
 import {
@@ -18,6 +17,8 @@ import type {
   NormalizedListing,
   WithheldField,
 } from "../domain/normalize.ts";
+import { saveFeedCheckpoint } from "./feed-sync-positions.ts";
+import type { FeedCheckpoint } from "./feed-sync-positions.ts";
 
 export const listingPageLimit = 200;
 // PostgreSQL stores this sentinel in the existing timestamp column. Source
@@ -84,6 +85,23 @@ export async function lockListingFeeds(client: pg.Client, feedIds: string[]) {
   );
 }
 
+export async function listingFeedTransaction<T>(
+  client: pg.Client,
+  feedId: string,
+  write: () => Promise<T>,
+) {
+  await client.query("BEGIN");
+  try {
+    await lockListingFeeds(client, [feedId]);
+    const result = await write();
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function updateListingFreshness(
   client: pg.Client,
   feedIds: string[],
@@ -146,7 +164,7 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
   );
 }
 
-function revisionKey(value: string | null) {
+export function revisionKey(value: string | null) {
   if (value === null) return null;
   const [time, fraction = ""] = value.slice(0, -1).split(".");
   const seconds = time.length === 16 ? time + ":00" : time;
@@ -311,7 +329,10 @@ export async function applyListingPage(
   feedId: string,
   changes: readonly ListingChange[],
   disclosures: ListingPageDisclosures,
-  { authoritativeSnapshot = false }: { authoritativeSnapshot?: boolean } = {},
+  {
+    authoritativeSnapshot = false,
+    checkpoint,
+  }: { authoritativeSnapshot?: boolean; checkpoint?: FeedCheckpoint } = {},
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
@@ -333,9 +354,8 @@ export async function applyListingPage(
     [];
   const indexed = Array.from(changes, (change, index) => ({ change, index }));
   const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
-  await client.query("BEGIN");
-  try {
-    await lockListingFeeds(client, [feedId]);
+  return listingFeedTransaction(client, feedId, async () => {
+    if (checkpoint) await saveFeedCheckpoint(client, feedId, checkpoint);
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
@@ -387,7 +407,7 @@ export async function applyListingPage(
           revision: revision.success
             ? revisionKey(revision.data)
             : orderUnknown,
-          candidate: `lst_${randomUUID()}`,
+          candidate: `lst_${crypto.randomUUID()}`,
           listing,
         };
       });
@@ -413,7 +433,9 @@ export async function applyListingPage(
     }
     await writePage(client, feedId, rows);
     await updateListingFreshness(client, [feedId], feedBlocks);
-    await client.query("COMMIT");
+    if (checkpoint?.position.nextLink === null) {
+      await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
+    }
     const applied = new Set(rows.map((row) => row.index));
     return {
       rejected: rejected
@@ -423,8 +445,5 @@ export async function applyListingPage(
           hidden: applied.has(record.index),
         })),
     };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
+  });
 }

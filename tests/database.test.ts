@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      6,
+      7,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -91,7 +91,11 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       );
       await db.query(
         "DELETE FROM public.schema_migrations WHERE name = ANY($1)",
-        [["004_feed_freshness.sql", "006_listing_revisions.sql"]],
+        [[
+          "004_feed_freshness.sql",
+          "006_listing_revisions.sql",
+          "007_feed_sync_positions.sql",
+        ]],
       );
       await db.query("UPDATE idx.listings SET ingested_at = $1 WHERE id = $2", [
         older,
@@ -100,7 +104,11 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       const listings = (await snapshot()).filter(
         (row) => row.entire_listing_display,
       );
+      await db.query("DROP TABLE idx.feed_sync_positions");
+      await db.query("DROP FUNCTION idx.renew_feed_freshness(text)");
       await migrate(db);
+      const positions = await db.query("SELECT * FROM idx.feed_sync_positions");
+      assert.deepEqual(positions.rows, []);
       const feeds = await db.query(
         "SELECT id, oldest_listing_ingested_at FROM idx.feeds ORDER BY id",
       );
@@ -145,6 +153,12 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "UPDATE idx.source_mappings SET source_revision=now()",
         "UPDATE idx.feeds SET oldest_listing_ingested_at=now()",
         "UPDATE idx.feeds SET display_blocks='[]'",
+        "UPDATE idx.feeds SET refreshed_at=now()",
+        "SELECT * FROM idx.feed_sync_positions",
+        "INSERT INTO idx.feed_sync_positions (feed_id, version) VALUES ('feed_demo_primary', 1)",
+        "UPDATE idx.feed_sync_positions SET version=2",
+        "DELETE FROM idx.feed_sync_positions",
+        "SELECT idx.renew_feed_freshness('feed_demo_primary')",
         "INSERT INTO idx.sites VALUES ('forbidden')",
         "UPDATE idx.inquiries SET message='forbidden'",
         "DELETE FROM idx.inquiries",
