@@ -21,7 +21,9 @@ jobs:
         shell: bash
         run: |
           awk '/^```bash ci$/{copy=1; next} /^```$/{copy=0} copy' docs/demo-setup.md |
-            bash -euo pipefail
+            bash -euo pipefail |
+            tee "$RUNNER_TEMP/clean-demo.log"
+          grep -Eq '^Checked [0-9]+ captured logs for credentials\.$' "$RUNNER_TEMP/clean-demo.log"
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
