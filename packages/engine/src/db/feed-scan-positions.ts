@@ -39,8 +39,14 @@ export async function saveScanCheckpoint(
   feedId: string,
   checkpoint: ScanCheckpoint,
 ) {
-  const { version, scanNumber, active, nextLink, recordsSeen, unreadableRecords } =
-    checkpoint;
+  const {
+    version,
+    scanNumber,
+    active,
+    nextLink,
+    recordsSeen,
+    unreadableRecords,
+  } = checkpoint;
   const sql =
     version === 0n
       ? `INSERT INTO idx.feed_scan_positions
