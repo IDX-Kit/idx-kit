@@ -9,7 +9,6 @@ import { execute, keyCommand, startEngine } from "../api/runtime.ts";
 import { registerSecret } from "../logs.ts";
 import { startSite } from "./runtime.ts";
 
-const origin = "http://127.0.0.1:4321";
 const property = "/properties/lst_demo_0001";
 // Invented visitor values and fault details, with no real person or property.
 const visitor = {
