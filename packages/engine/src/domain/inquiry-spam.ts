@@ -25,27 +25,27 @@ export async function checkInquirySpam(
   log: (line: string) => void,
 ) {
   if (setting === undefined) return;
-  let upstreamStatus: number | null = null;
+  let response: Response | undefined;
   let turnstileErrorCodes: string[] = [];
-  function fail(errorType: string, rejected = false): never {
+  function fail(errorType: string, status: 422 | 503 = 503): never {
     log(
       logLine({
         operation: "inquiry.spam_check",
         outcome: "failure",
         requestId,
         errorType,
-        upstreamStatus,
+        upstreamStatus: response?.status ?? null,
         turnstileErrorCodes,
       }),
     );
-    throw rejected
+    throw status === 422
       ? new HttpProblem(
-          422,
+          status,
           "spam_check_failed",
           "Complete the spam check and try again.",
         )
       : new HttpProblem(
-          503,
+          status,
           "service_unavailable",
           "Retry the same action when the service is available.",
         );
@@ -53,12 +53,11 @@ export async function checkInquirySpam(
 
   if (typeof setting !== "string" || !setting.trim())
     fail("ConfigurationError");
-  if (!token) fail("MissingToken", true);
-  if (token.length > 2048) fail("InvalidToken", true);
+  if (!token) fail("MissingToken", 422);
+  if (token.length > 2048) fail("InvalidToken", 422);
 
   const signal = AbortSignal.timeout(3000);
   let body: unknown;
-  let response: Response;
   try {
     response = await fetch(
       "https://challenges.cloudflare.com/turnstile/v0/siteverify",
@@ -73,11 +72,10 @@ export async function checkInquirySpam(
         signal,
       },
     );
-    upstreamStatus = response.status;
     body = await response.json();
   } catch {
     if (signal.aborted) fail("TimeoutError");
-    fail(upstreamStatus === null ? "NetworkError" : "TurnstileServiceError");
+    return fail(response ? "TurnstileServiceError" : "NetworkError");
   }
 
   const result = siteverifyResult.safeParse(body);
@@ -92,5 +90,5 @@ export async function checkInquirySpam(
     fail("ConfigurationError");
   if (!response.ok || turnstileErrorCodes.includes("internal-error"))
     fail("TurnstileServiceError");
-  if (!result.data.success) fail("RejectedToken", true);
+  if (!result.data.success) fail("RejectedToken", 422);
 }
