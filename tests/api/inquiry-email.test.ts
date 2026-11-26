@@ -8,7 +8,11 @@ import pg from "pg";
 import type { InquiryInput } from "@idx-kit/client";
 import { registerSecret } from "../logs.ts";
 import { validateResponse } from "./contract.ts";
-import { emailSettings, startEmailStub, waitForEmailLog } from "./email-stub.ts";
+import {
+  emailSettings,
+  startEmailStub,
+  waitForEmailLog,
+} from "./email-stub.ts";
 import { execute, keyCommand, startEngine } from "./runtime.ts";
 
 const path = "/api/v1/inquiries";
@@ -118,142 +122,179 @@ test("inquiry email through Resend", { timeout: 60_000 }, async (t) => {
   }
 
   const key = `"${randomUUID()}"`;
-  await t.test("the receipt and row are available while Resend holds its response", async () => {
-    const gate = Promise.withResolvers<void>();
-    stub.hold(gate.promise);
-    let created;
-    try {
-      created = await create(key, input, 201, AbortSignal.timeout(2000));
-      await readKept(created);
-      await stub.waitForSends(1);
-      assert.ok(!engine.logs().includes('"inquiry.email"'));
-    } finally {
-      gate.resolve();
-    }
-    await expectEmail(created);
-    assert.equal(stub.sent.length, 1);
-    const [send] = stub.sent;
-    const { id, receivedAt } = created.receipt.data;
-    const address = "101 Imaginary Lantern Lane, Example Springs, NC, 00000, US";
-    assert.equal(send.method, "POST");
-    assert.equal(send.path, "/emails");
-    assert.ok(send.headers.authorization === `Bearer ${emailSettings.RESEND_API_KEY}`);
-    assert.equal(send.headers["idempotency-key"], id);
-    assert.deepEqual(send.body, {
-      from: emailSettings.INQUIRY_EMAIL_FROM,
-      to: emailSettings.INQUIRY_EMAIL_TO,
-      reply_to: input.visitor.email,
-      subject: `New inquiry for ${address}`,
-      text: [
-        `Name: ${input.visitor.name}`,
-        `Email: ${input.visitor.email}`,
-        `Listing ID: ${input.listingId}`,
-        `Listing address: ${address}`,
-        `Page path: ${input.context.pagePath}`,
-        `Landing page path: ${input.context.landingPagePath}`,
-        `Received at: ${receivedAt}`,
-        `Inquiry ID: ${id}`,
-        "",
-        "Message:",
-        input.message,
-      ].join("\n"),
-    });
-    assert.deepEqual((await create(key)).receipt, created.receipt);
-    await create(key, { ...input, message: "Changed synthetic message" }, 422);
-    await create(undefined, { ...input, listingId: "lst_missing_synthetic" }, 404);
-    await db.query("REVOKE INSERT ON idx.inquiries FROM idx_runtime");
-    try {
-      await create(undefined, input, 503);
-    } finally {
-      await db.query("GRANT INSERT ON idx.inquiries TO idx_runtime");
-    }
-    assert.equal(stub.sent.length, 1);
-  });
-
-  await t.test("concurrent duplicates send once and withhold a restricted address", async () => {
-    const listingId = "lst_demo_0002";
-    const body = { ...input, listingId, context: { pagePath: `/properties/${listingId}` } };
-    const duplicate = `"${randomUUID()}"`;
-    await db.query("BEGIN");
-    await db.query("LOCK TABLE idx.inquiries IN SHARE MODE");
-    const pending = Promise.all(
-      Array.from({ length: 4 }, () => create(duplicate, body)),
-    );
-    void pending.catch(() => {});
-    try {
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const { rowCount } = await db.query(
-          "SELECT 1 FROM pg_locks WHERE relation='idx.inquiries'::regclass AND NOT granted",
-        );
-        if (rowCount === 4) break;
-        assert.ok(attempt < 99, "All four inserts must reach the table lock");
-        await setTimeout(10);
+  await t.test(
+    "the receipt and row are available while Resend holds its response",
+    async () => {
+      const gate = Promise.withResolvers<void>();
+      stub.hold(gate.promise);
+      let created;
+      try {
+        created = await create(key, input, 201, AbortSignal.timeout(2000));
+        await readKept(created);
+        await stub.waitForSends(1);
+        assert.ok(!engine.logs().includes('"inquiry.email"'));
+      } finally {
+        gate.resolve();
+      }
+      await expectEmail(created);
+      assert.equal(stub.sent.length, 1);
+      const [send] = stub.sent;
+      const { id, receivedAt } = created.receipt.data;
+      const address =
+        "101 Imaginary Lantern Lane, Example Springs, NC, 00000, US";
+      assert.equal(send.method, "POST");
+      assert.equal(send.path, "/emails");
+      assert.ok(
+        send.headers.authorization === `Bearer ${emailSettings.RESEND_API_KEY}`,
+      );
+      assert.equal(send.headers["idempotency-key"], id);
+      assert.deepEqual(send.body, {
+        from: emailSettings.INQUIRY_EMAIL_FROM,
+        to: emailSettings.INQUIRY_EMAIL_TO,
+        reply_to: input.visitor.email,
+        subject: `New inquiry for ${address}`,
+        text: [
+          `Name: ${input.visitor.name}`,
+          `Email: ${input.visitor.email}`,
+          `Listing ID: ${input.listingId}`,
+          `Listing address: ${address}`,
+          `Page path: ${input.context.pagePath}`,
+          `Landing page path: ${input.context.landingPagePath}`,
+          `Received at: ${receivedAt}`,
+          `Inquiry ID: ${id}`,
+          "",
+          "Message:",
+          input.message,
+        ].join("\n"),
+      });
+      assert.deepEqual((await create(key)).receipt, created.receipt);
+      await create(
+        key,
+        { ...input, message: "Changed synthetic message" },
+        422,
+      );
+      await create(
+        undefined,
+        { ...input, listingId: "lst_missing_synthetic" },
+        404,
+      );
+      await db.query("REVOKE INSERT ON idx.inquiries FROM idx_runtime");
+      try {
+        await create(undefined, input, 503);
+      } finally {
+        await db.query("GRANT INSERT ON idx.inquiries TO idx_runtime");
       }
       assert.equal(stub.sent.length, 1);
-    } finally {
-      await db.query("ROLLBACK");
-    }
-    const results = await pending;
-    for (const result of results) assert.deepEqual(result.receipt, results[0].receipt);
-    const { rowCount } = await db.query(
-      "SELECT 1 FROM idx.inquiries WHERE site_id='site_demo_primary' AND idempotency_key=$1",
-      [duplicate],
-    );
-    assert.equal(rowCount, 1);
-    await stub.waitForSends(2);
-    const send = stub.sent[1];
-    assert.equal(send.headers["idempotency-key"], results[0].receipt.data.id);
-    assert.equal(send.body.subject, `New inquiry for ${listingId}`);
-    assert.match(String(send.body.text), /Listing address: Unavailable/);
-    assert.doesNotMatch(String(send.body.text), /Hidden Stardust|Landing page path/);
-  });
+    },
+  );
 
-  await t.test("upstream 500, timeout and refused connection leave readable receipts", async () => {
-    stub.status(500);
-    const rejected = await create();
-    await expectEmail(rejected, "EmailServiceError", 500);
-    await readKept(rejected);
-    const gate = Promise.withResolvers<void>();
-    stub.hold(gate.promise);
-    try {
-      const timedOut = await create();
-      await expectEmail(timedOut, "TimeoutError");
-      await readKept(timedOut);
-    } finally {
-      gate.resolve();
-    }
-    assert.equal(stub.sent.length, 4);
-    await engine.stop();
-    logs.push(engine.logs());
-    const closedStub = await startEmailStub();
-    await closedStub.close();
-    engine = await startEngine({ ...enabled, RESEND_BASE_URL: closedStub.baseUrl });
-    const refused = await create();
-    await expectEmail(refused, "NetworkError");
-    await readKept(refused);
-  });
+  await t.test(
+    "concurrent duplicates send once and withhold a restricted address",
+    async () => {
+      const listingId = "lst_demo_0002";
+      const body = {
+        ...input,
+        listingId,
+        context: { pagePath: `/properties/${listingId}` },
+      };
+      const duplicate = `"${randomUUID()}"`;
+      await db.query("BEGIN");
+      await db.query("LOCK TABLE idx.inquiries IN SHARE MODE");
+      const pending = Promise.all(
+        Array.from({ length: 4 }, () => create(duplicate, body)),
+      );
+      void pending.catch(() => {});
+      try {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const { rowCount } = await db.query(
+            "SELECT 1 FROM pg_locks WHERE relation='idx.inquiries'::regclass AND NOT granted",
+          );
+          if (rowCount === 4) break;
+          assert.ok(attempt < 99, "All four inserts must reach the table lock");
+          await setTimeout(10);
+        }
+        assert.equal(stub.sent.length, 1);
+      } finally {
+        await db.query("ROLLBACK");
+      }
+      const results = await pending;
+      for (const result of results)
+        assert.deepEqual(result.receipt, results[0].receipt);
+      const { rowCount } = await db.query(
+        "SELECT 1 FROM idx.inquiries WHERE site_id='site_demo_primary' AND idempotency_key=$1",
+        [duplicate],
+      );
+      assert.equal(rowCount, 1);
+      await stub.waitForSends(2);
+      const send = stub.sent[1];
+      assert.equal(send.headers["idempotency-key"], results[0].receipt.data.id);
+      assert.equal(send.body.subject, `New inquiry for ${listingId}`);
+      assert.match(String(send.body.text), /Listing address: Unavailable/);
+      assert.doesNotMatch(
+        String(send.body.text),
+        /Hidden Stardust|Landing page path/,
+      );
+    },
+  );
 
-  await t.test("no email settings stay quiet and partial settings stop Node at startup", async () => {
-    await engine.stop();
-    logs.push(engine.logs());
-    engine = await startEngine({ RESEND_BASE_URL: stub.baseUrl });
-    await readKept(await create());
-    assert.ok(!engine.logs().includes('"inquiry.email"'));
-    assert.equal(stub.sent.length, 4);
-    await assert.rejects(
-      execute(process.execPath, ["packages/engine/src/runtime/node.ts"], {
-        env: { ...process.env, RESEND_API_KEY: enabled.RESEND_API_KEY },
-        timeout: 5000,
-      }),
-      (error: { code: number; stderr: string }) => {
-        assert.equal(error.code, 1);
-        assert.match(error.stderr, /Set all three inquiry email settings together/);
-        logs.push(error.stderr);
-        return true;
-      },
-    );
-    for (const value of privateValues) {
-      assert.ok(![...logs, engine.logs()].some((log) => log.includes(value)));
-    }
-  });
+  await t.test(
+    "upstream 500, timeout and refused connection leave readable receipts",
+    async () => {
+      stub.status(500);
+      const rejected = await create();
+      await expectEmail(rejected, "EmailServiceError", 500);
+      await readKept(rejected);
+      const gate = Promise.withResolvers<void>();
+      stub.hold(gate.promise);
+      try {
+        const timedOut = await create();
+        await expectEmail(timedOut, "TimeoutError");
+        await readKept(timedOut);
+      } finally {
+        gate.resolve();
+      }
+      assert.equal(stub.sent.length, 4);
+      await engine.stop();
+      logs.push(engine.logs());
+      const closedStub = await startEmailStub();
+      await closedStub.close();
+      engine = await startEngine({
+        ...enabled,
+        RESEND_BASE_URL: closedStub.baseUrl,
+      });
+      const refused = await create();
+      await expectEmail(refused, "NetworkError");
+      await readKept(refused);
+    },
+  );
+
+  await t.test(
+    "no email settings stay quiet and partial settings stop Node at startup",
+    async () => {
+      await engine.stop();
+      logs.push(engine.logs());
+      engine = await startEngine({ RESEND_BASE_URL: stub.baseUrl });
+      await readKept(await create());
+      assert.ok(!engine.logs().includes('"inquiry.email"'));
+      assert.equal(stub.sent.length, 4);
+      await assert.rejects(
+        execute(process.execPath, ["packages/engine/src/runtime/node.ts"], {
+          env: { ...process.env, RESEND_API_KEY: enabled.RESEND_API_KEY },
+          timeout: 5000,
+        }),
+        (error: { code: number; stderr: string }) => {
+          assert.equal(error.code, 1);
+          assert.match(
+            error.stderr,
+            /Set all three inquiry email settings together/,
+          );
+          logs.push(error.stderr);
+          return true;
+        },
+      );
+      for (const value of privateValues) {
+        assert.ok(![...logs, engine.logs()].some((log) => log.includes(value)));
+      }
+    },
+  );
 });

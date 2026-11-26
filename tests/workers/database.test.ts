@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import pg from "pg";
 import { keyCommand, preserveKeys, startEngine } from "../api/runtime.ts";
 import { validateResponse } from "../api/contract.ts";
-import { emailSettings, startEmailStub, waitForEmailLog } from "../api/email-stub.ts";
+import {
+  emailSettings,
+  startEmailStub,
+  waitForEmailLog,
+} from "../api/email-stub.ts";
 import { registerSecret } from "../logs.ts";
 
 test("Hyperdrive uses idx_runtime and logs the correlated database denial", async () => {
@@ -32,7 +36,10 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       "site_demo_primary",
       "listings:read,inquiries:write,inquiries:read",
     );
-    engine = await startEngine({ ...emailSettings, RESEND_BASE_URL: stub.baseUrl });
+    engine = await startEngine({
+      ...emailSettings,
+      RESEND_BASE_URL: stub.baseUrl,
+    });
     const request = () =>
       fetch("http://127.0.0.1:8787/api/v1/listings/lst_demo_0001", {
         headers: { Authorization: `Bearer ${secret}` },
@@ -123,10 +130,9 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
       errorType: "ConfigurationError",
       upstreamStatus: null,
     });
-    const kept = await db.query(
-      "SELECT 1 FROM idx.inquiries WHERE id=$1",
-      [partial.receipt.data.id],
-    );
+    const kept = await db.query("SELECT 1 FROM idx.inquiries WHERE id=$1", [
+      partial.receipt.data.id,
+    ]);
     assert.equal(kept.rowCount, 1);
     assert.equal(stub.sent.length, 1);
     for (const value of [...privateValues, ...Object.values(emailSettings)])

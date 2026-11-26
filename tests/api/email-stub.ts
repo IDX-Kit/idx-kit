@@ -41,7 +41,10 @@ export async function startEmailStub() {
               statusCode: status,
               name: "application_error",
               // Deliberately echo private fields to exercise log redaction.
-              message: JSON.stringify({ body, key: request.headers.authorization }),
+              message: JSON.stringify({
+                body,
+                key: request.headers.authorization,
+              }),
             },
       ),
     );
@@ -80,9 +83,12 @@ export async function waitForEmailLog(
 ) {
   assert.ok(requestId);
   for (let attempt = 0; attempt < 100; attempt++) {
-    const line = engine.logs().split("\n").find(
-      (line) => line.includes('"inquiry.email"') && line.includes(requestId),
-    );
+    const line = engine
+      .logs()
+      .split("\n")
+      .find(
+        (line) => line.includes('"inquiry.email"') && line.includes(requestId),
+      );
     if (line) return JSON.parse(line);
     await setTimeout(50);
   }
