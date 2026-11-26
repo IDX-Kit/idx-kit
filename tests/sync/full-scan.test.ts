@@ -209,7 +209,10 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const { stored, actual } = await state.oldestIngest();
       assert.ok(actual && actual !== oldest.stored);
       assert.equal(stored, actual);
-      assert.equal(display.freshness.ingestedAt, new Date(actual).toISOString());
+      assert.equal(
+        display.freshness.ingestedAt,
+        new Date(actual).toISOString(),
+      );
       assert.deepEqual(
         data.map(({ id }: { id: string }) => id),
         [unchanged.id, edited.id],

@@ -159,17 +159,24 @@ test(
     const lookups: { sql: string; values: unknown[] }[] = [];
     const recomputes: { statement: number; ms: number }[] = [];
     const query = writer.query.bind(writer);
-    t.mock.method(writer, "query", async (sql: string, values: unknown[] = []) => {
-      statements += 1;
-      if (sql.includes("SELECT m.source_key, l.address,"))
-        lookups.push({ sql, values });
-      if (!sql.includes("SET oldest_listing_ingested_at"))
-        return query(sql, values);
-      const started = performance.now();
-      const result = await query(sql, values);
-      recomputes.push({ statement: statements, ms: performance.now() - started });
-      return result;
-    });
+    t.mock.method(
+      writer,
+      "query",
+      async (sql: string, values: unknown[] = []) => {
+        statements += 1;
+        if (sql.includes("SELECT m.source_key, l.address,"))
+          lookups.push({ sql, values });
+        if (!sql.includes("SET oldest_listing_ingested_at"))
+          return query(sql, values);
+        const started = performance.now();
+        const result = await query(sql, values);
+        recomputes.push({
+          statement: statements,
+          ms: performance.now() - started,
+        });
+        return result;
+      },
+    );
 
     const offsets: number[] = [];
     let arrive!: () => void;
