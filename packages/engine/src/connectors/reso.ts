@@ -68,7 +68,7 @@ function retryAfterSeconds(response: Response) {
   }
 }
 
-function safeAddress(url: URL) {
+export function isResoAddress(url: URL) {
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   // Reject encoded path separators and nested escapes before comparing paths.
   return (
@@ -87,7 +87,7 @@ function continuation(base: URL, link: string, from: URL) {
     : `${base.pathname}/`;
   if (
     target &&
-    safeAddress(target) &&
+    isResoAddress(target) &&
     target.origin === base.origin &&
     (target.pathname === base.pathname || target.pathname.startsWith(prefix))
   ) {
@@ -111,7 +111,7 @@ export class ResoConnector {
     completedMark: string | null,
     nextLink: string | null,
   ): Promise<PageResult> {
-    if (!this.base || !safeAddress(this.base)) return { code: "invalid_link" };
+    if (!this.base || !isResoAddress(this.base)) return { code: "invalid_link" };
     const url =
       nextLink === null
         ? new URL(this.base)

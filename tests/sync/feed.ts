@@ -11,12 +11,13 @@ interface Page {
 
 type Reply =
   | Page
-  | { status: number; location?: string; retryAfter?: string }
+  | { status: number; location?: string; retryAfter?: string; body?: string }
   | "disconnect"
   | "invalid_json"
   | "stall";
 
 export const propertyPath = "/feed/Property";
+export const feedToken = "synthetic-feed-token";
 
 export async function connectWriter(t: TestContext) {
   assert.ok(process.env.LISTING_WRITER_DATABASE_URL);
@@ -65,14 +66,13 @@ export async function standIn(
   respond: (url: URL, requestNumber: number) => Reply | Promise<Reply>,
   timeoutMs?: number,
 ) {
-  const token = "synthetic-feed-token";
   const calls: { path: string; query: string; authorized: boolean }[] = [];
   const server = await listenOnLoopback((request, response) => {
     const url = new URL(request.url!, "http://127.0.0.1");
     calls.push({
       path: url.pathname,
       query: url.search,
-      authorized: request.headers.authorization === `Bearer ${token}`,
+      authorized: request.headers.authorization === `Bearer ${feedToken}`,
     });
     async function reply() {
       const result = await respond(url, calls.length);
@@ -94,7 +94,7 @@ export async function standIn(
         if (result.retryAfter !== undefined)
           response.setHeader("Retry-After", result.retryAfter);
         response.writeHead(result.status);
-        response.end("synthetic response detail");
+        response.end(result.body ?? "synthetic response detail");
         return;
       }
       response.setHeader("Content-Type", "application/json");
@@ -103,12 +103,10 @@ export async function standIn(
     void reply().catch(() => response.destroy());
   });
   t.after(() => server.close());
+  const propertyUrl = `${server.baseUrl}${propertyPath}`;
   return {
-    connector: new ResoConnector(
-      `${server.baseUrl}${propertyPath}`,
-      token,
-      timeoutMs,
-    ),
+    connector: new ResoConnector(propertyUrl, feedToken, timeoutMs),
+    propertyUrl,
     calls,
   };
 }

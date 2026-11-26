@@ -166,6 +166,16 @@ jobs:
         run: node --test tests/sync/incremental.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/incremental-sync.log"
       - name: Prove full feed repair against a loopback stand-in
         run: node --test tests/sync/full-scan.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/full-scan.log"
+      - name: Prove the feed operator commands on a fresh database
+        run: |
+          psql 'postgresql://postgres@127.0.0.1:55432/postgres' -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE idx_sync_commands OWNER idx_migration'
+          export DATABASE_URL="${DATABASE_URL%/*}/idx_sync_commands"
+          export RUNTIME_DATABASE_URL="${RUNTIME_DATABASE_URL%/*}/idx_sync_commands"
+          export LISTING_WRITER_DATABASE_URL="${LISTING_WRITER_DATABASE_URL%/*}/idx_sync_commands"
+          npm run demo:db:migrate
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
+          node --test tests/sync/commands.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/sync-commands.log"
       - name: Pack client and print release notes
         id: client-package
         run: |
