@@ -386,7 +386,8 @@ test(
     const disclosures = fixtureDisclosures(fixtures, fixtureFeed.id);
     const heavySource = {
       ...fixtures.listings[0].source,
-      PublicRemarks: "Invented property remarks for the page cost measurement. ".repeat(80),
+      PublicRemarks:
+        "Invented property remarks for the page cost measurement. ".repeat(80),
       Images: Array.from({ length: 40 }, (_, index) => ({
         alt: `Invented property photo ${index + 1}`,
         url: `https://images.example.test/property/${index + 1}.jpg`,

@@ -228,7 +228,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
             const end = Math.min(start + batch, records.length);
             const final = end === records.length;
             const before = statements();
-            const generator = t.mock.method(crypto, "randomUUID", () => ids[id++]);
+            const generator = t.mock.method(
+              crypto,
+              "randomUUID",
+              () => ids[id++],
+            );
             let result;
             try {
               result = await state.run(feed, writer, limit);
