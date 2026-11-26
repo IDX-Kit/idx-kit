@@ -6,6 +6,11 @@ interface Props {
 }
 const { form, path } = Astro.props;
 const labels = { name: "Name", email: "Email", message: "Message" };
+const wait = form.retryAfter
+  ? /^\d+$/.test(form.retryAfter)
+    ? `Retry after ${form.retryAfter} seconds.`
+    : `Retry after ${form.retryAfter}.`
+  : null;
 ---
 
 <section aria-labelledby="inquiry-heading">
@@ -17,7 +22,7 @@ const labels = { name: "Name", email: "Email", message: "Message" };
       <a href="/search">Back to search</a>
     </p>
   )}
-  {form.retryAfter && <p data-retry-after>Retry-After: {form.retryAfter}</p>}
+  {form.retryAfter && <p data-retry-after>{wait}</p>}
   <form method="post" action={path}>
     <input type="hidden" name="idempotencyKey" value={form.key} />
     <div hidden aria-hidden="true">

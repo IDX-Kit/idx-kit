@@ -361,7 +361,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
         ).toHaveAttribute("href", "/search");
       if (failure === 409 || failure === 429)
         await expect(page.locator("[data-retry-after]")).toHaveText(
-          "Retry-After: 17",
+          "Retry after 17 seconds.",
         );
       expect(posts).toBe(1);
       expect(await rows()).toHaveLength(0);
