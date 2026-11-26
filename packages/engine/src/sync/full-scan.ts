@@ -82,11 +82,7 @@ export async function syncFullScan(
       async ({ records, nextLink }) => {
         counts.pagesRead += 1;
         counts.recordsSeen += records.length;
-        const { rows } = await client.query<{ ingestedAt: string }>(
-          `SELECT to_char(statement_timestamp() AT TIME ZONE 'UTC',
-            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "ingestedAt"`,
-        );
-        const changes = mapChanges(records, rows[0].ingestedAt);
+        const changes = mapChanges(records);
         const next = { ...checkpoint, active: nextLink !== null, nextLink };
         const { scanCheckpoint: saved, removal } = await applyListingPage(
           client,

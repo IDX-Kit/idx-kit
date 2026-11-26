@@ -45,15 +45,29 @@ function assertStatements(
   assert.equal(offsets[0], setup, "statements before the first fetch");
   const bounds = [...offsets, total - completion];
   for (let index = 0; index < pageCount; index++) {
-    const expected = finalPage && index === pageCount - 1 ? 9 : 8;
+    const expected = finalPage && index === pageCount - 1 ? 9 : 7;
     assert.equal(
       bounds[index + 1] - bounds[index],
       expected,
       `SQL statements on page ${index + 1} of this invocation`,
     );
   }
-  const pageStatements = pageCount * 8 + Number(finalPage);
+  const pageStatements = pageCount * 7 + (finalPage ? 2 : 0);
   assert.equal(total, setup + pageStatements + completion);
+}
+
+function finalRecompute(
+  recomputes: { statement: number; ms: number }[],
+  pageStart: number,
+  pageEnd: number,
+) {
+  assert.equal(recomputes.length, 1, "freshness recomputes per completed run");
+  const [{ statement, ms }] = recomputes;
+  assert.ok(
+    statement > pageStart && statement <= pageEnd,
+    "recompute on final page",
+  );
+  return ms;
 }
 
 test(
@@ -142,13 +156,19 @@ test(
     }
 
     let statements = 0;
-    let freshnessQuery: { sql: string; values: unknown[] } | undefined;
+    const lookups: { sql: string; values: unknown[] }[] = [];
+    const recomputes: { statement: number; ms: number }[] = [];
     const query = writer.query.bind(writer);
-    t.mock.method(writer, "query", (sql: string, values: unknown[] = []) => {
+    t.mock.method(writer, "query", async (sql: string, values: unknown[] = []) => {
       statements += 1;
-      if (sql.includes("SET oldest_listing_ingested_at"))
-        freshnessQuery = { sql, values };
-      return query(sql, values);
+      if (sql.includes("SELECT m.source_key, l.address,"))
+        lookups.push({ sql, values });
+      if (!sql.includes("SET oldest_listing_ingested_at"))
+        return query(sql, values);
+      const started = performance.now();
+      const result = await query(sql, values);
+      recomputes.push({ statement: statements, ms: performance.now() - started });
+      return result;
     });
 
     const offsets: number[] = [];
@@ -208,6 +228,7 @@ test(
       nextStep: { kind: "retry" },
     });
     await assertExpired(unfinished);
+    assert.equal(recomputes.length, 0, "freshness recomputes before resuming");
     assertStatements(offsets.splice(0), statements, midpoint, 1, 1, false);
     const firstStatements = statements;
     const saved = await readFeedCheckpoint(db, feedId);
@@ -228,6 +249,11 @@ test(
     assert.deepEqual(resumed, { code: "complete" });
     const loadBytes = await databaseSize();
     assert.equal(feed.calls[midpoint + 1].query, cursor(midpoint));
+    const loadRecomputeMs = finalRecompute(
+      recomputes.splice(0),
+      offsets.at(-1)!,
+      statements - 1,
+    );
     assertStatements(
       offsets.splice(0),
       statements,
@@ -237,7 +263,7 @@ test(
       true,
     );
     const loadStatements = firstStatements + statements;
-    assert.equal(loadStatements, pages * 8 + 5);
+    assert.equal(loadStatements, pages * 7 + 6);
     assert.deepEqual(await readFeedCheckpoint(db, feedId), {
       version: BigInt(pages),
       position: {
@@ -271,9 +297,14 @@ test(
     });
     const scanMs = performance.now() - started;
     const scanBytes = await databaseSize();
+    const scanRecomputeMs = finalRecompute(
+      recomputes,
+      offsets.at(-1)!,
+      statements,
+    );
     t.diagnostic(
-      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes. ` +
-        `Full scan: ${(scanMs / 1000).toFixed(2)}s, ${scan.pagesRead} pages, ${statements} SQL statements, ${scanBytes} database bytes.`,
+      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadRecomputeMs.toFixed(2)} ms to recompute freshness. ` +
+        `Full scan: ${(scanMs / 1000).toFixed(2)}s, ${scan.pagesRead} pages, ${statements} SQL statements, ${scanBytes} database bytes, ${scanRecomputeMs.toFixed(2)} ms to recompute freshness.`,
     );
     assert.ok(loadMs + scanMs <= 900_000, "first load and scan exceeded 900s");
     assert.deepEqual(scan, {
@@ -327,21 +358,17 @@ test(
     await assertExpired(await fetchApi(search));
     assert.equal((await detail(loaded.at(-1)!.id, 503)).code, "feed_expired");
 
-    // Recheck the actual per-page freshness statement on the loaded feed.
-    // Roll back the diagnostic update and keep it out of the runner totals.
-    if (freshnessQuery) {
-      const { sql, values } = freshnessQuery;
-      await db.query("BEGIN");
-      try {
-        const plan = await explainQuery(db, sql, values);
-        const { rows } = summarizeSearch([plan]);
-        assert.ok(
-          rows <= 32 * pageSize,
-          `Per-page freshness update examined ${rows} listing and mapping rows for one feed row (${plan.ms.toFixed(2)} ms)`,
-        );
-      } finally {
-        await db.query("ROLLBACK");
-      }
+    // Check each page's existing-listing lookup against the loaded database.
+    // Final freshness and absence reconciliation intentionally visit the feed.
+    await db.query("ANALYZE idx.listings, idx.source_mappings");
+    assert.equal(lookups.length, pages * 2);
+    for (const [index, { sql, values }] of lookups.entries()) {
+      const plan = await explainQuery(db, sql, values);
+      const { rows } = summarizeSearch([plan]);
+      assert.ok(
+        rows <= 32 * pageSize,
+        `Lookup ${index + 1} examined ${rows} listing and mapping rows`,
+      );
     }
   },
 );

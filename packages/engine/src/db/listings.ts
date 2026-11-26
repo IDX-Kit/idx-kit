@@ -36,7 +36,8 @@ export type ListingChange = {
   | { kind: "withdrawn" | "deleted" }
   | {
       kind: "upsert";
-      listing: Omit<ListingRecord, "source"> & {
+      listing: Omit<ListingRecord, "source" | "ingestedAt"> & {
+        ingestedAt: string | null;
         source: ListingChangeSource;
       };
     }
@@ -123,14 +124,24 @@ export async function updateListingFreshness(
 const deleteListings = `DELETE FROM idx.listings l USING changes c
   WHERE l.id = c.listing_id AND c.listing IS NULL`;
 
-async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
+async function writePage(
+  client: pg.Client,
+  feedId: string,
+  rows: PageRow[],
+  feedBlocks?: DisplayBlock[],
+) {
+  const updateDisclosures = feedBlocks
+    ? `, disclosures AS (
+      UPDATE idx.feeds SET display_blocks = $3::jsonb WHERE id = $1
+    )`
+    : "";
   // Claim identities before touching facts. The feed lock holds the selected state.
   await client.query(
     `WITH incoming AS MATERIALIZED (
       SELECT source_key, revision, candidate, listing
       FROM jsonb_to_recordset($2::jsonb)
         AS (source_key text, revision timestamptz, candidate text, listing jsonb)
-    ), accepted AS (
+    )${updateDisclosures}, accepted AS (
       INSERT INTO idx.source_mappings (feed_id, source_key, listing_id, source_revision)
       SELECT $1, source_key, candidate, revision FROM incoming
       ON CONFLICT (feed_id, source_key) DO UPDATE
@@ -152,7 +163,8 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
         NULLIF(facts->'images', 'null'::jsonb),
         ARRAY(SELECT jsonb_array_elements_text(facts->'withheldFields')),
         true, listing->'blocks', listing->'pageBlocks',
-        (listing->>'sourceUpdatedAt')::timestamptz, (listing->>'ingestedAt')::timestamptz
+        (listing->>'sourceUpdatedAt')::timestamptz,
+        COALESCE((listing->>'ingestedAt')::timestamptz, statement_timestamp())
       FROM changes CROSS JOIN LATERAL (SELECT listing->'facts' AS facts) projected
       WHERE listing IS NOT NULL
       ON CONFLICT (id) DO UPDATE SET
@@ -164,7 +176,9 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
         source_updated_at=EXCLUDED.source_updated_at, ingested_at=EXCLUDED.ingested_at
     )
     SELECT count(*) FROM accepted`,
-    [feedId, JSON.stringify(rows)],
+    feedBlocks
+      ? [feedId, JSON.stringify(rows), JSON.stringify(feedBlocks)]
+      : [feedId, JSON.stringify(rows)],
   );
 }
 
@@ -484,7 +498,13 @@ export async function applyListingPage(
     };
     if (scanCheckpoint)
       await saveScanCheckpoint(client, feedId, scanCheckpoint);
-    await writePage(client, feedId, rows);
+    const incrementalContinues = checkpoint?.position.nextLink != null;
+    await writePage(
+      client,
+      feedId,
+      rows,
+      incrementalContinues ? feedBlocks : undefined,
+    );
     await stampScanKeys(client, feedId, keys, scan !== undefined);
     const removal =
       scan &&
@@ -499,7 +519,12 @@ export async function applyListingPage(
             scanCheckpoint.recordsSeen > 0 ? scan.maxRemovals : null,
           )
         : undefined;
-    if (!scan) await updateListingFreshness(client, [feedId], feedBlocks);
+    if (!incrementalContinues && !scanCheckpoint?.active)
+      await updateListingFreshness(
+        client,
+        [feedId],
+        scan ? undefined : feedBlocks,
+      );
     if (checkpoint?.position.nextLink === null) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }

@@ -12,7 +12,14 @@ import { syncFullScan } from "@idx-kit/engine/src/sync/full-scan.ts";
 import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
 import { contract, validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
-import { connectWriter, page, propertyPath, standIn } from "./feed.ts";
+import {
+  connectWriter,
+  countWriterStatements,
+  page,
+  propertyPath,
+  readOldestIngest,
+  standIn,
+} from "./feed.ts";
 
 const none = { kind: "none" };
 const complete = { code: "complete", nextStep: none };
@@ -101,9 +108,11 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
               maxRemovals,
             }),
       checkpoint: () => readScanCheckpoint(db, feedId),
+      oldestIngest: () => readOldestIngest(db, feedId),
       async incrementalState() {
         const { rows: feed } = await db.query(
-          "SELECT * FROM idx.feeds WHERE id = $1",
+          `SELECT id, refreshed_at, expires_at, display_blocks, rules_version
+          FROM idx.feeds WHERE id = $1`,
           [feedId],
         );
         const { rows: outcomes } = await db.query(
@@ -142,7 +151,8 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   await t.test(
     "repairs a missed edit and withdraws a missing listing from the API and storage",
     async (t) => {
-      const state = await setup(t, "repair");
+      const state = await setup(t, "repair", [second]);
+      await state.poll([first, third]);
       const secret = "synthetic-full-scan-read-key";
       await db.query(
         `INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes)
@@ -170,27 +180,36 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal((await request(detail, 200)).data.id, missing.id);
       assert.equal((await request(search, 200)).data.length, 3);
       const incrementalState = await state.incrementalState();
-      const feed = await standIn(t, (_url, n) =>
-        n === 1
+      const oldest = await state.oldestIngest();
+      const statements = countWriterStatements(t, writer);
+      const offsets: number[] = [];
+      const feed = await standIn(t, (_url, n) => {
+        offsets.push(statements());
+        return n === 1
           ? page(
               [record("first", 2, "225.00")],
               `${propertyPath}/next?cursor=2`,
             )
-          : page([third]),
-      );
+          : page([third]);
+      });
       assert.deepEqual(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 2,
         recordsSeen: 2,
         listingsRemoved: 1,
       });
+      assert.deepEqual([...offsets, statements()], [5, 12, 21]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
       ]);
       assert.deepEqual(await state.incrementalState(), incrementalState);
       assert.equal((await request(detail, 404)).code, "not_found");
-      const { data } = await request(search, 200);
+      const { data, display } = await request(search, 200);
+      const { stored, actual } = await state.oldestIngest();
+      assert.ok(actual && actual !== oldest.stored);
+      assert.equal(stored, actual);
+      assert.equal(display.freshness.ingestedAt, new Date(actual).toISOString());
       assert.deepEqual(
         data.map(({ id }: { id: string }) => id),
         [unchanged.id, edited.id],
@@ -207,10 +226,13 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   await t.test(
     "a resumed scan can withdraw after a nonempty first page and an empty final page",
     async (t) => {
-      const state = await setup(t, "resume");
+      const state = await setup(t, "resume", [first]);
+      await state.poll([second, third]);
       const before = await state.listings();
+      const oldest = await state.oldestIngest();
       const feed = await standIn(t, (_url, n) => {
-        if (n === 1) return page([first, second], "?cursor=2");
+        if (n === 1)
+          return page([record("first", 2, "225.00"), second], "?cursor=2");
         if (n === 2) return { status: 503, retryAfter: "120" };
         return page([]);
       });
@@ -225,11 +247,17 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(pending.active, true);
       assert.equal(pending.recordsSeen, 2);
       assert.equal(new URL(pending.nextLink!).search, "?cursor=2");
-      assert.deepEqual(await state.listings(), [
-        { ...before[0], stamp: pending.scanNumber.toString() },
+      const [edited, ...others] = await state.listings();
+      assert.equal(edited.id, before[0].id);
+      assert.equal(edited.facts?.price, 225);
+      assert.deepEqual(others, [
         { ...before[1], stamp: pending.scanNumber.toString() },
         before[2],
       ]);
+      const partial = await state.oldestIngest();
+      assert.equal(partial.stored, oldest.stored);
+      assert.ok(partial.actual && partial.actual !== partial.stored);
+      assert.equal(partial.conservative, true);
       assert.deepEqual(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
@@ -249,6 +277,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         unreadableRecords: 0,
       });
       assert.equal((await state.listings())[2].facts, null);
+      assert.equal((await state.oldestIngest()).stored, partial.actual);
     },
   );
 

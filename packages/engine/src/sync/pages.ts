@@ -34,8 +34,9 @@ export function listingChangesFor({ synthetic, disclosures }: SyncFeed) {
   const pageBlocks = disclosures.approvedPageBlocks.filter(({ id }) =>
     disclosures.requiredPageBlockIds.includes(id),
   );
-  return (records: unknown[], ingestedAt: string) => {
-    const metadata = { synthetic, ingestedAt, blocks, pageBlocks };
+  return (records: unknown[]) => {
+    // PostgreSQL supplies the ingest time when the page is written.
+    const metadata = { synthetic, ingestedAt: null, blocks, pageBlocks };
     return records.map((record) => mapResoRecord(record, metadata));
   };
 }

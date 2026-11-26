@@ -10,7 +10,14 @@ import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { listenOnLoopback } from "../api/loopback-server.ts";
-import { connectWriter, page, propertyPath, standIn } from "./feed.ts";
+import {
+  connectWriter,
+  countWriterStatements,
+  page,
+  propertyPath,
+  readOldestIngest,
+  standIn,
+} from "./feed.ts";
 
 const firstMark = "2026-11-03T00:00:00.000001Z";
 const secondMark = "2026-11-03T00:00:00.000002Z";
@@ -124,6 +131,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           disclosures,
         }),
       checkpoint: () => readFeedCheckpoint(db, feedId),
+      oldestIngest: () => readOldestIngest(db, feedId),
       outcome,
       setOldFreshness,
       freshness,
@@ -164,12 +172,16 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     "finishes unordered pages and preserves the greatest source time",
     async (t) => {
       const state = await setup(t, "complete");
+      const statements = countWriterStatements(t, writer);
+      const offsets: number[] = [];
       const feed = await standIn(t, (_url, number) => {
+        offsets.push(statements());
         if (number === 1) return page([third], `${propertyPath}/next?cursor=2`);
         if (number === 2) return page([first], "?cursor=3");
         return page([second]);
       });
       assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual([...offsets, statements()], [1, 8, 15, 25]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
@@ -180,6 +192,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         position: complete(thirdMark),
       });
       await assertFresh(state);
+      const { stored, actual } = await state.oldestIngest();
+      assert.ok(actual);
+      assert.equal(stored, actual);
       assert.deepEqual(
         await state.facts(),
         [first, second, third].map((record) => ({
@@ -196,6 +211,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     async (t) => {
       const state = await setup(t, "resume");
       const uninterrupted = await setup(t, "uninterrupted");
+      t.mock.timers.enable({
+        apis: ["Date"],
+        now: Date.parse("1999-01-01T00:00:00Z"),
+      });
       let fail = true;
       const feed = await standIn(t, (url) => {
         const cursor = url.searchParams.get("cursor");
@@ -216,6 +235,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(new URL(saved.position.nextLink!).search, "?cursor=2");
       const [before] = await state.listings();
       assert.equal(before.key, third.ListingKey);
+      const oldest = await state.oldestIngest();
+      assert.equal(oldest.stored, null);
+      assert.ok(oldest.actual);
+      assert.equal(oldest.conservative, true);
 
       fail = false;
       assert.deepEqual(await state.run(feed), { code: "complete" });
@@ -234,6 +257,45 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         complete(thirdMark),
       );
       await assertFresh(state);
+    },
+  );
+
+  await t.test(
+    "withdrawing the oldest listing leaves conservative freshness until completion",
+    async (t) => {
+      const state = await setup(t, "oldest_withdrawal");
+      const initial = await standIn(t, (_url, n) =>
+        n === 1 ? page([first], "?cursor=2") : page([second]),
+      );
+      assert.deepEqual(await state.run(initial), { code: "complete" });
+      const before = await state.oldestIngest();
+      assert.ok(before.stored);
+      assert.equal(before.stored, before.actual);
+
+      let fail = true;
+      const withdrawn = {
+        ...first,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: thirdMark,
+      };
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) return page([withdrawn], "?cursor=2");
+        if (fail) return { status: 503 };
+        return page([]);
+      });
+      assert.deepEqual(await state.run(feed), retryHttpError);
+      const partial = await state.oldestIngest();
+      assert.equal(partial.stored, before.stored);
+      assert.ok(partial.actual && partial.actual !== partial.stored);
+      assert.equal(partial.conservative, true);
+
+      fail = false;
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.oldestIngest(), {
+        stored: partial.actual,
+        actual: partial.actual,
+        conservative: true,
+      });
     },
   );
 

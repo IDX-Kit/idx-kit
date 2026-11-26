@@ -128,7 +128,10 @@ export interface FixtureRecord extends ListingRecord {
   synthetic: true;
 }
 
-export function normalize(record: ListingRecord, feedPage = false) {
+export function normalize(
+  record: Omit<ListingRecord, "ingestedAt"> & { ingestedAt: string | null },
+  feedPage = false,
+) {
   const source = record.source;
   for (const name of [
     "ListingKey",
@@ -147,7 +150,8 @@ export function normalize(record: ListingRecord, feedPage = false) {
     throw new Error("Invalid source key");
   if (
     typeof record.synthetic !== "boolean" ||
-    !timestampSchema.safeParse(record.ingestedAt).success ||
+    (!(feedPage && record.ingestedAt === null) &&
+      !timestampSchema.safeParse(record.ingestedAt).success) ||
     !timestampSchema.nullable().safeParse(record.sourceUpdatedAt).success
   )
     throw new Error("Invalid listing metadata");

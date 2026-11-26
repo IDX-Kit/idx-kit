@@ -29,7 +29,7 @@ export async function syncIncrementally(client: pg.Client, feed: SyncFeed) {
       current.position.completedMark,
       current.position.nextLink,
       async (page) => {
-        const changes = mapChanges(page.records, new Date().toISOString());
+        const changes = mapChanges(page.records);
         const { position } = current;
         const savedMark = position.pendingMark;
         let pendingMark = position.completedMark;

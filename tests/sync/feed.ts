@@ -28,6 +28,34 @@ export async function connectWriter(t: TestContext) {
   return client;
 }
 
+export function countWriterStatements(t: TestContext, client: pg.Client) {
+  const query = client.query.bind(client);
+  const counter = t.mock.method(
+    client,
+    "query",
+    (sql: string, values?: unknown[]) => query(sql, values),
+  );
+  return () => counter.mock.callCount();
+}
+
+export async function readOldestIngest(client: pg.Client, feedId: string) {
+  const { rows } = await client.query<{
+    stored: string | null;
+    actual: string | null;
+    conservative: boolean | null;
+  }>(
+    `SELECT oldest_listing_ingested_at::text AS stored, oldest.ingested_at::text AS actual,
+      COALESCE(oldest_listing_ingested_at, refreshed_at) <= oldest.ingested_at AS conservative
+    FROM idx.feeds f CROSS JOIN LATERAL (
+      SELECT min(l.ingested_at) AS ingested_at FROM idx.source_mappings m
+      JOIN idx.listings l ON l.id = m.listing_id
+      WHERE m.feed_id = f.id AND l.entire_listing_display
+    ) oldest WHERE f.id = $1`,
+    [feedId],
+  );
+  return rows[0];
+}
+
 export function page(records: unknown[], nextLink?: string): Page {
   return { value: records, "@odata.nextLink": nextLink };
 }
