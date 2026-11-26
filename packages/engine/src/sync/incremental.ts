@@ -53,7 +53,9 @@ export async function syncIncrementally(
         blocks,
         pageBlocks,
       };
-      const changes = page.records.map((record) => mapResoRecord(record, metadata));
+      const changes = page.records.map((record) =>
+        mapResoRecord(record, metadata),
+      );
       let pendingMark = position.pendingMark;
       for (const { revision } of changes) {
         const timestamp = timestampSchema.safeParse(revision);

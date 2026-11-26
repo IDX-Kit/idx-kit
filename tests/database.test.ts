@@ -91,11 +91,13 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       );
       await db.query(
         "DELETE FROM public.schema_migrations WHERE name = ANY($1)",
-        [[
-          "004_feed_freshness.sql",
-          "006_listing_revisions.sql",
-          "007_feed_sync_positions.sql",
-        ]],
+        [
+          [
+            "004_feed_freshness.sql",
+            "006_listing_revisions.sql",
+            "007_feed_sync_positions.sql",
+          ],
+        ],
       );
       await db.query("UPDATE idx.listings SET ingested_at = $1 WHERE id = $2", [
         older,

@@ -37,7 +37,8 @@ export async function standIn(
     async function reply() {
       const result = await respond(url, calls.length);
       if (result === "disconnect") {
-        request.socket.destroy();
+        response.write('{"value":');
+        setTimeout(() => response.destroy(), 25);
         return;
       }
       if (result === "stall") {

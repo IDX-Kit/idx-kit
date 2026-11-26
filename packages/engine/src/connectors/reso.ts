@@ -35,7 +35,9 @@ export function mapResoRecord(value: unknown, metadata: ListingMetadata) {
     listing: {
       ...metadata,
       sourceUpdatedAt:
-        typeof ModificationTimestamp === "string" ? ModificationTimestamp : null,
+        typeof ModificationTimestamp === "string"
+          ? ModificationTimestamp
+          : null,
       // The writer checks the facts and hides records it cannot normalize.
       source: source as Upsert["listing"]["source"],
     },
@@ -98,9 +100,10 @@ export class ResoConnector {
     nextLink: string | null,
   ): Promise<PageResult> {
     if (!this.base || !safeAddress(this.base)) return { code: "invalid_link" };
-    const url = nextLink === null
-      ? new URL(this.base)
-      : continuation(this.base, nextLink, this.base);
+    const url =
+      nextLink === null
+        ? new URL(this.base)
+        : continuation(this.base, nextLink, this.base);
     if (!url) return { code: "invalid_link" };
     if (nextLink === null && completedMark !== null) {
       url.searchParams.append(
