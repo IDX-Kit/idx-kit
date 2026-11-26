@@ -91,21 +91,6 @@ export async function sendInquiry(request: Request, listingId: string) {
       form.unavailable = true;
       return { form, status: 403 };
     }
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        form.key,
-      )
-    ) {
-      form.key = crypto.randomUUID();
-      form.message = "Check this field.";
-      writeLog({
-        event: "demo_inquiry_rejected",
-        errorType: "InvalidFormKey",
-        upstreamStatus: null,
-        requestId: null,
-      });
-      return { form, status: 400 };
-    }
     engine = engineClient();
     const receipt = await engine.createInquiry(
       {

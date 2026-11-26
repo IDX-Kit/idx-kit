@@ -145,7 +145,7 @@ export function engineClient() {
     async createInquiry(body: CreateInquiryBody, key: string) {
       return request("/api/v1/inquiries", () =>
         client.createInquiry(
-          { body, headers: { "Idempotency-Key": `"${key}"` } },
+          { body, headers: { "Idempotency-Key": JSON.stringify(key) } },
           options,
         ),
       );
