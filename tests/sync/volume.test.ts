@@ -157,9 +157,13 @@ test(
     let startReads = 0;
     const query = writer.query.bind(writer);
     async function readRows() {
+      // List index IDs from the view and read their transaction-local counters.
       const { rows } = await query<{ count: string }>(
-        `SELECT COALESCE(sum(seq_tup_read), 0) + COALESCE(sum(idx_tup_fetch), 0) AS count
-        FROM pg_stat_xact_user_tables WHERE schemaname = 'idx'`,
+        `SELECT
+          (SELECT COALESCE(sum(seq_tup_read), 0)
+           FROM pg_stat_xact_user_tables WHERE schemaname = 'idx') +
+          (SELECT COALESCE(sum(pg_stat_get_xact_tuples_returned(indexrelid)), 0)
+           FROM pg_stat_user_indexes WHERE schemaname = 'idx') AS count`,
       );
       return Number(rows[0].count);
     }
