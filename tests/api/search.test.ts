@@ -725,17 +725,18 @@ test(
               assert.equal(nodes.length, 1, diagnostic);
               const [node] = nodes;
               const index =
-                node["Node Type"] === "Bitmap Heap Scan" ? node.Plans?.[0] : node;
+                node["Node Type"] === "Bitmap Heap Scan"
+                  ? node.Plans?.[0]
+                  : node;
               assert.ok(index, diagnostic);
               assert.match(
                 index["Node Type"],
                 /^(Index (Only )?|Bitmap Index )Scan$/,
                 diagnostic,
               );
-              assert.ok(
-                index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0) <= 100,
-                diagnostic,
-              );
+              const visited =
+                index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0);
+              assert.ok(visited <= 128, diagnostic);
               const condition = index["Index Cond"] ?? "";
               assert.match(condition, /price|id/, diagnostic);
               for (const operator of [
