@@ -1,10 +1,42 @@
 import type { Listing, DisplayBlock } from "@idx-kit/client";
+import { z } from "zod";
 import { addressProtection } from "./withholding.ts";
 
-export interface FixtureRecord {
-  feedId: string;
-  publicId: string;
-  synthetic: true;
+const text = z
+  .string()
+  .refine((value) => !value.includes("\0") && !/[\uD800-\uDFFF]/u.test(value));
+export const sourceKeySchema = text.refine(
+  (value) => value.length > 0 && Buffer.byteLength(value) <= 1024,
+);
+export const timestampSchema = z.iso.datetime().refine(
+  (value) => !value.startsWith("0000") && value.length <= 27,
+);
+const imageSchema = z.object({
+  alt: text.refine((value) => value.length > 0),
+  url: text.refine((value) => {
+    if (/[\s\\]/.test(value) || /%(?![\da-f]{2})/i.test(value)) return false;
+    if (value.startsWith("/") && !value.startsWith("//")) return true;
+    const url = URL.parse(value);
+    return url?.protocol === "https:" && !url.username && !url.password;
+  }),
+});
+const blockSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  text: text.refine((value) => value.length > 0),
+  placement: z.enum(["adjacent", "afterListing", "pageFooter"]),
+  prominence: z.enum(["normal", "medianListingText", "largestListingText"]),
+  image: imageSchema.optional(),
+});
+const addressSchema = z.object({
+  line1: text,
+  city: text,
+  region: text,
+  postalCode: text,
+  country: z.string().regex(/^[A-Z]{2}$/),
+});
+
+export interface ListingRecord {
+  synthetic: boolean;
   withheldFields?: ("status" | "price" | "address" | "bedrooms" | "images")[];
   sourceUpdatedAt: string | null;
   ingestedAt: string;
@@ -21,7 +53,16 @@ export interface FixtureRecord {
     InternetEntireListingDisplayYN: boolean;
   };
 }
-export function normalize(record: FixtureRecord) {
+export interface FixtureRecord extends ListingRecord {
+  feedId: string;
+  publicId: string;
+  synthetic: true;
+}
+
+export function normalize(
+  record: ListingRecord,
+  previousAddress: Listing["address"] = null,
+) {
   const source = record.source;
   for (const name of [
     "ListingKey",
@@ -36,23 +77,21 @@ export function normalize(record: FixtureRecord) {
     if (!Object.hasOwn(source, name))
       throw new Error(`Missing required source fact: ${name}`);
   }
-  if (typeof source.ListingKey !== "string" || !source.ListingKey.length)
+  if (!sourceKeySchema.safeParse(source.ListingKey).success)
     throw new Error("Invalid source key");
   if (
-    record.synthetic !== true ||
-    !/^lst_[A-Za-z0-9_-]+$/.test(record.publicId)
+    typeof record.synthetic !== "boolean" ||
+    !timestampSchema.safeParse(record.ingestedAt).success ||
+    !timestampSchema.nullable().safeParse(record.sourceUpdatedAt).success
   )
-    throw new Error("Invalid fixture identity");
+    throw new Error("Invalid listing metadata");
   if (
     source.ListPrice !== null &&
     (typeof source.ListPrice !== "string" ||
-      !/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(source.ListPrice))
+      !/^(0|[1-9][0-9]{0,131071})(\.[0-9]{1,16383})?$/.test(source.ListPrice))
   )
     throw new Error("Invalid price");
-  if (
-    source.StandardStatus !== null &&
-    typeof source.StandardStatus !== "string"
-  )
+  if (source.StandardStatus !== null && !text.safeParse(source.StandardStatus).success)
     throw new Error("Invalid status");
   if (
     source.BedroomsTotal !== null &&
@@ -64,32 +103,16 @@ export function normalize(record: FixtureRecord) {
     typeof source.InternetEntireListingDisplayYN !== "boolean"
   )
     throw new Error("Missing display permission");
-  if (source.Images !== null && !Array.isArray(source.Images))
-    throw new Error("Invalid images");
-  if (
-    source.Address !== null &&
-    (typeof source.Address !== "object" ||
-      !["line1", "city", "region", "postalCode", "country"].every(
-        (key) =>
-          typeof (source.Address as Record<string, unknown>)[key] === "string",
-      ) ||
-      !/^[A-Z]{2}$/.test(source.Address.country))
-  )
-    throw new Error("Invalid address");
-  if (
-    source.Images?.some(
-      (image) =>
-        !image ||
-        typeof image.url !== "string" ||
-        typeof image.alt !== "string" ||
-        !image.alt.length,
-    )
-  )
-    throw new Error("Invalid image");
+  const address = addressSchema.nullable().parse(source.Address);
+  const fields = z
+    .array(z.enum(["status", "price", "address", "bedrooms", "images"]))
+    .optional()
+    .parse(record.withheldFields);
   const hideAddress =
-    !source.InternetAddressDisplayYN ||
-    record.withheldFields?.includes("address");
-  const protection = addressProtection(hideAddress ? source.Address : null);
+    !source.InternetAddressDisplayYN || fields?.includes("address");
+  const protection = hideAddress
+    ? addressProtection(address, previousAddress)
+    : addressProtection();
   const facts: Pick<
     Listing,
     | "synthetic"
@@ -100,33 +123,30 @@ export function normalize(record: FixtureRecord) {
     | "images"
     | "withheldFields"
   > = {
-    synthetic: true,
-    status: source.StandardStatus,
+    synthetic: record.synthetic,
+    status: source.StandardStatus === null ? null : protection.text(source.StandardStatus),
     price:
       source.ListPrice === null
         ? null
         : { amount: source.ListPrice, currency: "USD" },
-    address: hideAddress ? null : source.Address,
+    address: hideAddress ? null : address,
     bedrooms: source.BedroomsTotal,
-    images: source.Images?.map(protection.image) ?? null,
+    images:
+      source.Images === null
+        ? null
+        : z.array(imageSchema).parse(source.Images.map(protection.image)),
     withheldFields: hideAddress ? ["address"] : [],
   };
-  for (const field of record.withheldFields ?? []) {
-    if (!["status", "price", "address", "bedrooms", "images"].includes(field))
-      throw new Error("Invalid withheld field");
+  for (const field of fields ?? []) {
     facts[field] = null;
   }
   facts.withheldFields = [
-    ...new Set([...facts.withheldFields, ...(record.withheldFields ?? [])]),
+    ...new Set([...facts.withheldFields, ...(fields ?? [])]),
   ];
   return {
-    feedId: record.feedId,
-    sourceKey: source.ListingKey,
-    publicId: record.publicId,
     facts,
-    entireListingDisplay: source.InternetEntireListingDisplayYN,
-    blocks: protection.blocks(record.blocks),
-    pageBlocks: protection.blocks(record.pageBlocks),
+    blocks: z.array(blockSchema).parse(protection.blocks(record.blocks)),
+    pageBlocks: z.array(blockSchema).parse(protection.blocks(record.pageBlocks)),
     sourceUpdatedAt: record.sourceUpdatedAt,
     ingestedAt: record.ingestedAt,
   };

@@ -3,9 +3,12 @@ import pg from "pg";
 import { logFailure } from "../log.ts";
 import { FixtureConnector } from "../connectors/fixture.ts";
 import type { Fixtures } from "../connectors/fixture.ts";
-import { normalize } from "../domain/normalize.ts";
 import { addressProtection } from "../domain/withholding.ts";
-import { upsertListing } from "./listings.ts";
+import {
+  lockListingFeeds,
+  updateListingFreshness,
+  writeFixturePages,
+} from "./listings.ts";
 
 export async function seed(client: pg.Client, fixtures: Fixtures) {
   const feedIds = [
@@ -17,13 +20,7 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
   await client.query("BEGIN");
   try {
     // Lock before a feed exists or is updated, without locking out foreign-key checks.
-    // Sort by the lock key itself so even hash collisions preserve the lock order.
-    await client.query(
-      `SELECT pg_advisory_xact_lock(711002, hashtext(feed_id))
-      FROM unnest($1::text[]) AS feeds(feed_id)
-      ORDER BY hashtext(feed_id)`,
-      [feedIds],
-    );
+    await lockListingFeeds(client, feedIds);
     for (const feed of fixtures.feeds) {
       // Feed disclosures are shared: protect every withheld source address in this feed.
       const blocks = fixtures.listings
@@ -63,15 +60,14 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
           [site.id, feedId],
         );
     }
-    for (const record of fixtures.listings)
-      await upsertListing(client, normalize(record));
-    await client.query(
-      `UPDATE idx.feeds f SET oldest_listing_ingested_at = (
-        SELECT min(l.ingested_at) FROM idx.source_mappings m
-        JOIN idx.listings l ON l.id = m.listing_id WHERE m.feed_id = f.id
-      ) WHERE f.id = ANY($1::text[])`,
-      [feedIds],
-    );
+    for (const feedId of feedIds) {
+      await writeFixturePages(
+        client,
+        feedId,
+        fixtures.listings.filter((record) => record.feedId === feedId),
+      );
+    }
+    await updateListingFreshness(client, feedIds);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

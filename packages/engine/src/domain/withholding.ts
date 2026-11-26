@@ -1,16 +1,18 @@
 import type { DisplayBlock, Listing } from "@idx-kit/client";
 
 // Apply while the connector still has the source address; never retain it in public facts.
-export function addressProtection(address: Listing["address"]) {
-  const street = address?.line1.trim();
+export function addressProtection(...addresses: Listing["address"][]) {
+  const streets = addresses.flatMap((address) =>
+    address?.line1.trim() ? [address.line1.trim()] : [],
+  );
   const escape = (value: string) =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = street
+  const pattern = streets.length
     ? new RegExp(
-        [
+        streets.flatMap((street) => [
           street.split(/\s+/).map(escape).join("\\s+"),
           escape(encodeURIComponent(street)),
-        ].join("|"),
+        ]).join("|"),
         "gi",
       )
     : null;
@@ -47,12 +49,16 @@ export function addressProtection(address: Listing["address"]) {
     return { url: value.url, alt: text(value.alt) };
   };
   const blocks = (values: DisplayBlock[]): DisplayBlock[] =>
-    values.map((value) => ({
-      id: value.id,
-      text: text(value.text),
-      placement: value.placement,
-      prominence: value.prominence,
-      ...(value.image ? { image: image(value.image) } : {}),
-    }));
-  return { image, blocks };
+    values.map((value) => {
+      if (text(value.id) !== value.id)
+        throw new Error("Withheld address in disclosure ID");
+      return {
+        id: value.id,
+        text: text(value.text),
+        placement: value.placement,
+        prominence: value.prominence,
+        ...(value.image ? { image: image(value.image) } : {}),
+      };
+    });
+  return { text, image, blocks };
 }

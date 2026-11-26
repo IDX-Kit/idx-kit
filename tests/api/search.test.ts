@@ -600,9 +600,9 @@ test(
       },
     );
     await t.test(
-      "page freshness follows the oldest mapped ingest, including on empty results",
+      "page freshness follows the oldest displayable ingest, including on empty results",
       async () => {
-        const record = structuredClone(fixtures.listings[5]);
+        const record = structuredClone(fixtures.listings[6]);
         const partial = { feeds: [], sites: [], listings: [record] };
         const original = record.ingestedAt;
         record.ingestedAt = "2026-11-01T00:01:00Z";

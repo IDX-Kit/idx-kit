@@ -4,8 +4,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
-import type { DisplayBlock } from "@idx-kit/client";
+import type { DisplayBlock, Listing } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import {
+  applyListingPage,
+  listingPageLimit,
+} from "@idx-kit/engine/src/db/listings.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { contract, valid, validateResponse } from "./contract.ts";
 import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
@@ -98,6 +102,147 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
     });
     return { body, response, text };
   }
+  await t.test("feed pages apply ordered, scoped changes and clear unsafe data", async (t) => {
+    assert.ok(process.env.LISTING_WRITER_DATABASE_URL);
+    const writer = new pg.Client({
+      connectionString: process.env.LISTING_WRITER_DATABASE_URL,
+    });
+    await writer.connect();
+    t.after(async () => {
+      await writer.end();
+      await db.query(`
+        DELETE FROM idx.listings l USING idx.source_mappings m
+          WHERE l.id = m.listing_id AND m.source_key LIKE 'Synthetic writer %';
+        DELETE FROM idx.source_mappings WHERE source_key LIKE 'Synthetic writer %';
+      `);
+    });
+    const primary = "feed_demo_primary";
+    const secondary = "feed_demo_expired";
+    const sourceKey = "Synthetic writer shared key";
+    const otherKey = "Synthetic writer companion key";
+    const oldStreet = "999 Synthetic Writer Way";
+    const oldPhoto = "https://images.example.invalid/old-writer-photo.svg";
+    const newPhoto = "https://images.example.invalid/new-writer-photo.svg";
+    const revision = (number: number) =>
+      `2026-11-02T00:00:00.${String(number).padStart(6, "0")}Z`;
+    const upsert = (sourceKey: string, number: number) => ({
+      kind: "upsert" as const,
+      sourceKey,
+      revision: revision(number),
+      listing: structuredClone(fixtures.listings[0]),
+    });
+    const identity = async (feed: string, source: string) => {
+      const { rows } = await db.query(
+        "SELECT listing_id FROM idx.source_mappings WHERE feed_id=$1 AND source_key=$2",
+        [feed, source],
+      );
+      assert.equal(rows.length, 1);
+      return String(rows[0].listing_id);
+    };
+    const stored = async (id: string) =>
+      (await db.query("SELECT * FROM idx.listings WHERE id=$1", [id])).rows;
+    const search = () => request("/api/v1/listings?limit=50");
+    const original = upsert(sourceKey, 1);
+    original.listing.source.Address!.line1 = oldStreet;
+    original.listing.source.Images = [{ url: oldPhoto, alt: oldStreet }];
+    original.listing.ingestedAt = "2026-11-01T00:01:00Z";
+    await applyListingPage(writer, primary, [original, upsert(otherKey, 1)]);
+    await applyListingPage(writer, secondary, [upsert(sourceKey, 1)]);
+    const id = await identity(primary, sourceKey);
+    const second = await identity(secondary, sourceKey);
+    const companion = await identity(primary, otherKey);
+    const detail = `/api/v1/listings/${id}`;
+    assert.notEqual(id, second);
+    const secondFacts = await stored(second);
+    assert.ok((await request(detail)).text.includes(oldPhoto));
+
+    const replacement = upsert(sourceKey, 2);
+    replacement.listing.source.ListPrice = "123456.78";
+    replacement.listing.source.Address = null;
+    replacement.listing.source.InternetAddressDisplayYN = false;
+    replacement.listing.source.Images = [{ url: newPhoto, alt: oldStreet }];
+    replacement.listing.blocks[0].text = oldStreet;
+    replacement.listing.pageBlocks = [
+      { ...replacement.listing.blocks[0], id: "synthetic_writer_page" },
+    ];
+    await applyListingPage(writer, primary, [replacement, original]);
+    await applyListingPage(writer, primary, [replacement]);
+    await applyListingPage(writer, primary, [original]);
+    for (const value of [
+      JSON.stringify(await stored(id)),
+      (await request(detail)).text,
+      (await search()).text,
+    ]) {
+      assert.ok(!value.includes(oldStreet));
+      assert.ok(!value.includes(oldPhoto));
+      assert.ok(value.includes(newPhoto));
+      assert.ok(value.includes("Address withheld"));
+    }
+    const updated = (await request(detail)).body.data;
+    assert.equal(updated.address, null);
+    assert.deepEqual(updated.withheldFields, ["address"]);
+    assert.equal(updated.price.amount, "123456.78");
+    assert.deepEqual(await stored(second), secondFacts);
+    assert.equal(
+      (await search()).body.display.freshness.ingestedAt,
+      new Date(fixtures.listings[0].ingestedAt).toISOString(),
+    );
+
+    const unknown = (await request("/api/v1/listings/lst_missing_writer", 404)).body;
+    const absent = async (hiddenId: string) => {
+      const { body } = await request(`/api/v1/listings/${hiddenId}`, 404);
+      assert.deepEqual({ ...body, requestId: "" }, { ...unknown, requestId: "" });
+      assert.ok(!(await search()).body.data.some((item: Listing) => item.id === hiddenId));
+      assert.deepEqual(await stored(hiddenId), []);
+    };
+    for (const [index, kind] of ["withdrawn", "deleted", "upsert", "sold"].entries()) {
+      const liveRevision = 3 + index * 2;
+      const live = upsert(sourceKey, liveRevision);
+      const hidden = upsert(sourceKey, liveRevision + 1);
+      hidden.listing.source.InternetEntireListingDisplayYN = kind !== "upsert";
+      if (kind === "sold") hidden.listing.source.StandardStatus = "closed";
+      await applyListingPage(writer, primary, [live]);
+      await request(detail);
+      await applyListingPage(writer, primary, [
+        kind === "withdrawn" || kind === "deleted" ? { ...hidden, kind } : hidden,
+        live,
+      ]);
+      await absent(id);
+      await applyListingPage(writer, primary, [live]);
+      await absent(id);
+      assert.equal(await identity(primary, sourceKey), id);
+    }
+    const restored = upsert(sourceKey, 11);
+    restored.listing.source.Address!.line1 = oldStreet;
+    await applyListingPage(writer, primary, [restored]);
+    assert.equal((await request(detail)).body.data.id, id);
+    assert.equal((await request("/api/v1/listings/lst_demo_0003")).body.data.status, "closed");
+
+    const unsafe = upsert(sourceKey, 12);
+    unsafe.listing.source.Address = null;
+    unsafe.listing.source.InternetAddressDisplayYN = false;
+    unsafe.listing.source.Images![0].url = `/media/${encodeURIComponent(oldStreet)}.svg`;
+    const result = await applyListingPage(writer, primary, [
+      unsafe,
+      { kind: "deleted", sourceKey: otherKey, revision: revision(12) },
+      upsert("Synthetic writer valid sibling", 12),
+      upsert("", 12),
+    ]);
+    assert.deepEqual(result.rejected, [
+      { index: 0, code: "invalid_change", hidden: true },
+      { index: 3, code: "invalid_key", hidden: false },
+    ]);
+    await absent(id);
+    await absent(companion);
+    const sibling = await identity(primary, "Synthetic writer valid sibling");
+    await request(`/api/v1/listings/${sibling}`);
+    await assert.rejects(
+      applyListingPage(writer, primary, Array(listingPageLimit + 1).fill(restored)),
+      /Listing page too large/,
+    );
+    await assert.rejects(writer.query("SELECT * FROM idx.inquiries"), { code: "42501" });
+    await assert.rejects(writer.query("UPDATE idx.feeds SET expires_at=now()"), { code: "42501" });
+  });
   await t.test(
     "anonymous discovery advertises only implemented capabilities and exact release contract",
     async () => {

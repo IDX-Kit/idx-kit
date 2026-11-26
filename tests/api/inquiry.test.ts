@@ -246,7 +246,7 @@ test(
       },
     );
     await t.test(
-      "aged receipts replay before listing visibility checks, without changing key or hash",
+      "aged receipts replay after listing removal, without changing key or hash",
       async () => {
         const agedKey = actionKey();
         const created = await request(path, post(agedKey));
@@ -255,10 +255,11 @@ test(
           [created.body.data.id],
         );
         const before = await rows(agedKey);
-        await db.query(
-          "UPDATE idx.listings SET entire_listing_display=false WHERE id=$1",
+        const listing = await db.query(
+          "DELETE FROM idx.listings WHERE id=$1 RETURNING to_jsonb(idx.listings) AS facts",
           [input.listingId],
         );
+        assert.equal(listing.rowCount, 1);
         try {
           const replay = await request(path, post(agedKey));
           assert.deepEqual(replay.body.data, {
@@ -284,8 +285,8 @@ test(
           );
         } finally {
           await db.query(
-            "UPDATE idx.listings SET entire_listing_display=true WHERE id=$1",
-            [input.listingId],
+            "INSERT INTO idx.listings SELECT * FROM jsonb_populate_record(NULL::idx.listings, $1)",
+            [listing.rows[0].facts],
           );
         }
         for (const listingId of ["lst_missing_synthetic", "lst_demo_0006"])

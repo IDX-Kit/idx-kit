@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      5,
+      6,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -72,21 +72,31 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     );
   });
   await t.test(
-    "migration backfills the oldest ingest on populated feeds",
+    "migrations backfill revisions and freshness and remove legacy hidden facts",
     async () => {
       const older = "2026-11-01T00:03:00.000Z";
       await seed(db, fixtures);
+      await db.query(`
+        INSERT INTO idx.listings
+        SELECT (jsonb_populate_record(NULL::idx.listings,
+          to_jsonb(l) || '{"id":"lst_demo_0006","entire_listing_display":false}')).*
+        FROM idx.listings l WHERE id = 'lst_demo_0001';
+        ALTER TABLE idx.source_mappings
+          DROP COLUMN source_revision,
+          ADD CONSTRAINT source_mappings_listing_id_fkey FOREIGN KEY (listing_id)
+            REFERENCES idx.listings;
+      `);
       await db.query(
         "ALTER TABLE idx.feeds DROP COLUMN oldest_listing_ingested_at",
       );
-      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
-        "004_feed_freshness.sql",
+      await db.query("DELETE FROM public.schema_migrations WHERE name = ANY($1)", [
+        ["004_feed_freshness.sql", "006_listing_revisions.sql"],
       ]);
       await db.query("UPDATE idx.listings SET ingested_at = $1 WHERE id = $2", [
         older,
-        "lst_demo_0006",
+        "lst_demo_0007",
       ]);
-      const listings = await snapshot();
+      const listings = (await snapshot()).filter((row) => row.entire_listing_display);
       await migrate(db);
       const feeds = await db.query(
         "SELECT id, oldest_listing_ingested_at FROM idx.feeds ORDER BY id",
@@ -104,6 +114,18 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         },
       ]);
       assert.deepEqual(await snapshot(), listings);
+      const mapping = await db.query(
+        "SELECT * FROM idx.source_mappings WHERE listing_id = $1",
+        ["lst_demo_0006"],
+      );
+      assert.deepEqual(mapping.rows, [
+        {
+          feed_id: "feed_demo_primary",
+          source_key: fixtures.listings[5].source.ListingKey,
+          listing_id: "lst_demo_0006",
+          source_revision: new Date(fixtures.listings[0].sourceUpdatedAt!),
+        },
+      ]);
     },
   );
   await t.test(
@@ -114,6 +136,11 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "CREATE TABLE idx.forbidden (id int)",
         "CREATE TABLE public.forbidden (id int)",
         "DROP TABLE idx.listings",
+        "DELETE FROM idx.listings",
+        "UPDATE idx.listings SET address=NULL",
+        "INSERT INTO idx.source_mappings (feed_id, source_key, listing_id) SELECT 'a', 'b', 'c'",
+        "UPDATE idx.source_mappings SET source_revision=now()",
+        "UPDATE idx.feeds SET oldest_listing_ingested_at=now()",
         "INSERT INTO idx.sites VALUES ('forbidden')",
         "UPDATE idx.inquiries SET message='forbidden'",
         "DELETE FROM idx.inquiries",
@@ -194,16 +221,19 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     },
   );
   await t.test(
-    "all 24 fixtures seed, reseed identically and update without changing public IDs",
+    "all 24 fixture identities seed, reseed identically and update without changing public IDs",
     async () => {
       await reset();
       assert.equal(fixtures.listings.length, 24);
       await seed(db, fixtures);
       const original = await snapshot();
-      assert.equal(original.length, 24);
+      assert.equal(original.length, 23);
       assert.deepEqual(
         original.map((row) => row.id),
-        fixtures.listings.map((record) => record.publicId).sort(),
+        fixtures.listings
+          .filter((record) => record.source.InternetEntireListingDisplayYN)
+          .map((record) => record.publicId)
+          .sort(),
       );
       await seed(db, fixtures);
       assert.deepEqual(await snapshot(), original);
@@ -212,7 +242,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       changed.listings[0].publicId = "lst_candidate_changed";
       await seed(db, changed);
       const updated = await snapshot();
-      assert.equal(updated.length, 24);
+      assert.equal(updated.length, 23);
       assert.deepEqual(
         updated.map((row) => row.id),
         original.map((row) => row.id),
@@ -352,7 +382,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       );
       assert.equal(rows[2].status, "closed");
       assert.equal(rows[2].page_blocks[0].id, "closed_information");
-      assert.equal(rows[5].entire_listing_display, false);
+      assert.ok(!rows.some((row) => row.id === "lst_demo_0006"));
       assert.equal(rows[3].price, null);
       assert.equal(rows[0].price, rows[2].price);
       assert.ok(
