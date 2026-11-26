@@ -256,7 +256,7 @@ test(
         );
         const before = await rows(agedKey);
         const listing = await db.query(
-          "DELETE FROM idx.listings WHERE id=$1 RETURNING to_jsonb(idx.listings) AS facts",
+          "DELETE FROM idx.listings l WHERE id=$1 RETURNING to_jsonb(l) AS facts",
           [input.listingId],
         );
         assert.equal(listing.rowCount, 1);

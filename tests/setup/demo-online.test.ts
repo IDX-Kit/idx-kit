@@ -124,6 +124,10 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
   );
   assert.equal(
     (await runtime.query("SELECT * FROM idx.listings")).rowCount,
+    23,
+  );
+  assert.equal(
+    (await db.query("SELECT * FROM idx.source_mappings")).rowCount,
     24,
   );
   const role = (
