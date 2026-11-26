@@ -827,7 +827,10 @@ test(
                 positions.push({ price: null, id: "lst_search_plan_000001" });
               for (const last of positions) {
                 const { database, check } = inspect(last);
-                const result = await searchListings(database, { ...query, last });
+                const result = await searchListings(database, {
+                  ...query,
+                  last,
+                });
                 check();
                 if (last === boundary || last?.price === null) {
                   assert.equal(result.rows.length, withNulls ? fetchSize : 0);
@@ -869,7 +872,9 @@ test(
                     `| ${name} | ${result.rows} | ${result.ms.toFixed(3)} | ${result.plan} |`,
                   );
                   if (result.listingSeqScan || result.rows > budget) {
-                    const scan = result.listingSeqScan ? " (listings Seq Scan)" : "";
+                    const scan = result.listingSeqScan
+                      ? " (listings Seq Scan)"
+                      : "";
                     violations.push(
                       `${name} examined ${result.rows}/${budget} rows${scan}`,
                     );
