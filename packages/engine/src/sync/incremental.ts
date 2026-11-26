@@ -1,13 +1,13 @@
 import type pg from "pg";
 import { mapResoRecord } from "../connectors/reso.ts";
 import type { ResoConnector } from "../connectors/reso.ts";
+import { saveFeedOutcome } from "../db/feed-sync-outcomes.ts";
+import type { FeedNextStep } from "../db/feed-sync-outcomes.ts";
 import {
   FeedPositionChanged,
   readFeedCheckpoint,
   saveFeedCheckpoint,
-  saveFeedOutcome,
 } from "../db/feed-sync-positions.ts";
-import type { FeedNextStep } from "../db/feed-sync-positions.ts";
 import {
   applyListingPage,
   listingFeedTransaction,
@@ -125,13 +125,12 @@ export async function syncIncrementally(
     outcome.code === "complete"
       ? ({ code: "complete" } as const)
       : { code: outcome.code, nextStep: nextStepFor(outcome) };
-  if (version !== undefined) {
-    try {
-      const nextStep = result.code === "complete" ? null : result.nextStep;
-      await saveFeedOutcome(client, feedId, version, outcome, nextStep);
-    } catch {
-      return { code: "write_failed", nextStep: { kind: "retry" } } as const;
-    }
+  if (version === undefined) return { ...result, outcomeSaved: false } as const;
+  try {
+    const nextStep = result.code === "complete" ? null : result.nextStep;
+    await saveFeedOutcome(client, feedId, version, outcome, nextStep);
+  } catch {
+    return { ...result, outcomeSaved: false } as const;
   }
   return result;
 }

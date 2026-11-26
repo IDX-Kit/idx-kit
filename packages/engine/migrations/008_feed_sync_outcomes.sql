@@ -1,10 +1,11 @@
--- Version zero holds a stopped run before any page has committed.
-ALTER TABLE idx.feed_sync_positions
-  DROP CONSTRAINT feed_sync_positions_version_check,
-  ADD CHECK (version >= 0),
-  ADD COLUMN outcome_code text,
-  ADD COLUMN outcome_http_status smallint,
-  ADD COLUMN outcome_next_step text,
-  ADD COLUMN outcome_retry_after_seconds integer,
-  ADD COLUMN consecutive_failures bigint NOT NULL DEFAULT 0,
-  ADD COLUMN outcome_saved_at timestamptz;
+CREATE TABLE idx.feed_sync_outcomes (
+  feed_id text PRIMARY KEY REFERENCES idx.feeds ON DELETE CASCADE,
+  position_version bigint NOT NULL CHECK (position_version >= 0),
+  code text NOT NULL,
+  http_status smallint,
+  next_step text,
+  retry_after_seconds integer,
+  saved_at timestamptz NOT NULL
+);
+
+REVOKE ALL ON idx.feed_sync_outcomes FROM PUBLIC, idx_runtime;
