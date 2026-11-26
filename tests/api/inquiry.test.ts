@@ -272,19 +272,34 @@ test(
         });
         await writer.connect();
         try {
-          await applyListingPage(writer, original.feed_id, [{
-            kind: "withdrawn",
-            sourceKey: original.source_key,
-            revision: "2026-11-02T00:00:00Z",
-          }], fixtureDisclosures(fixtures, original.feed_id));
+          await applyListingPage(
+            writer,
+            original.feed_id,
+            [
+              {
+                kind: "withdrawn",
+                sourceKey: original.source_key,
+                revision: "2026-11-02T00:00:00Z",
+              },
+            ],
+            fixtureDisclosures(fixtures, original.feed_id),
+          );
           assert.equal(
-            (await db.query("SELECT id FROM idx.listings WHERE id=$1", [input.listingId])).rowCount,
+            (
+              await db.query("SELECT id FROM idx.listings WHERE id=$1", [
+                input.listingId,
+              ])
+            ).rowCount,
             0,
           );
-          assert.deepEqual((await request(created.response.headers.get("Location")!, {}, 200)).body.data, {
-            id: before[0].id,
-            receivedAt: before[0].received_at.toISOString(),
-          });
+          assert.deepEqual(
+            (await request(created.response.headers.get("Location")!, {}, 200))
+              .body.data,
+            {
+              id: before[0].id,
+              receivedAt: before[0].received_at.toISOString(),
+            },
+          );
           const replay = await request(path, post(agedKey));
           assert.deepEqual(replay.body.data, {
             id: before[0].id,

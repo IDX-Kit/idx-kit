@@ -123,7 +123,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       const primary = "feed_demo_primary";
       const secondary = "feed_demo_expired";
       const feed = fixtureDisclosures(fixtures, primary);
-      const write = (changes: ListingChange[]) => applyListingPage(writer, primary, changes, feed);
+      const write = (changes: ListingChange[]) =>
+        applyListingPage(writer, primary, changes, feed);
       const sourceKey = "Synthetic writer shared key";
       const otherKey = "Synthetic writer companion key";
       const oldStreet = "999 Synthetic Writer Way";
@@ -153,7 +154,12 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       original.listing.source.Images = [{ url: oldPhoto, alt: oldStreet }];
       original.listing.ingestedAt = "2026-11-01T00:01:00Z";
       await write([original, upsert(otherKey, 1)]);
-      await applyListingPage(writer, secondary, [upsert(sourceKey, 1)], fixtureDisclosures(fixtures, secondary));
+      await applyListingPage(
+        writer,
+        secondary,
+        [upsert(sourceKey, 1)],
+        fixtureDisclosures(fixtures, secondary),
+      );
       const id = await identity(primary, sourceKey);
       const second = await identity(secondary, sourceKey);
       const companion = await identity(primary, otherKey);
@@ -275,7 +281,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       });
       const publicDetail = (id: string) => request(`/api/v1/listings/${id}`);
       const searchItem = async (id: string) => {
-        const result = (await search()).body.data.find((item: Listing) => item.id === id);
+        const result = (await search()).body.data.find(
+          (item: Listing) => item.id === id,
+        );
         assert.ok(result);
         return result as Listing;
       };
@@ -286,140 +294,185 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         return change;
       };
 
-      await t.test("equal revisions keep the most restrictive address permission in either order", async () => {
-        for (const [index, [reverse, samePage]] of [
-          [false, false], [true, false], [false, true], [true, true],
-        ].entries()) {
-          const key = `Synthetic writer tied address ${index}`;
+      await t.test(
+        "equal revisions keep the most restrictive address permission in either order",
+        async () => {
+          for (const [index, [reverse, samePage]] of [
+            [false, false],
+            [true, false],
+            [false, true],
+            [true, true],
+          ].entries()) {
+            const key = `Synthetic writer tied address ${index}`;
+            const open = upsert(key, 1);
+            open.listing.source.Address!.line1 = oldStreet;
+            const closed = hiddenAddress(key, 1);
+            const changes = reverse ? [closed, open] : [open, closed];
+            if (samePage) await write(changes);
+            else {
+              for (const change of changes) await write([change]);
+            }
+            const id = await identity(primary, key);
+            const [row] = await stored(id);
+            assert.equal(row.address, null);
+            assert.ok(row.withheld_fields.includes("address"));
+            for (const item of [
+              (await publicDetail(id)).body.data,
+              await searchItem(id),
+            ]) {
+              assert.equal(item.address, null);
+              assert.ok(item.withheldFields.includes("address"));
+            }
+          }
+        },
+      );
+
+      await t.test(
+        "unverifiable text and media cannot restore a cleared address",
+        async () => {
+          const key = "Synthetic writer cleared street";
           const open = upsert(key, 1);
           open.listing.source.Address!.line1 = oldStreet;
-          const closed = hiddenAddress(key, 1);
-          const changes = reverse ? [closed, open] : [open, closed];
-          if (samePage) await write(changes);
-          else {
-            for (const change of changes) await write([change]);
+          for (const number of [2, 3]) {
+            const change = hiddenAddress(key, number);
+            change.listing.source.Images = [
+              {
+                url: `https://images.example.invalid/${encodeURIComponent(oldStreet)}.svg`,
+                alt: oldStreet,
+              },
+            ];
+            change.listing.blocks[0].text = oldStreet;
+            await write(number === 2 ? [open, change] : [change]);
+            const id = await identity(primary, key);
+            const [row] = await stored(id);
+            assert.equal(row.address, null);
+            assert.equal(row.images, null);
+            for (const payload of [
+              row,
+              (await publicDetail(id)).body,
+              (await search()).body,
+            ]) {
+              assert.ok(!JSON.stringify(payload).includes(oldStreet));
+              assert.ok(
+                !JSON.stringify(payload).includes(
+                  encodeURIComponent(oldStreet),
+                ),
+              );
+            }
           }
+        },
+      );
+
+      await t.test(
+        "approved disclosures replace legacy blocks and ignore carried property photos",
+        async () => {
+          const key = "Synthetic writer legacy disclosure";
+          const open = upsert(key, 1);
+          open.listing.source.Address!.line1 = "998 Imaginary Disclosure Road";
+          open.listing.source.Images = [{ url: oldPhoto, alt: "Old photo" }];
+          await write([open]);
           const id = await identity(primary, key);
-          const [row] = await stored(id);
-          assert.equal(row.address, null);
-          assert.ok(row.withheld_fields.includes("address"));
-          for (const item of [(await publicDetail(id)).body.data, await searchItem(id)]) {
-            assert.equal(item.address, null);
-            assert.ok(item.withheldFields.includes("address"));
+          const stale = {
+            ...open.listing.blocks[0],
+            text: `Disclosure with ${open.listing.source.Address!.line1} and ${oldPhoto}`,
+            image: { url: oldPhoto, alt: open.listing.source.Address!.line1 },
+          };
+          await db.query(
+            "UPDATE idx.listings SET display_blocks=$2, page_blocks=$2 WHERE id=$1",
+            [id, JSON.stringify([stale])],
+          );
+          await db.query("UPDATE idx.feeds SET display_blocks=$2 WHERE id=$1", [
+            primary,
+            JSON.stringify([...feed.approvedFeedBlocks, stale]),
+          ]);
+          const replacement = hiddenAddress(key, 2);
+          replacement.listing.blocks = [stale];
+          replacement.listing.pageBlocks = [stale];
+          await write([replacement]);
+          const feedRow = await db.query(
+            "SELECT display_blocks FROM idx.feeds WHERE id=$1",
+            [primary],
+          );
+          const empty = await request("/api/v1/listings?city=No%20Such%20City");
+          assert.deepEqual(empty.body.data, []);
+          assert.deepEqual(empty.body.display.blocks, feed.approvedFeedBlocks);
+          for (const payload of [
+            feedRow.rows,
+            await stored(id),
+            (await publicDetail(id)).body,
+            (await search()).body,
+          ]) {
+            const text = JSON.stringify(payload);
+            assert.ok(!text.includes(oldPhoto));
+            assert.ok(!text.includes(open.listing.source.Address!.line1));
           }
-        }
-      });
+        },
+      );
 
-      await t.test("unverifiable text and media cannot restore a cleared address", async () => {
-        const key = "Synthetic writer cleared street";
-        const open = upsert(key, 1);
-        open.listing.source.Address!.line1 = oldStreet;
-        for (const number of [2, 3]) {
-          const change = hiddenAddress(key, number);
-          change.listing.source.Images = [{
-            url: `https://images.example.invalid/${encodeURIComponent(oldStreet)}.svg`,
-            alt: oldStreet,
-          }];
-          change.listing.blocks[0].text = oldStreet;
-          await write(number === 2 ? [open, change] : [change]);
+      await t.test(
+        "a removal with an unreadable revision records the greatest known revision",
+        async () => {
+          const key = "Synthetic writer unreadable revision";
+          await write([upsert(key, 1)]);
           const id = await identity(primary, key);
-          const [row] = await stored(id);
-          assert.equal(row.address, null);
-          assert.equal(row.images, null);
-          for (const payload of [row, (await publicDetail(id)).body, (await search()).body]) {
-            assert.ok(!JSON.stringify(payload).includes(oldStreet));
-            assert.ok(!JSON.stringify(payload).includes(encodeURIComponent(oldStreet)));
-          }
-        }
-      });
+          const newer = upsert(key, 2);
+          const bad = { ...remove(key, 0), revision: "unreadable" };
+          assert.deepEqual((await write([newer, bad])).rejected, [
+            { index: 1, code: "invalid_change", hidden: true },
+          ]);
+          await write([newer]);
+          await absent(id);
+          const result = await db.query(
+            "SELECT source_revision = $2::timestamptz AS retained FROM idx.source_mappings WHERE listing_id=$1",
+            [id, newer.revision],
+          );
+          assert.equal(result.rows[0].retained, true);
+        },
+      );
 
-      await t.test("approved disclosures replace legacy blocks and ignore carried property photos", async () => {
-        const key = "Synthetic writer legacy disclosure";
-        const open = upsert(key, 1);
-        open.listing.source.Address!.line1 = "998 Imaginary Disclosure Road";
-        open.listing.source.Images = [{ url: oldPhoto, alt: "Old photo" }];
-        await write([open]);
-        const id = await identity(primary, key);
-        const stale = {
-          ...open.listing.blocks[0],
-          text: `Disclosure with ${open.listing.source.Address!.line1} and ${oldPhoto}`,
-          image: { url: oldPhoto, alt: open.listing.source.Address!.line1 },
-        };
-        await db.query(
-          "UPDATE idx.listings SET display_blocks=$2, page_blocks=$2 WHERE id=$1",
-          [id, JSON.stringify([stale])],
-        );
-        await db.query(
-          "UPDATE idx.feeds SET display_blocks=$2 WHERE id=$1",
-          [primary, JSON.stringify([...feed.approvedFeedBlocks, stale])],
-        );
-        const replacement = hiddenAddress(key, 2);
-        replacement.listing.blocks = [stale];
-        replacement.listing.pageBlocks = [stale];
-        await write([replacement]);
-        const feedRow = await db.query("SELECT display_blocks FROM idx.feeds WHERE id=$1", [primary]);
-        const empty = await request("/api/v1/listings?city=No%20Such%20City");
-        assert.deepEqual(empty.body.data, []);
-        assert.deepEqual(empty.body.display.blocks, feed.approvedFeedBlocks);
-        for (const payload of [feedRow.rows, await stored(id), (await publicDetail(id)).body, (await search()).body]) {
-          const text = JSON.stringify(payload);
-          assert.ok(!text.includes(oldPhoto));
-          assert.ok(!text.includes(open.listing.source.Address!.line1));
-        }
-      });
+      await t.test(
+        "an oversized indexed city cannot roll back a sibling removal",
+        async () => {
+          const badKey = "Synthetic writer oversized city";
+          const removeKey = "Synthetic writer city sibling";
+          await write([upsert(badKey, 1), upsert(removeKey, 1)]);
+          const badId = await identity(primary, badKey);
+          const siblingId = await identity(primary, removeKey);
+          const bad = upsert(badKey, 2);
+          bad.listing.source.Address!.city = randomBytes(8192).toString("hex");
+          assert.deepEqual(
+            (await write([bad, remove(removeKey, 2)])).rejected,
+            [{ index: 0, code: "invalid_change", hidden: true }],
+          );
+          await absent(badId);
+          await absent(siblingId);
+        },
+      );
 
-      await t.test("a removal with an unreadable revision records the greatest known revision", async () => {
-        const key = "Synthetic writer unreadable revision";
-        await write([upsert(key, 1)]);
-        const id = await identity(primary, key);
-        const newer = upsert(key, 2);
-        const bad = { ...remove(key, 0), revision: "unreadable" };
-        assert.deepEqual((await write([newer, bad])).rejected, [
-          { index: 1, code: "invalid_change", hidden: true },
-        ]);
-        await write([newer]);
-        await absent(id);
-        const result = await db.query(
-          "SELECT source_revision = $2::timestamptz AS retained FROM idx.source_mappings WHERE listing_id=$1",
-          [id, newer.revision],
-        );
-        assert.equal(result.rows[0].retained, true);
-      });
+      await t.test(
+        "a listing without its required disclosure fails closed",
+        async () => {
+          const key = "Synthetic writer missing disclosure";
+          await write([upsert(key, 1)]);
+          const id = await identity(primary, key);
+          const bad = upsert(key, 2);
+          bad.listing.blocks = [];
+          assert.deepEqual((await write([bad])).rejected, [
+            { index: 0, code: "invalid_change", hidden: true },
+          ]);
+          await absent(id);
+        },
+      );
 
-      await t.test("an oversized indexed city cannot roll back a sibling removal", async () => {
-        const badKey = "Synthetic writer oversized city";
-        const removeKey = "Synthetic writer city sibling";
-        await write([upsert(badKey, 1), upsert(removeKey, 1)]);
-        const badId = await identity(primary, badKey);
-        const siblingId = await identity(primary, removeKey);
-        const bad = upsert(badKey, 2);
-        bad.listing.source.Address!.city = randomBytes(8192).toString("hex");
-        assert.deepEqual((await write([bad, remove(removeKey, 2)])).rejected, [
-          { index: 0, code: "invalid_change", hidden: true },
-        ]);
-        await absent(badId);
-        await absent(siblingId);
-      });
-
-      await t.test("a listing without its required disclosure fails closed", async () => {
-        const key = "Synthetic writer missing disclosure";
-        await write([upsert(key, 1)]);
-        const id = await identity(primary, key);
-        const bad = upsert(key, 2);
-        bad.listing.blocks = [];
-        assert.deepEqual((await write([bad])).rejected, [
-          { index: 0, code: "invalid_change", hidden: true },
-        ]);
-        await absent(id);
-      });
-
-      await t.test("legacy long source keys can be reseeded, updated, and removed", async () => {
-        const key = "Synthetic writer " + "x".repeat(1025);
-        const record = structuredClone(fixtures.listings[0]);
-        record.publicId = "lst_writer_legacy_key";
-        record.source.ListingKey = key;
-        await db.query(
-          `WITH copied AS (
+      await t.test(
+        "legacy long source keys can be reseeded, updated, and removed",
+        async () => {
+          const key = "Synthetic writer " + "x".repeat(1025);
+          const record = structuredClone(fixtures.listings[0]);
+          record.publicId = "lst_writer_legacy_key";
+          record.source.ListingKey = key;
+          await db.query(
+            `WITH copied AS (
             INSERT INTO idx.listings
             SELECT (jsonb_populate_record(NULL::idx.listings, to_jsonb(l) || jsonb_build_object('id', $1::text))).*
             FROM idx.listings l WHERE id='lst_demo_0001'
@@ -427,70 +480,90 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           )
           INSERT INTO idx.source_mappings (feed_id, source_key, listing_id, source_revision)
           SELECT $2, $3, id, source_updated_at FROM copied`,
-          [record.publicId, primary, key],
-        );
-        record.source.ListPrice = "123000";
-        await seed(db, { feeds: [], sites: [], listings: [record] });
-        assert.equal((await stored(record.publicId))[0].price, "123000");
-        const update = upsert(key, 1);
-        update.listing.source.ListPrice = "124000";
-        assert.deepEqual((await write([update])).rejected, []);
-        assert.equal((await publicDetail(record.publicId)).body.data.price.amount, "124000");
-        assert.equal((await searchItem(record.publicId)).price?.amount, "124000");
-        await write([remove(key, 2)]);
-        await absent(record.publicId);
-      });
+            [record.publicId, primary, key],
+          );
+          record.source.ListPrice = "123000";
+          await seed(db, { feeds: [], sites: [], listings: [record] });
+          assert.equal((await stored(record.publicId))[0].price, "123000");
+          const update = upsert(key, 1);
+          update.listing.source.ListPrice = "124000";
+          assert.deepEqual((await write([update])).rejected, []);
+          assert.equal(
+            (await publicDetail(record.publicId)).body.data.price.amount,
+            "124000",
+          );
+          assert.equal(
+            (await searchItem(record.publicId)).price?.amount,
+            "124000",
+          );
+          await write([remove(key, 2)]);
+          await absent(record.publicId);
+        },
+      );
 
-      await t.test("two restricted writers serialize concurrent pages for the same feed", async (t) => {
-        const peer = new pg.Client({
-          connectionString: process.env.LISTING_WRITER_DATABASE_URL,
-        });
-        await peer.connect();
-        t.after(() => peer.end());
-        const key = "Synthetic writer concurrent updates";
-        await write([upsert(key, 1)]);
-        const id = await identity(primary, key);
-        const peerPid = (await peer.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
-        let committing!: () => void;
-        let release!: () => void;
-        const commit = new Promise<void>((resolve) => {
-          committing = resolve;
-        });
-        const released = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        const query = writer.query.bind(writer);
-        t.mock.method(writer, "query", async (sql: string, values?: unknown[]) => {
-          if (sql === "COMMIT") {
-            committing();
-            await released;
-          }
-          return query(sql, values);
-        });
-        const first = write([remove(key, 3)]);
-        await Promise.race([commit, first]);
-        const second = applyListingPage(peer, primary, [upsert(key, 2)], feed);
-        try {
-          let waiting = false;
-          for (let attempt = 0; attempt < 100; attempt++) {
-            const result = await db.query(
-              "SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted",
-              [peerPid],
-            );
-            if (result.rowCount) {
-              waiting = true;
-              break;
+      await t.test(
+        "two restricted writers serialize concurrent pages for the same feed",
+        async (t) => {
+          const peer = new pg.Client({
+            connectionString: process.env.LISTING_WRITER_DATABASE_URL,
+          });
+          await peer.connect();
+          t.after(() => peer.end());
+          const key = "Synthetic writer concurrent updates";
+          await write([upsert(key, 1)]);
+          const id = await identity(primary, key);
+          const peerPid = (await peer.query("SELECT pg_backend_pid() AS pid"))
+            .rows[0].pid;
+          let committing!: () => void;
+          let release!: () => void;
+          const commit = new Promise<void>((resolve) => {
+            committing = resolve;
+          });
+          const released = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const query = writer.query.bind(writer);
+          t.mock.method(
+            writer,
+            "query",
+            async (sql: string, values?: unknown[]) => {
+              if (sql === "COMMIT") {
+                committing();
+                await released;
+              }
+              return query(sql, values);
+            },
+          );
+          const first = write([remove(key, 3)]);
+          await Promise.race([commit, first]);
+          const second = applyListingPage(
+            peer,
+            primary,
+            [upsert(key, 2)],
+            feed,
+          );
+          try {
+            let waiting = false;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              const result = await db.query(
+                "SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted",
+                [peerPid],
+              );
+              if (result.rowCount) {
+                waiting = true;
+                break;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 10));
             }
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            assert.ok(waiting, "The second writer must wait on the feed lock");
+            await publicDetail(id);
+          } finally {
+            release();
+            await Promise.all([first, second]);
           }
-          assert.ok(waiting, "The second writer must wait on the feed lock");
-          await publicDetail(id);
-        } finally {
-          release();
-          await Promise.all([first, second]);
-        }
-        await absent(id);
-      });
+          await absent(id);
+        },
+      );
     },
   );
   await t.test(

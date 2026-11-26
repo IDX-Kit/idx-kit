@@ -95,11 +95,7 @@ export async function updateListingFreshness(
   );
 }
 
-async function writePage(
-  client: pg.Client,
-  feedId: string,
-  rows: PageRow[],
-) {
+async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
   // Claim identities before touching facts. The feed lock holds the selected state.
   await client.query(
     `WITH incoming AS MATERIALIZED (
@@ -178,10 +174,17 @@ function groupPage<T>(rows: readonly T[], sourceKey: (row: T) => string) {
 function validateNewKey(feedId: string, sourceKey: string, stored?: Stored) {
   // Existing keys have already fit the index. Leave headroom for new composite keys.
   const bytes = Buffer.byteLength(sourceKey);
-  return stored !== undefined || (bytes <= 1024 && Buffer.byteLength(feedId) + bytes <= 2048);
+  return (
+    stored !== undefined ||
+    (bytes <= 1024 && Buffer.byteLength(feedId) + bytes <= 2048)
+  );
 }
 
-function selectChange(rows: Candidate[], stored: Stored | undefined, fixture = false) {
+function selectChange(
+  rows: Candidate[],
+  stored: Stored | undefined,
+  fixture = false,
+) {
   // Higher revisions win. Ties combine field restrictions, and a removal wins
   // a tie or an unreadable revision. Keep the greatest revision the page knew.
   const revision = rows.reduce((latest, row) => {
@@ -198,10 +201,14 @@ function selectChange(rows: Candidate[], stored: Stored | undefined, fixture = f
   if (removal) return { ...removal, revision };
 
   const alive = latest.flatMap((row) => {
-    return row.listing ? [{ row, listing: row.listing, text: JSON.stringify(row.listing) }] : [];
+    return row.listing
+      ? [{ row, listing: row.listing, text: JSON.stringify(row.listing) }]
+      : [];
   });
   if (!alive.length) return;
-  const fields = new Set<WithheldField>(sameRevision ? stored.withheld ?? [] : []);
+  const fields = new Set<WithheldField>(
+    sameRevision ? (stored.withheld ?? []) : [],
+  );
   const before = fields.size;
   for (const { listing } of alive) {
     for (const field of listing.facts.withheldFields) fields.add(field);
@@ -210,7 +217,8 @@ function selectChange(rows: Candidate[], stored: Stored | undefined, fixture = f
 
   const [winner] = alive.sort((a, b) => {
     const difference =
-      b.listing.facts.withheldFields.length - a.listing.facts.withheldFields.length;
+      b.listing.facts.withheldFields.length -
+      a.listing.facts.withheldFields.length;
     return difference || (a.text < b.text ? -1 : Number(a.text > b.text));
   });
   const { facts } = winner.listing;
@@ -231,28 +239,31 @@ export async function writeFixturePages(
   records: FixtureRecord[],
 ) {
   for (let start = 0; start < records.length; start += listingPageLimit) {
-    const candidates = records.slice(start, start + listingPageLimit).map((record, index) => {
-      if (
-        record.synthetic !== true ||
-        record.publicId.length > 128 ||
-        !/^lst_[A-Za-z0-9_-]+$/.test(record.publicId)
-      )
-        throw new Error("Invalid fixture identity");
-      const listing = normalize(record);
-      return {
-        index,
-        source_key: record.source.ListingKey,
-        revision: revisionKey(record.sourceUpdatedAt),
-        candidate: record.publicId,
-        listing: isRemoved(record.source, true) ? null : listing,
-      };
-    });
+    const candidates = records
+      .slice(start, start + listingPageLimit)
+      .map((record, index) => {
+        if (
+          record.synthetic !== true ||
+          record.publicId.length > 128 ||
+          !/^lst_[A-Za-z0-9_-]+$/.test(record.publicId)
+        )
+          throw new Error("Invalid fixture identity");
+        const listing = normalize(record);
+        return {
+          index,
+          source_key: record.source.ListingKey,
+          revision: revisionKey(record.sourceUpdatedAt),
+          candidate: record.publicId,
+          listing: isRemoved(record.source, true) ? null : listing,
+        };
+      });
     const groups = groupPage(candidates, (row) => row.source_key);
     const existing = await readExisting(client, feedId, [...groups.keys()]);
     const rows: PageRow[] = [];
     for (const [key, changes] of groups) {
       const stored = existing.get(key);
-      if (!validateNewKey(feedId, key, stored)) throw new Error("Invalid source key");
+      if (!validateNewKey(feedId, key, stored))
+        throw new Error("Invalid source key");
       const selected = selectChange(changes, stored, true);
       if (selected) rows.push(selected);
     }
@@ -268,9 +279,13 @@ export async function applyListingPage(
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
-  const feedBlocks = disclosureSchema.min(1).parse(disclosures.approvedFeedBlocks);
+  const feedBlocks = disclosureSchema
+    .min(1)
+    .parse(disclosures.approvedFeedBlocks);
   const approved = new Map(
-    disclosureSchema.parse(disclosures.approvedListingBlocks).map((block) => [block.id, block]),
+    disclosureSchema
+      .parse(disclosures.approvedListingBlocks)
+      .map((block) => [block.id, block]),
   );
   const resolveBlocks = (blocks: DisplayBlock[]) =>
     disclosureIds.parse(blocks).map(({ id }) => {
@@ -279,19 +294,26 @@ export async function applyListingPage(
       return block;
     });
 
-  const rejected: { index: number; code: "invalid_key" | "invalid_change" }[] = [];
+  const rejected: { index: number; code: "invalid_key" | "invalid_change" }[] =
+    [];
   const indexed = Array.from(changes, (change, index) => ({ change, index }));
   const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
   await client.query("BEGIN");
   try {
     await lockListingFeeds(client, [feedId]);
-    const keys = [...groups.keys()].filter((key) => sourceKeySchema.safeParse(key).success);
+    const keys = [...groups.keys()].filter(
+      (key) => sourceKeySchema.safeParse(key).success,
+    );
     const existing = await readExisting(client, feedId, keys);
     const rows: Candidate[] = [];
     for (const [key, group] of groups) {
       const stored = existing.get(key);
-      if (!sourceKeySchema.safeParse(key).success || !validateNewKey(feedId, key, stored)) {
-        for (const { index } of group) rejected.push({ index, code: "invalid_key" });
+      if (
+        !sourceKeySchema.safeParse(key).success ||
+        !validateNewKey(feedId, key, stored)
+      ) {
+        for (const { index } of group)
+          rejected.push({ index, code: "invalid_key" });
         continue;
       }
       const candidates = group.map(({ change, index }) => {
@@ -334,10 +356,12 @@ export async function applyListingPage(
     await client.query("COMMIT");
     const applied = new Set(rows.map((row) => row.index));
     return {
-      rejected: rejected.sort((a, b) => a.index - b.index).map((record) => ({
-        ...record,
-        hidden: applied.has(record.index),
-      })),
+      rejected: rejected
+        .sort((a, b) => a.index - b.index)
+        .map((record) => ({
+          ...record,
+          hidden: applied.has(record.index),
+        })),
     };
   } catch (error) {
     await client.query("ROLLBACK");

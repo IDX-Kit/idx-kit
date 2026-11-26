@@ -20,7 +20,10 @@ const imageSchema = z.object({
   }),
 });
 const blockSchema = z.object({
-  id: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/),
+  id: z
+    .string()
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/),
   text: text.min(1).max(8192),
   placement: z.enum(["adjacent", "afterListing", "pageFooter"]),
   prominence: z.enum(["normal", "medianListingText", "largestListingText"]),
@@ -67,10 +70,7 @@ export interface FixtureRecord extends ListingRecord {
   synthetic: true;
 }
 
-export function normalize(
-  record: ListingRecord,
-  feedPage = false,
-) {
+export function normalize(record: ListingRecord, feedPage = false) {
   const source = record.source;
   for (const name of [
     "ListingKey",
@@ -116,9 +116,10 @@ export function normalize(
     throw new Error("Missing display permission");
   const address = addressSchema.nullable().parse(source.Address);
   const fields = new Set(fieldsSchema.optional().parse(record.withheldFields));
-  const hideAddress =
-    !source.InternetAddressDisplayYN || fields.has("address");
-  const protection = addressProtection(hideAddress && !feedPage ? address : null);
+  const hideAddress = !source.InternetAddressDisplayYN || fields.has("address");
+  const protection = addressProtection(
+    hideAddress && !feedPage ? address : null,
+  );
   // Feed media and text cannot be checked for a street once it has been cleared.
   const unverified = feedPage && (hideAddress || !address?.line1.trim());
   const images = feedPage
@@ -129,12 +130,7 @@ export function normalize(
   if (unverified && source.StandardStatus !== null) fields.add("status");
   const facts: Pick<
     Listing,
-    | "synthetic"
-    | "status"
-    | "price"
-    | "address"
-    | "bedrooms"
-    | "images"
+    "synthetic" | "status" | "price" | "address" | "bedrooms" | "images"
   > & { withheldFields: WithheldField[] } = {
     synthetic: record.synthetic,
     status:
@@ -147,9 +143,10 @@ export function normalize(
         : { amount: source.ListPrice, currency: "USD" },
     address,
     bedrooms: source.BedroomsTotal,
-    images: images?.map((image) => {
-      return feedPage ? { url: image.url, alt: "Property photo" } : image;
-    }) ?? null,
+    images:
+      images?.map((image) => {
+        return feedPage ? { url: image.url, alt: "Property photo" } : image;
+      }) ?? null,
     withheldFields: [...fields].sort(),
   };
   for (const field of fields ?? []) {
