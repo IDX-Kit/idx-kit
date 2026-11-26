@@ -8,6 +8,7 @@ export interface InquiryEmailEnv {
   RESEND_API_KEY?: string;
   INQUIRY_EMAIL_FROM?: string;
   INQUIRY_EMAIL_TO?: string;
+  RESEND_BASE_URL?: string;
 }
 
 export function inquiryEmailSettings(env: InquiryEmailEnv) {
@@ -16,7 +17,13 @@ export function inquiryEmailSettings(env: InquiryEmailEnv) {
   const to = env.INQUIRY_EMAIL_TO?.trim();
   if (!apiKey && !from && !to) return { mode: "off" } as const;
   if (!apiKey || !from || !to) return { mode: "incomplete" } as const;
-  return { mode: "enabled", apiKey, from, to } as const;
+  return {
+    mode: "enabled",
+    apiKey,
+    from,
+    to,
+    baseUrl: env.RESEND_BASE_URL,
+  } as const;
 }
 
 export type InquiryEmailSettings = ReturnType<typeof inquiryEmailSettings>;
@@ -68,7 +75,7 @@ export async function sendInquiryEmail(
       "Message:",
       input.message,
     ].join("\n");
-    const resend = new Resend(settings.apiKey);
+    const resend = new Resend(settings.apiKey, { baseUrl: settings.baseUrl });
     const signal = AbortSignal.timeout(3000);
     // The SDK forwards these fetch options along with the idempotency key.
     const options = {

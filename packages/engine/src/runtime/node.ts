@@ -13,6 +13,7 @@ const emailSettings = inquiryEmailSettings({
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   INQUIRY_EMAIL_FROM: process.env.INQUIRY_EMAIL_FROM,
   INQUIRY_EMAIL_TO: process.env.INQUIRY_EMAIL_TO,
+  RESEND_BASE_URL: process.env.RESEND_BASE_URL,
 });
 if (emailSettings.mode === "incomplete")
   throw new Error(
