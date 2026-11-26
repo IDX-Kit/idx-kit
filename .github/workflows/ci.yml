@@ -37,6 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -191,7 +192,7 @@ jobs:
         run: node --test tests/api/inquiry-email.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/inquiry-email.log"
       - name: Prove inquiry spam checks and replays with a loopback stand-in
         run: node --test tests/api/inquiry-spam.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/inquiry-spam.log"
-      - name: Prove detail then search without reseeding and check 100,000-listing search plans
+      - name: Prove reverse API order and measure filtered search plans at 100,000 listings
         run: |
           started=$SECONDS
           node --test tests/api/detail.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/api-reverse-detail.log"
