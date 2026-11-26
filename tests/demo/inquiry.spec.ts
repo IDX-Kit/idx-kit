@@ -134,7 +134,7 @@ async function rows() {
     .rows;
 }
 
-test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
+test.describe("no-JavaScript inquiry forms and durable receipts", () => {
   test.beforeAll(async () => {
     directory = await mkdtemp(`${tmpdir()}/idx-inquiry-`);
     db = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -198,7 +198,7 @@ test.describe.serial("no-JavaScript inquiry forms and durable receipts", () => {
     expect(row.visitor_email).toBe(visitor.email);
     expect(row.message).toBe(visitor.message);
     expect(row.context).toEqual({ pagePath: property });
-    expect(row.idempotency_key).toBe(second);
+    expect(row.idempotency_key).toBe(JSON.stringify(second));
     const time = await page.locator("time").getAttribute("datetime");
     expect(time).toBe(row.received_at.toISOString());
     expect(new URL(page.url()).searchParams.get("receipt")).toBe(row.id);
