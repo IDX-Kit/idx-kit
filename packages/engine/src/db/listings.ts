@@ -263,7 +263,12 @@ export async function writeFixturePages(
         };
       });
     const groups = groupPage(candidates, (row) => row.source_key);
-    const existing = await readExisting(client, feedId, [...groups.keys()], true);
+    const existing = await readExisting(
+      client,
+      feedId,
+      [...groups.keys()],
+      true,
+    );
     const rows: PageRow[] = [];
     for (const [key, changes] of groups) {
       const stored = existing.get(key);
