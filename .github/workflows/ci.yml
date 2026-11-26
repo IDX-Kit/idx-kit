@@ -39,11 +39,13 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - &setup-node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
           cache: npm
-      - name: Generate and mask disposable database credentials
+      - &database-credentials
+        name: Generate and mask disposable database credentials
         run: |
           node --input-type=module <<'JS'
           import { randomBytes } from "node:crypto";
@@ -57,7 +59,8 @@ jobs:
             appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
           }
           JS
-      - name: Install locked dependencies
+      - &install-dependencies
+        name: Install locked dependencies
         run: |
           node --version
           npm ci
@@ -111,13 +114,15 @@ jobs:
           git diff --exit-code -- packages/client/src/generated.ts
       - name: Typecheck both generated outputs and consumers
         run: npm run typecheck
-      - name: Install PostgreSQL 18
+      - &install-postgres
+        name: Install PostgreSQL 18
         run: |
           # Use only the disposable cluster; package installation must not create one.
           echo 'create_main_cluster = false' | sudo tee -a /etc/postgresql-common/createcluster.conf
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends postgresql-18
-      - name: Create disposable PostgreSQL 18 cluster
+      - &create-cluster
+        name: Create disposable PostgreSQL 18 cluster
         run: |
           export PATH="/usr/lib/postgresql/18/bin:$PATH"
           postgres --version
@@ -273,12 +278,37 @@ jobs:
         with:
           name: runtime-logs
           path: /tmp/idx-test-logs/*.log
-      - name: Stop only the task cluster
+      - &stop-cluster
+        name: Stop only the task cluster
         if: always()
         run: |
           if [ -f "$RUNNER_TEMP/idx11-pg/postmaster.pid" ]; then
             /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
           fi
+  sync-volume:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - *setup-node
+      - *database-credentials
+      - *install-dependencies
+      - *install-postgres
+      - *create-cluster
+      - name: Prepare the empty listings database
+        run: |
+          npm run demo:db:migrate
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
+      - name: Measure first load and repair at 100,000 listings
+        timeout-minutes: 16
+        run: node --test tests/sync/volume.test.ts
+      - *stop-cluster
   release-client:
     needs: [check, clean-demo]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit'
