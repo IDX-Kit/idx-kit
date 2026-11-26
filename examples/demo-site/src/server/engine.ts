@@ -45,7 +45,9 @@ export function logFailure(
   const status =
     cause instanceof ApiError ? cause.status : (upstream?.status ?? null);
   const path =
-    (error instanceof PageFailure ? error.path : null) ?? upstream?.path ?? null;
+    (error instanceof PageFailure ? error.path : null) ??
+    upstream?.path ??
+    null;
   writeLog({
     event: "demo_request_failed",
     category:

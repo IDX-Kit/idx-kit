@@ -185,7 +185,10 @@ test("site failures log once with status, request ID, path and redacted causes",
     engine.createInquiry(
       {
         listingId: "lst_synthetic",
-        visitor: { name: "Synthetic Visitor", email: "visitor@example.invalid" },
+        visitor: {
+          name: "Synthetic Visitor",
+          email: "visitor@example.invalid",
+        },
         message: privateText,
         context: { pagePath: "/properties/lst_synthetic" },
       },
