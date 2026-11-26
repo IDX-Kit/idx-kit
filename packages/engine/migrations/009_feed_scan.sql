@@ -3,7 +3,9 @@ CREATE TABLE idx.feed_scan_positions (
   version bigint NOT NULL CHECK (version > 0),
   scan_number bigint NOT NULL CHECK (scan_number > 0),
   active boolean NOT NULL,
-  next_link text CHECK (active OR next_link IS NULL)
+  next_link text CHECK (active OR next_link IS NULL),
+  records_seen bigint NOT NULL DEFAULT 0 CHECK (records_seen >= 0),
+  unreadable_records bigint NOT NULL DEFAULT 0 CHECK (unreadable_records BETWEEN 0 AND records_seen)
 );
 
 CREATE TABLE idx.listing_scan_stamps (

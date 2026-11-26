@@ -172,10 +172,11 @@ async function removeMissingListings(
   client: pg.Client,
   feedId: string,
   scanNumber: bigint,
-  maxRemovals: number,
+  maxRemovals: number | null,
 ) {
   // Absence withdraws at the stored revision. Keep the mapping and revision
   // as the tombstone, just as for an explicit withdrawal at that revision.
+  // A null limit counts missing listings without withdrawing them.
   const { rows } = await client.query<{ missing: string; removed: string }>(
     `WITH missing AS MATERIALIZED (
       SELECT m.listing_id FROM idx.source_mappings m
@@ -399,7 +400,6 @@ export async function applyListingPage(
   const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
   return listingFeedTransaction(client, feedId, async () => {
     if (checkpoint) await saveFeedCheckpoint(client, feedId, checkpoint);
-    if (scan) await saveScanCheckpoint(client, feedId, scan.checkpoint);
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
@@ -475,15 +475,28 @@ export async function applyListingPage(
       }
       rows.push(selected);
     }
+    const scanCheckpoint = scan && {
+      ...scan.checkpoint,
+      recordsSeen: scan.checkpoint.recordsSeen + changes.length,
+      unreadableRecords:
+        scan.checkpoint.unreadableRecords +
+        rejected.filter(({ code }) => code === "invalid_key").length,
+    };
+    if (scanCheckpoint)
+      await saveScanCheckpoint(client, feedId, scanCheckpoint);
     await writePage(client, feedId, rows);
     await stampScanKeys(client, feedId, keys, scan !== undefined);
     const removal =
-      scan && !scan.checkpoint.active && scan.maxRemovals !== undefined
+      scan &&
+      scanCheckpoint &&
+      !scanCheckpoint.active &&
+      scanCheckpoint.unreadableRecords === 0 &&
+      scan.maxRemovals !== undefined
         ? await removeMissingListings(
             client,
             feedId,
-            scan.checkpoint.scanNumber,
-            scan.maxRemovals,
+            scanCheckpoint.scanNumber,
+            scanCheckpoint.recordsSeen > 0 ? scan.maxRemovals : null,
           )
         : undefined;
     if (!scan) await updateListingFreshness(client, [feedId], feedBlocks);
@@ -492,6 +505,7 @@ export async function applyListingPage(
     }
     const applied = new Set(rows.map((row) => row.index));
     return {
+      ...(scanCheckpoint && { scanCheckpoint }),
       ...(removal && { removal }),
       rejected: rejected
         .sort((a, b) => a.index - b.index)

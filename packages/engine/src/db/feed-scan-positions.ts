@@ -6,6 +6,8 @@ export interface ScanCheckpoint {
   scanNumber: bigint;
   active: boolean;
   nextLink: string | null;
+  recordsSeen: number;
+  unreadableRecords: number;
 }
 
 export async function readScanCheckpoint(
@@ -17,6 +19,8 @@ export async function readScanCheckpoint(
     scan_number: string;
     active: boolean;
     next_link: string | null;
+    records_seen: string;
+    unreadable_records: string;
   }>("SELECT * FROM idx.feed_scan_positions WHERE feed_id = $1", [feedId]);
   const row = rows[0];
   return {
@@ -24,6 +28,8 @@ export async function readScanCheckpoint(
     scanNumber: row ? BigInt(row.scan_number) : 0n,
     active: row?.active ?? false,
     nextLink: row?.next_link ?? null,
+    recordsSeen: row ? Number(row.records_seen) : 0,
+    unreadableRecords: row ? Number(row.unreadable_records) : 0,
   };
 }
 
@@ -31,16 +37,19 @@ export async function readScanCheckpoint(
 export async function saveScanCheckpoint(
   client: pg.Client,
   feedId: string,
-  { version, scanNumber, active, nextLink }: ScanCheckpoint,
+  checkpoint: ScanCheckpoint,
 ) {
+  const { version, scanNumber, active, nextLink, recordsSeen, unreadableRecords } =
+    checkpoint;
   const sql =
     version === 0n
       ? `INSERT INTO idx.feed_scan_positions
-          (feed_id, version, scan_number, active, next_link)
-        VALUES ($1, $2::bigint + 1, $3, $4, $5)
+          (feed_id, version, scan_number, active, next_link, records_seen, unreadable_records)
+        VALUES ($1, $2::bigint + 1, $3, $4, $5, $6, $7)
         ON CONFLICT (feed_id) DO NOTHING`
       : `UPDATE idx.feed_scan_positions SET version = version + 1,
-          scan_number = $3, active = $4, next_link = $5
+          scan_number = $3, active = $4, next_link = $5,
+          records_seen = $6, unreadable_records = $7
         WHERE feed_id = $1 AND version = $2`;
   const result = await client.query(sql, [
     feedId,
@@ -48,6 +57,8 @@ export async function saveScanCheckpoint(
     scanNumber.toString(),
     active,
     nextLink,
+    recordsSeen,
+    unreadableRecords,
   ]);
   if (!result.rowCount) throw new FeedPositionChanged();
 }

@@ -25,6 +25,17 @@ type ScanResult = {
   | { code: StoppedRun["code"]; nextStep: FeedNextStep }
   | { code: "invalid_removal_limit"; nextStep: { kind: "stop" } }
   | {
+      code: "empty_scan";
+      nextStep: { kind: "stop" };
+      wouldRemove?: number;
+      maxRemovals?: number;
+    }
+  | {
+      code: "unreadable_keys";
+      nextStep: { kind: "stop" };
+      unreadableRecords: number;
+    }
+  | {
       code: "removal_limit_exceeded";
       nextStep: { kind: "stop" };
       wouldRemove: number;
@@ -34,7 +45,7 @@ type ScanResult = {
 
 const removalLimit = z.int().nonnegative();
 
-// Each run uses its own connected writer client. Counts cover this invocation.
+// Each run uses its own connected writer client.
 export async function syncFullScan(
   client: pg.Client,
   feed: ScanFeed,
@@ -55,6 +66,8 @@ export async function syncFullScan(
     if (!checkpoint.active) {
       checkpoint.scanNumber += 1n;
       checkpoint.active = true;
+      checkpoint.recordsSeen = 0;
+      checkpoint.unreadableRecords = 0;
       await listingFeedTransaction(client, feedId, () =>
         saveScanCheckpoint(client, feedId, checkpoint),
       );
@@ -75,7 +88,7 @@ export async function syncFullScan(
         );
         const changes = mapChanges(records, rows[0].ingestedAt);
         const next = { ...checkpoint, active: nextLink !== null, nextLink };
-        const { removal } = await applyListingPage(
+        const { scanCheckpoint: saved, removal } = await applyListingPage(
           client,
           feedId,
           changes,
@@ -85,7 +98,8 @@ export async function syncFullScan(
             scan: { checkpoint: next, maxRemovals },
           },
         );
-        checkpoint = { ...next, version: next.version + 1n };
+        if (!saved) throw new Error("Missing saved scan checkpoint");
+        checkpoint = { ...saved, version: next.version + 1n };
         if (removal) {
           wouldRemove = removal.wouldRemove;
           counts.listingsRemoved = removal.listingsRemoved;
@@ -100,6 +114,22 @@ export async function syncFullScan(
     );
     if (outcome.code !== "complete") {
       return { ...counts, code: outcome.code, nextStep: nextStepFor(outcome) };
+    }
+    if (checkpoint.recordsSeen === 0) {
+      return {
+        ...counts,
+        code: "empty_scan",
+        nextStep: { kind: "stop" },
+        ...(maxRemovals !== undefined && { wouldRemove, maxRemovals }),
+      };
+    }
+    if (checkpoint.unreadableRecords > 0) {
+      return {
+        ...counts,
+        code: "unreadable_keys",
+        nextStep: { kind: "stop" },
+        unreadableRecords: checkpoint.unreadableRecords,
+      };
     }
     if (maxRemovals !== undefined && wouldRemove > maxRemovals) {
       return {

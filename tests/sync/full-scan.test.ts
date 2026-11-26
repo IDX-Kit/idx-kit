@@ -205,33 +205,35 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
-    "a middle fetch failure defers withdrawal until the same chain resumes",
+    "a resumed scan can withdraw after a nonempty first page and an empty final page",
     async (t) => {
       const state = await setup(t, "resume");
       const before = await state.listings();
       const feed = await standIn(t, (_url, n) => {
-        if (n === 1) return page([first], "?cursor=2");
+        if (n === 1) return page([first, second], "?cursor=2");
         if (n === 2) return { status: 503, retryAfter: "120" };
-        return page([second]);
+        return page([]);
       });
       assert.deepEqual(await state.scan(feed, 1), {
         code: "http_error",
         nextStep: { kind: "retry", afterSeconds: 120 },
         pagesRead: 1,
-        recordsSeen: 1,
+        recordsSeen: 2,
         listingsRemoved: 0,
       });
       const pending = await state.checkpoint();
       assert.equal(pending.active, true);
+      assert.equal(pending.recordsSeen, 2);
       assert.equal(new URL(pending.nextLink!).search, "?cursor=2");
       assert.deepEqual(await state.listings(), [
         { ...before[0], stamp: pending.scanNumber.toString() },
-        ...before.slice(1),
+        { ...before[1], stamp: pending.scanNumber.toString() },
+        before[2],
       ]);
       assert.deepEqual(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
-        recordsSeen: 1,
+        recordsSeen: 0,
         listingsRemoved: 1,
       });
       assert.deepEqual(
@@ -243,6 +245,8 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         scanNumber: pending.scanNumber,
         active: false,
         nextLink: null,
+        recordsSeen: 2,
+        unreadableRecords: 0,
       });
       assert.equal((await state.listings())[2].facts, null);
     },
@@ -340,42 +344,128 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     },
   );
 
+  await t.test("the limit stops all absence withdrawals", async (t) => {
+    const state = await setup(t, "limit");
+    const before = await state.listings();
+    const feed = await standIn(t, () => page([first]));
+    for (const invalid of [-1, 1.5, Infinity]) {
+      assert.deepEqual(await state.scan(feed, invalid), {
+        code: "invalid_removal_limit",
+        nextStep: { kind: "stop" },
+        pagesRead: 0,
+        recordsSeen: 0,
+        listingsRemoved: 0,
+      });
+    }
+    assert.equal(feed.calls.length, 0);
+    assert.deepEqual(await state.scan(feed, 1), {
+      code: "removal_limit_exceeded",
+      nextStep: { kind: "stop" },
+      pagesRead: 1,
+      recordsSeen: 1,
+      listingsRemoved: 0,
+      wouldRemove: 2,
+      maxRemovals: 1,
+    });
+    assert.equal((await state.checkpoint()).active, false);
+    assert.deepEqual(
+      (await state.listings()).map(({ facts }) => facts),
+      before.map(({ facts }) => facts),
+    );
+  });
+
   await t.test(
-    "the limit stops all absence withdrawals, including after an empty reply",
+    "an empty scan keeps listings even when the limit permits removing them all",
     async (t) => {
-      const state = await setup(t, "limit");
+      const state = await setup(t, "empty", [first]);
       const before = await state.listings();
-      const feed = await standIn(t, (_url, n) => page(n === 1 ? [first] : []));
-      for (const invalid of [-1, 1.5, Infinity]) {
-        assert.deepEqual(await state.scan(feed, invalid), {
-          code: "invalid_removal_limit",
-          nextStep: { kind: "stop" },
-          pagesRead: 0,
-          recordsSeen: 0,
-          listingsRemoved: 0,
-        });
-      }
-      assert.equal(feed.calls.length, 0);
-      for (const recordsSeen of [1, 0]) {
-        assert.deepEqual(await state.scan(feed, 1), {
-          code: "removal_limit_exceeded",
+      const feed = await standIn(t, () => page([]));
+      for (const maxRemovals of [0, 1]) {
+        assert.deepEqual(await state.scan(feed, maxRemovals), {
+          code: "empty_scan",
           nextStep: { kind: "stop" },
           pagesRead: 1,
-          recordsSeen,
+          recordsSeen: 0,
           listingsRemoved: 0,
-          wouldRemove: 3 - recordsSeen,
-          maxRemovals: 1,
+          wouldRemove: 1,
+          maxRemovals,
         });
         assert.equal((await state.checkpoint()).active, false);
-        assert.deepEqual(
-          (await state.listings()).map(({ facts }) => facts),
-          before.map(({ facts }) => facts),
-        );
+        assert.deepEqual(await state.listings(), before);
       }
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", ""],
       );
+    },
+  );
+
+  await t.test(
+    "an unreadable key on the final page blocks absence withdrawals but permits repairs",
+    async (t) => {
+      const state = await setup(t, "unreadable_final", [first, second]);
+      const [before] = await state.listings();
+      const feed = await standIn(t, () =>
+        page([
+          { ...first, ListingKey: undefined },
+          record("second", 2, "225.00"),
+        ]),
+      );
+      assert.deepEqual(await state.scan(feed, 1), {
+        code: "unreadable_keys",
+        nextStep: { kind: "stop" },
+        pagesRead: 1,
+        recordsSeen: 2,
+        listingsRemoved: 0,
+        unreadableRecords: 1,
+      });
+      assert.equal((await state.checkpoint()).active, false);
+      const [kept, repaired] = await state.listings();
+      assert.deepEqual(kept, before);
+      assert.equal(repaired.facts?.price, 225);
+    },
+  );
+
+  await t.test(
+    "unreadable keys from an earlier page still block absence withdrawals after a resume",
+    async (t) => {
+      const state = await setup(t, "unreadable_resume");
+      const before = await state.listings();
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) {
+          const oversized = { ...first, ListingKey: "a".repeat(1025) };
+          return page([oversized, oversized, second], "?cursor=2");
+        }
+        if (n === 2) return { status: 503 };
+        return page([record("third", 2, "225.00"), second]);
+      });
+      assert.deepEqual(await state.scan(feed, 1), {
+        code: "http_error",
+        nextStep: { kind: "retry" },
+        pagesRead: 1,
+        recordsSeen: 3,
+        listingsRemoved: 0,
+      });
+      assert.equal((await state.checkpoint()).unreadableRecords, 2);
+      assert.deepEqual(await state.scan(feed, 1), {
+        code: "unreadable_keys",
+        nextStep: { kind: "stop" },
+        pagesRead: 1,
+        recordsSeen: 2,
+        listingsRemoved: 0,
+        unreadableRecords: 2,
+      });
+      const [kept, , repaired] = await state.listings();
+      assert.deepEqual(kept, before[0]);
+      assert.equal(repaired.facts?.price, 225);
+      assert.equal((await state.checkpoint()).active, false);
+      assert.deepEqual(await state.scan(feed, 1), {
+        ...complete,
+        pagesRead: 1,
+        recordsSeen: 2,
+        listingsRemoved: 1,
+      });
+      assert.equal((await state.listings())[0].facts, null);
     },
   );
 
