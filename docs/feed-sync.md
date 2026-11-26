@@ -120,8 +120,10 @@ scan numbers, counts, and outcomes are `null`. A scan number is a decimal string
 Usage and settings errors print a diagnostic to standard error. Once the
 settings are valid, the command prints a JSON result even if it cannot connect
 to the database or find the feed.
-`outcomeSaved: false` means `status` won't show this run and later invocations
-won't remember any wait requested by this run.
+When `outcomeSaved` is `false`, listing changes, position, and the refresh time
+for a completed run are still saved with its pages, and `status` shows position
+and freshness as usual alongside the previous `lastOutcome` because the record
+of how the run ended, including any wait the feed requested, could not be saved.
 
 Each invocation makes one attempt. After an interruption, run the same command
 again to resume after the last saved page. If the feed rejects its continuation,
