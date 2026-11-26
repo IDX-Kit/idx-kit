@@ -824,7 +824,7 @@ test(
               );
             }
             await db.query(
-              "ANALYZE idx.listings, idx.source_mappings, idx.data_licenses",
+              "ANALYZE idx.listings, idx.source_mappings, idx.data_licenses, idx.feeds",
             );
             for (const sort of ["price", "-price"]) {
               const query = searchQuery(
