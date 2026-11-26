@@ -81,7 +81,7 @@ export async function sendInquiryEmail(
     const options = {
       idempotencyKey: row.id,
       signal,
-      redirect: "error" as const,
+      redirect: "manual" as const,
     };
     const { data, error } = await resend.emails.send(
       {
@@ -97,7 +97,7 @@ export async function sendInquiryEmail(
     if (
       typeof status === "number" &&
       Number.isInteger(status) &&
-      status >= 400 &&
+      status >= 300 &&
       status <= 599
     ) {
       fail("EmailServiceError", status);
