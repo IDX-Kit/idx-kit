@@ -1,11 +1,19 @@
 import { readdir, readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { logFailure } from "../log.ts";
 
 export async function migrate(client: pg.Client) {
-  // Keep the lock across the transaction boundary needed for concurrent indexes.
-  await client.query("SELECT pg_advisory_lock(711001)");
+  // A session lock survives COMMIT. Poll outside SQL so a waiting migrator
+  // releases its snapshot before CREATE INDEX CONCURRENTLY needs it to finish.
+  for (;;) {
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(711001) AS locked",
+    );
+    if (rows[0].locked) break;
+    await delay(100);
+  }
   try {
     await client.query("BEGIN");
     await client.query(
@@ -21,6 +29,7 @@ export async function migrate(client: pg.Client) {
       );
       if (applied.rowCount) continue;
       const sql = await readFile(new URL(name, directory), "utf8");
+      // These files contain one CREATE INDEX CONCURRENTLY for the named index.
       const index = /^\d+_([a-z][a-z0-9_]*)\.index\.sql$/.exec(name)?.[1];
       if (index) {
         await client.query("COMMIT");

@@ -66,11 +66,17 @@ export async function searchListings(
         if (range === "tie") where.push(`l.id > ${bind(last.id)}`);
       }
     }
+    // A non-null descending bedroom search can scan the price/bedroom index backward.
+    let direction = "ASC NULLS LAST";
+    if (c.sort === "-price") {
+      direction =
+        c.minBedrooms !== null && range !== "null" ? "DESC" : "DESC NULLS LAST";
+    }
     rows.push(
       ...(await readQuery<ListingRow>(
         pool,
         `${licensedListing} WHERE ${where.join(" AND ")}
-      ORDER BY l.price ${c.sort === "price" ? "ASC" : "DESC"} NULLS LAST, l.id ASC LIMIT ${bind(c.limit + 1 - rows.length)}`,
+      ORDER BY l.price ${direction}, l.id ASC LIMIT ${bind(c.limit + 1 - rows.length)}`,
         values,
         `search.${range}`,
       )),

@@ -108,30 +108,35 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
   );
   await t.test(
     "the bedroom index upgrades populated listings and recovers an interrupted build",
-    async () => {
+    async (t) => {
       await seed(db, fixtures);
       const listings = await snapshot();
-      await db.query("DROP INDEX idx.listings_bedrooms");
+      await db.query("DROP INDEX idx.listings_price_bedrooms_id");
       const forget = () =>
         db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
-          "005_listings_bedrooms.index.sql",
+          "005_listings_price_bedrooms_id.index.sql",
         ]);
       await forget();
       // A failed concurrent build leaves an invalid index behind.
       await assert.rejects(
         db.query(
-          "CREATE UNIQUE INDEX CONCURRENTLY listings_bedrooms ON idx.listings (synthetic)",
+          "CREATE UNIQUE INDEX CONCURRENTLY listings_price_bedrooms_id ON idx.listings (synthetic)",
         ),
         { code: "23505" },
       );
       const index = async () =>
         (
           await db.query(
-            "SELECT indexrelid::text AS oid, indisvalid, indisunique FROM pg_index WHERE indexrelid = 'idx.listings_bedrooms'::regclass",
+            "SELECT indexrelid::text AS oid, indisvalid, indisunique FROM pg_index WHERE indexrelid = 'idx.listings_price_bedrooms_id'::regclass",
           )
         ).rows[0];
       assert.equal((await index()).indisvalid, false);
-      await migrate(db);
+      const peer = new pg.Client({
+        connectionString: process.env.DATABASE_URL,
+      });
+      await peer.connect();
+      t.after(() => peer.end());
+      await Promise.all([migrate(db), migrate(peer)]);
       const built = await index();
       assert.equal(built.indisvalid, true);
       assert.equal(built.indisunique, false);
