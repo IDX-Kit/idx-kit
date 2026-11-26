@@ -1,15 +1,19 @@
 import { expect, test } from "@playwright/test";
-import type { Page } from "@playwright/test";
 import { access, readFile, stat } from "node:fs/promises";
 import pg from "pg";
 import { execute, startNodeEngine } from "../api/runtime.ts";
 import { registerSecret } from "../logs.ts";
+import {
+  fillInquiry,
+  inquiryKeyField,
+  restoreInquiryKey,
+  submitInquiry,
+} from "./inquiry-form.ts";
 import { startNodeSite } from "./runtime.ts";
 
 const directory = process.env.IDX_DEMO_DIR;
 const property = "/properties/lst_demo_0001";
 const receiptHeading = "Received by the demo engine; no message was sent";
-const keyField = '[name="idempotencyKey"]';
 // Invented values for the two synthetic submissions.
 const visitor = {
   name: "Synthetic Setup Visitor",
@@ -17,22 +21,6 @@ const visitor = {
   message: "This is an invented inquiry for the quick start.",
 };
 const retryMessage = "This invented inquiry was sent during the outage.";
-
-async function fill(page: Page, message = visitor.message) {
-  await page.getByLabel("Name", { exact: true }).fill(visitor.name);
-  await page.getByLabel("Email", { exact: true }).fill(visitor.email);
-  await page.getByLabel("Message", { exact: true }).fill(message);
-}
-
-async function send(page: Page, button = "Send") {
-  const posted = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === property,
-  );
-  await page.getByRole("button", { name: button, exact: true }).click();
-  return (await posted).status();
-}
 
 async function rows() {
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -104,9 +92,9 @@ test.describe("clean demo quick start", () => {
         await expect(page).toHaveURL(new RegExp(`${property}$`));
 
         await page.goto(property);
-        const originalKey = await page.locator(keyField).inputValue();
-        await fill(page);
-        expect(await send(page)).toBe(303);
+        const originalKey = await page.locator(inquiryKeyField).inputValue();
+        await fillInquiry(page, visitor);
+        expect((await submitInquiry(page, property)).status()).toBe(303);
         const heading = page.getByRole("heading", { name: receiptHeading });
         await expect(heading).toBeVisible();
         const receiptUrl = page.url();
@@ -129,26 +117,24 @@ test.describe("clean demo quick start", () => {
         await expect(page.locator("time")).toHaveAttribute("datetime", time);
         await page.goto(property);
         // Submit the original form key as a browser with an older form would.
-        await page.locator(keyField).evaluate((input, value) => {
-          (input as HTMLInputElement).value = value;
-        }, originalKey);
-        await fill(page);
-        expect(await send(page)).toBe(303);
+        await restoreInquiryKey(page, originalKey);
+        await fillInquiry(page, visitor);
+        expect((await submitInquiry(page, property)).status()).toBe(303);
         await expect(page).toHaveURL(receiptUrl);
         await expect(heading).toBeVisible();
         await expect(page.locator("time")).toHaveAttribute("datetime", time);
         expect(await rows()).toEqual(original);
 
         await page.getByRole("link", { name: "Send another inquiry" }).click();
-        const retryKey = await page.locator(keyField).inputValue();
+        const retryKey = await page.locator(inquiryKeyField).inputValue();
         expect(retryKey).not.toBe(originalKey);
-        await fill(page, retryMessage);
+        await fillInquiry(page, visitor, retryMessage);
         await execute("bash", ["-ec", "demo_db_stop"]);
-        expect(await send(page)).toBe(503);
+        expect((await submitInquiry(page, property)).status()).toBe(503);
         await expect(page.getByRole("alert")).toHaveText(
           "We can't confirm this was received.",
         );
-        await expect(page.locator(keyField)).toHaveValue(retryKey);
+        await expect(page.locator(inquiryKeyField)).toHaveValue(retryKey);
         await expect(page.getByLabel("Name", { exact: true })).toHaveValue(
           visitor.name,
         );
@@ -161,7 +147,7 @@ test.describe("clean demo quick start", () => {
 
         await execute("bash", ["-ec", "demo_db_start"]);
         expect(await rows()).toEqual(original);
-        expect(await send(page, "Retry")).toBe(303);
+        expect((await submitInquiry(page, property, "Retry")).status()).toBe(303);
         await expect(heading).toBeVisible();
         const recovered = await rows();
         expect(recovered).toHaveLength(2);

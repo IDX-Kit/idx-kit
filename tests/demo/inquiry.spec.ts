@@ -7,6 +7,12 @@ import { tmpdir } from "node:os";
 import pg from "pg";
 import { execute, keyCommand, startEngine } from "../api/runtime.ts";
 import { registerSecret } from "../logs.ts";
+import {
+  fillInquiry,
+  inquiryKeyField,
+  restoreInquiryKey,
+  submitInquiry,
+} from "./inquiry-form.ts";
 import { startSite } from "./runtime.ts";
 import { workerRuntime } from "../workers/runtime.ts";
 
@@ -102,13 +108,8 @@ const stub = createServer(async (req, res) => {
   );
 });
 
-async function fill(page: Page, message = visitor.message) {
-  await page.getByLabel("Name", { exact: true }).fill(visitor.name);
-  await page.getByLabel("Email", { exact: true }).fill(visitor.email);
-  await page.getByLabel("Message", { exact: true }).fill(message);
-}
 async function key(page: Page) {
-  return page.locator('[name="idempotencyKey"]').inputValue();
+  return page.locator(inquiryKeyField).inputValue();
 }
 async function retained(
   page: Page,
@@ -126,13 +127,6 @@ async function retained(
   );
   expect(await key(page)).toBe(expectedKey);
   await expect(page.locator("script, form b")).toHaveCount(0);
-}
-async function send(page: Page, action = "Send") {
-  const response = page.waitForResponse(
-    (r) => r.request().method() === "POST" && r.url().includes(property),
-  );
-  await page.getByRole("button", { name: action, exact: true }).click();
-  return response;
 }
 async function headers(response: BrowserResponse | null) {
   expect(response).not.toBeNull();
@@ -210,8 +204,8 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       }),
     ).toBeVisible();
     expect(await inquiry.evaluate((n) => n.closest("article"))).toBeNull();
-    await fill(page);
-    expect((await send(page)).status()).toBe(303);
+    await fillInquiry(page, visitor);
+    expect((await submitInquiry(page, property)).status()).toBe(303);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     const [row] = await rows();
     expect(row.visitor_name).toBe(visitor.name);
@@ -232,8 +226,8 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     const third = await key(page);
     expect(third).toMatch(uuid);
     expect(third).not.toBe(second);
-    await fill(page, "Synthetic second inquiry");
-    await send(page);
+    await fillInquiry(page, visitor, "Synthetic second inquiry");
+    await submitInquiry(page, property);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     expect(await rows()).toHaveLength(2);
     for (const value of [secret, ...Object.values(visitor)])
@@ -245,8 +239,8 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
   }) => {
     const message = `${"a".repeat(1999)}\n${"b".repeat(2000)}`;
     await page.goto(property);
-    await fill(page, message);
-    expect((await send(page)).status()).toBe(303);
+    await fillInquiry(page, visitor, message);
+    expect((await submitInquiry(page, property)).status()).toBe(303);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     const stored = await rows();
     expect(stored).toHaveLength(1);
@@ -258,31 +252,27 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
   }) => {
     await page.goto(property);
     const originalKey = await key(page);
-    await fill(page);
-    await send(page);
+    await fillInquiry(page, visitor);
+    await submitInquiry(page, property);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     const original = (await rows())[0];
     const receiptUrl = page.url();
     // no-store may make Back revalidate. Restore the old rendered key as a stale tab would.
     await page.goBack();
-    if (!(await page.locator('[name="idempotencyKey"]').count()))
+    if (!(await page.locator(inquiryKeyField).count()))
       await page.goto(property);
-    await page.locator('[name="idempotencyKey"]').evaluate((n, value) => {
-      (n as HTMLInputElement).value = value;
-    }, originalKey);
-    await fill(page);
-    await send(page);
+    await restoreInquiryKey(page, originalKey);
+    await fillInquiry(page, visitor);
+    await submitInquiry(page, property);
     await expect(page).toHaveURL(receiptUrl);
     expect(await rows()).toHaveLength(1);
     await page.goBack();
-    if (!(await page.locator('[name="idempotencyKey"]').count()))
+    if (!(await page.locator(inquiryKeyField).count()))
       await page.goto(property);
-    await page.locator('[name="idempotencyKey"]').evaluate((n, value) => {
-      (n as HTMLInputElement).value = value;
-    }, originalKey);
+    await restoreInquiryKey(page, originalKey);
     const changed = "Synthetic changed message";
-    await fill(page, changed);
-    expect((await send(page)).status()).toBe(422);
+    await fillInquiry(page, visitor, changed);
+    expect((await submitInquiry(page, property)).status()).toBe(422);
     await expect(page.getByRole("alert")).toHaveText(
       "Your message has changed. Please send it again.",
     );
@@ -291,7 +281,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     expect(fresh).not.toBe(originalKey);
     await retained(page, fresh, changed);
     expect(await rows()).toEqual([original]);
-    await send(page);
+    await submitInquiry(page, property);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     expect(await rows()).toHaveLength(2);
   });
@@ -303,8 +293,8 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     fault = "lost";
     await page.goto(faultOrigin + property);
     const originalKey = await key(page);
-    await fill(page, message);
-    await send(page);
+    await fillInquiry(page, visitor, message);
+    await submitInquiry(page, property);
     await expect(page.getByRole("alert")).toHaveText(
       "We can't confirm this was received.",
     );
@@ -316,7 +306,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     const expected = lostReceipt;
     // Pass the retry through to the real engine, returning its retained receipt.
     fault = 201;
-    await send(page, "Retry");
+    await submitInquiry(page, property, "Retry");
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("receipt")).toBe(expected?.id);
     expect(await page.locator("time").getAttribute("datetime")).toBe(
@@ -332,11 +322,11 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     fault = 201;
     receiptLookupTimesOut = true;
     await page.goto(faultOrigin + property);
-    await fill(page);
+    await fillInquiry(page, visitor);
     const failedLookup = page.waitForResponse(
       (r) => r.request().method() === "GET" && r.url().includes("?receipt="),
     );
-    expect((await send(page)).status()).toBe(303);
+    expect((await submitInquiry(page, property)).status()).toBe(303);
     const failure = await failedLookup;
     expect(failure.status()).toBe(503);
     await headers(failure);
@@ -384,8 +374,8 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       code = failure === "mismatch" ? "idempotency_mismatch" : "invalid_input";
       await headers(await page.goto(faultOrigin + property));
       const originalKey = await key(page);
-      await fill(page);
-      const response = await send(page);
+      await fillInquiry(page, visitor);
+      const response = await submitInquiry(page, property);
       if (malformed) expect(response.status()).toBe(422);
       await headers(response);
       const newKey = await key(page);
@@ -468,11 +458,11 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     request,
   }) => {
     await page.goto(faultOrigin + property);
-    await fill(page);
+    await fillInquiry(page, visitor);
     await page.locator('[name="website"]').evaluate((n) => {
       (n as HTMLInputElement).value = "Synthetic bot";
     });
-    expect((await send(page)).status()).toBe(403);
+    expect((await submitInquiry(page, property)).status()).toBe(403);
     await expect(page.getByRole("heading", { name: received })).toHaveCount(0);
     const crossSiteHeaders = {
       Origin: "https://foreign.example.invalid",
