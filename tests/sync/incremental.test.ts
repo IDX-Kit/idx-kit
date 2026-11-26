@@ -4,6 +4,7 @@ import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
+import type { FeedNextStep } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
@@ -149,8 +150,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     },
   ) {
     const { savedAt, ...outcome } = await state.outcome();
+    const { afterSeconds = null, ...fields } = expected;
     assert.ok(savedAt instanceof Date);
-    assert.deepEqual(outcome, { afterSeconds: null, ...expected });
+    assert.deepEqual(outcome, { ...fields, afterSeconds });
   }
 
   async function assertFresh(state: Awaited<ReturnType<typeof setup>>) {
@@ -691,7 +693,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     async (t) => {
       const state = await setup(t, "http_outcomes");
       const retryIn120 = { ...retry, afterSeconds: 120 };
-      const cases = [
+      const cases: {
+        status: number;
+        retryAfter?: string;
+        nextStep: FeedNextStep;
+      }[] = [
         { status: 429, retryAfter: "120", nextStep: retryIn120 },
         { status: 503, retryAfter: "120", nextStep: retryIn120 },
         {
@@ -739,9 +745,8 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           status,
           step: nextStep.kind,
           count,
-          ...("afterSeconds" in nextStep && {
-            afterSeconds: nextStep.afterSeconds,
-          }),
+          afterSeconds:
+            nextStep.kind === "retry" ? nextStep.afterSeconds : undefined,
         });
         assert.deepEqual(await state.checkpoint(), checkpoint);
         assert.deepEqual(await state.freshness(), freshness);
