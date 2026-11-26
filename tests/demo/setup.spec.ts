@@ -147,7 +147,9 @@ test.describe("clean demo quick start", () => {
 
         await execute("bash", ["-ec", "demo_db_start"]);
         expect(await rows()).toEqual(original);
-        expect((await submitInquiry(page, property, "Retry")).status()).toBe(303);
+        expect((await submitInquiry(page, property, "Retry")).status()).toBe(
+          303,
+        );
         await expect(heading).toBeVisible();
         const recovered = await rows();
         expect(recovered).toHaveLength(2);

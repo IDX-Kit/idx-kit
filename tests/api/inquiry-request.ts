@@ -9,7 +9,10 @@ export async function postInquiry(
   key: string,
   body: InquiryInput,
   status: number,
-  { headers, signal }: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+  {
+    headers,
+    signal,
+  }: { headers?: Record<string, string>; signal?: AbortSignal } = {},
 ) {
   const response = await fetch(`http://127.0.0.1:8787${path}`, {
     method: "POST",

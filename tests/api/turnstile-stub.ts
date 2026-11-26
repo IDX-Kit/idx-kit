@@ -22,9 +22,7 @@ export async function startTurnstileStub(privateValues: string[]) {
   }[] = [];
   const accepted = new Set<string>();
   const server = await listenOnLoopback(async (request, response) => {
-    const body = Object.fromEntries(
-      new URLSearchParams(await text(request)),
-    );
+    const body = Object.fromEntries(new URLSearchParams(await text(request)));
     checks.push({ method: request.method, path: request.url, body });
     const token = body.response;
     if (token === tokens.upstreamError) {

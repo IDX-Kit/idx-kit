@@ -68,9 +68,15 @@ test("inquiry spam check through Turnstile", { timeout: 60_000 }, async (t) => {
     code?: string;
   } = {}) {
     keys.push(key);
-    const { response, content } = await postInquiry(apiKey.secret, key, body, status, {
-      headers: token === undefined ? undefined : { "Turnstile-Token": token },
-    });
+    const { response, content } = await postInquiry(
+      apiKey.secret,
+      key,
+      body,
+      status,
+      {
+        headers: token === undefined ? undefined : { "Turnstile-Token": token },
+      },
+    );
     const requestId = response.headers.get("Request-Id");
     assert.ok(requestId);
     if (code) {

@@ -12,11 +12,7 @@ export async function fillInquiry(
   await page.getByLabel("Message", { exact: true }).fill(message);
 }
 
-export async function submitInquiry(
-  page: Page,
-  path: string,
-  action = "Send",
-) {
+export async function submitInquiry(page: Page, path: string, action = "Send") {
   const posted = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
