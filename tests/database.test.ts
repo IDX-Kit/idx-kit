@@ -124,6 +124,76 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     },
   );
   await t.test(
+    "feed writers serialize before a new feed commits and permit cross-feed licenses",
+    async (t) => {
+      await reset();
+      await seed(db, fixtures);
+      const peer = new pg.Client({
+        connectionString: process.env.DATABASE_URL,
+      });
+      await peer.connect();
+      t.after(() => peer.end());
+      const [feed, otherFeed] = fixtures.feeds;
+      const newFeed = { ...feed, id: "feed_seed_new" };
+      const [first, later] = structuredClone(fixtures.listings);
+      first.feedId = newFeed.id;
+      first.publicId = "lst_seed_first";
+      later.feedId = newFeed.id;
+      later.publicId = "lst_seed_later";
+      later.ingestedAt = "2026-11-01T01:00:00Z";
+      const partial = { feeds: [], sites: [], listings: [later] };
+      const query = db.query.bind(db);
+      const peerQuery = peer.query.bind(peer);
+      const blocked = new Error("The first seed still holds the feed lock");
+      const tryLock = async (sql: string, values?: unknown[]) => {
+        if (sql === "BEGIN" || sql === "ROLLBACK") return peerQuery(sql);
+        assert.match(sql, /pg_advisory_xact_lock/);
+        // Probe the same lock without waiting for the writer paused at COMMIT.
+        const probe = sql.replace("pg_advisory", "pg_try_advisory");
+        const attempt = await peerQuery(probe, values);
+        assert.equal(attempt.rows[0].pg_try_advisory_xact_lock, false);
+        throw blocked;
+      };
+      const beforeCommit = async (sql: string, values?: unknown[]) => {
+        if (sql === "COMMIT") {
+          const visible = await peer.query(
+            "SELECT id FROM idx.feeds WHERE id = $1",
+            [newFeed.id],
+          );
+          assert.equal(visible.rowCount, 0);
+          const contender = t.mock.method(peer, "query", tryLock);
+          await assert.rejects(seed(peer, partial), blocked);
+          contender.mock.restore();
+          await peer.query(
+            "SELECT id FROM idx.feeds WHERE id = $1 FOR KEY SHARE NOWAIT",
+            [feed.id],
+          );
+          await seed(peer, {
+            feeds: [otherFeed],
+            sites: [{ id: "site_demo_other", feedIds: [feed.id] }],
+            listings: [],
+          });
+        }
+        return query(sql, values);
+      };
+      const writer = t.mock.method(db, "query", beforeCommit);
+      await seed(db, {
+        feeds: [feed, newFeed],
+        sites: [{ id: "site_demo_primary", feedIds: [otherFeed.id] }],
+        listings: [first],
+      });
+      writer.mock.restore();
+      await seed(peer, partial);
+      const freshness = await db.query(
+        "SELECT oldest_listing_ingested_at FROM idx.feeds WHERE id = $1",
+        [newFeed.id],
+      );
+      assert.deepEqual(freshness.rows, [
+        { oldest_listing_ingested_at: new Date(first.ingestedAt) },
+      ]);
+    },
+  );
+  await t.test(
     "all 24 fixtures seed, reseed identically and update without changing public IDs",
     async () => {
       await reset();

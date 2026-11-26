@@ -706,7 +706,7 @@ test(
           node,
           ...(node.Plans ?? []).flatMap(flatten),
         ];
-        const inspecting: Database = {
+        const inspect = (last: SearchQuery["last"]): Database => ({
           async query<T extends pg.QueryResultRow>(
             sql: string,
             values: unknown[],
@@ -739,6 +739,8 @@ test(
               assert.ok(visited <= 128, diagnostic);
               const condition = index["Index Cond"] ?? "";
               assert.match(condition, /price|id/, diagnostic);
+              if (last?.price === null)
+                assert.match(condition, /id > /, diagnostic);
               for (const operator of [
                 "price >",
                 "price <",
@@ -753,7 +755,7 @@ test(
             }
             return db.query<T>(sql, values);
           },
-        };
+        });
         const volume =
           process.env.IDX_TEST_SEARCH_VOLUME === "1" ? 100_000 : 2_000;
         const started = performance.now();
@@ -807,7 +809,7 @@ test(
               if (withNulls)
                 positions.push({ price: null, id: "lst_search_plan_000001" });
               for (const last of positions) {
-                const result = await searchListings(inspecting, {
+                const result = await searchListings(inspect(last), {
                   ...query,
                   last,
                 });

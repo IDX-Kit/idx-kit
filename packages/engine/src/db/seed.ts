@@ -16,9 +16,12 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
   ];
   await client.query("BEGIN");
   try {
-    // Serialize writes to each feed through the freshness update, including partial seeds.
+    // Lock before a feed exists or is updated, without locking out foreign-key checks.
+    // Sort by the lock key itself so even hash collisions preserve the lock order.
     await client.query(
-      "SELECT id FROM idx.feeds WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE",
+      `SELECT pg_advisory_xact_lock(711002, hashtext(feed_id))
+      FROM unnest($1::text[]) AS feeds(feed_id)
+      ORDER BY hashtext(feed_id)`,
       [feedIds],
     );
     for (const feed of fixtures.feeds) {
