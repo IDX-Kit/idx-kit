@@ -148,14 +148,19 @@ function revisionKey(value: string | null) {
   return `${seconds}.${fraction.padEnd(6, "0")}Z`;
 }
 
-async function readExisting(client: pg.Client, feedId: string, keys: string[]) {
+async function readExisting(
+  client: pg.Client,
+  feedId: string,
+  keys: string[],
+  fixture = false,
+) {
   const result = await client.query<Stored>(
     `SELECT m.source_key,
       to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS revision,
-      CASE WHEN l.entire_listing_display THEN l.withheld_fields END AS withheld
+      CASE WHEN $3 OR l.entire_listing_display THEN l.withheld_fields END AS withheld
     FROM idx.source_mappings m LEFT JOIN idx.listings l ON l.id = m.listing_id
     WHERE m.feed_id = $1 AND m.source_key = ANY($2::text[])`,
-    [feedId, keys],
+    [feedId, keys, fixture],
   );
   return new Map(result.rows.map((row) => [row.source_key, row]));
 }
@@ -258,7 +263,7 @@ export async function writeFixturePages(
         };
       });
     const groups = groupPage(candidates, (row) => row.source_key);
-    const existing = await readExisting(client, feedId, [...groups.keys()]);
+    const existing = await readExisting(client, feedId, [...groups.keys()], true);
     const rows: PageRow[] = [];
     for (const [key, changes] of groups) {
       const stored = existing.get(key);
