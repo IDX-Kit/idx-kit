@@ -168,7 +168,9 @@ test.describe.serial("SSR property pages through the public engine", () => {
         "Feed refreshed: Oct 31, 2026, 8:00:00 PM EDT",
         "Original synthetic data for IDX Kit. These properties do not exist.",
         record.pageBlocks[0].text,
-        "Send an inquiry Synthetic inquiries only. The demo sends no email. Name Email Message Send",
+        "Send an inquiry",
+        "Example Springs Demo Brokerage (fictional)",
+        "Synthetic inquiries only. The demo sends no email. Name Email Message Send",
       ].join(" "),
     );
   });
