@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      4,
+      5,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -103,6 +103,41 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           oldest_listing_ingested_at: new Date(older),
         },
       ]);
+      assert.deepEqual(await snapshot(), listings);
+    },
+  );
+  await t.test(
+    "the bedroom index upgrades populated listings and recovers an interrupted build",
+    async () => {
+      await seed(db, fixtures);
+      const listings = await snapshot();
+      await db.query("DROP INDEX idx.listings_bedrooms");
+      const forget = () =>
+        db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+          "005_listings_bedrooms.index.sql",
+        ]);
+      await forget();
+      // A failed concurrent build leaves an invalid index behind.
+      await assert.rejects(
+        db.query(
+          "CREATE UNIQUE INDEX CONCURRENTLY listings_bedrooms ON idx.listings (synthetic)",
+        ),
+        { code: "23505" },
+      );
+      const index = async () =>
+        (
+          await db.query(
+            "SELECT indexrelid::text AS oid, indisvalid, indisunique FROM pg_index WHERE indexrelid = 'idx.listings_bedrooms'::regclass",
+          )
+        ).rows[0];
+      assert.equal((await index()).indisvalid, false);
+      await migrate(db);
+      const built = await index();
+      assert.equal(built.indisvalid, true);
+      assert.equal(built.indisunique, false);
+      await forget();
+      await migrate(db);
+      assert.deepEqual(await index(), built);
       assert.deepEqual(await snapshot(), listings);
     },
   );
