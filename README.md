@@ -33,6 +33,16 @@ The dependency URL pins the version. To upgrade or roll back, replace that URL i
 and commit `package.json` and the updated lockfile. Import `@idx-kit/client` from
 your server code and keep your engine key in server configuration.
 
+To release a new client version, update `packages/client/package.json` and the
+`@idx-kit/client` pins in `packages/engine/package.json` and
+`examples/demo-site/package.json`. Refresh the root `package-lock.json` with
+`npm install --package-lock-only --ignore-scripts`. Add
+`docs/releases/client-v<version>.md` using the
+[first release notes](docs/releases/client-v0.1.0.md) as a template. Use the new
+tarball URL in the notes and in the install command above. After both check jobs
+pass on `main`, the workflow creates the missing `client-v<version>` pre-release
+and attaches the tested `idx-kit-client-<version>.tgz` tarball.
+
 ## Database development
 
 Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 18. The npm workspace lockfile

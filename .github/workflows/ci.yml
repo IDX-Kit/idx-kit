@@ -294,20 +294,20 @@ jobs:
           asset="idx-kit-client-${TAG#client-v}.tgz"
           if lookup=$(gh release view "$TAG" --repo IDX-Kit/idx-kit --json isDraft,assets 2>&1); then
             if jq -e '.isDraft' <<< "$lookup" > /dev/null; then
-              echo "Release $TAG is still a draft. Remove the incomplete draft in GitHub Releases and rerun CI on the latest main commit." >&2
+              echo "Release $TAG is still a draft. Delete the incomplete draft in GitHub Releases, then rerun CI for the latest push to main." >&2
               exit 1
             fi
             if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .state == "uploaded" and .size > 0)' <<< "$lookup" > /dev/null; then
               echo "Release $TAG is missing $asset." >&2
-              echo "Download the tarball from the client-release-* artifact of the main push CI run for the tagged commit." >&2
-              echo "Remove any empty upload named $asset before uploading the replacement to GitHub Releases. Then rerun CI." >&2
+              echo "In Actions, open the CI run for the push to main that built the tagged commit. Download and unzip its client-release-* artifact." >&2
+              echo "In GitHub Releases, remove any empty upload named $asset. Attach $asset from the extracted artifact, then rerun this release job." >&2
               exit 1
             fi
             echo "Release $TAG is published with $asset."
             exit 0
           fi
           if [[ "$lookup" != 'release not found' ]]; then
-            printf '%s\n' "$lookup" >&2
+            printf 'Could not check release %s. Resolve the GitHub error below, then rerun this job.\n%s\n' "$TAG" "$lookup" >&2
             exit 1
           fi
           echo 'missing=true' >> "$GITHUB_OUTPUT"
@@ -332,7 +332,8 @@ jobs:
             ')
           if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
             echo "Tag $TAG already points to $tag_commit. This run tested $GITHUB_SHA." >&2
-            echo "Bump the client version and merge the change to main to publish under a new tag." >&2
+            echo "Set a new version in packages/client/package.json. Update the client pins in packages/engine/package.json and examples/demo-site/package.json, then refresh package-lock.json." >&2
+            echo "Add docs/releases/client-v<version>.md with the new tarball install URL and update the README install command to match. Merge these changes to main to publish under the new tag." >&2
             exit 1
           fi
           release_dir="$RUNNER_TEMP/client-release"
