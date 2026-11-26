@@ -40,11 +40,15 @@ const feedSettings = z
   );
 const path = z.string().min(1);
 const token = z.string().regex(/^[A-Za-z0-9._~+/-]+=*$/);
-const database = z.url({ protocol: /^postgres(?:ql)?$/ });
+const database = z.string().regex(/^postgres(?:ql)?:\/\/\S+$/).pipe(z.url());
 
 export async function readSyncSettings(statusOnly: boolean) {
-  const connectionString = database.parse(process.env.LISTING_WRITER_DATABASE_URL);
-  const feedToken = statusOnly ? undefined : token.parse(process.env.IDX_SYNC_FEED_TOKEN);
+  const connectionString = database.parse(
+    process.env.LISTING_WRITER_DATABASE_URL,
+  );
+  const feedToken = statusOnly
+    ? undefined
+    : token.parse(process.env.IDX_SYNC_FEED_TOKEN);
   const file = path.parse(process.env.IDX_SYNC_FEED_FILE);
   const feed = feedSettings.parse(parse(await readFile(file, "utf8")));
   return { connectionString, feedToken, feed };

@@ -39,30 +39,42 @@ async function run() {
   try {
     args = readCommand();
   } catch {
-    return fail(2, "Usage: sync incremental | scan [--remove-missing --max-removals N] | status");
+    return fail(
+      2,
+      "Usage: sync incremental | scan [--remove-missing --max-removals N] | status",
+    );
   }
   let settings;
   try {
     settings = await readSyncSettings(args.command === "status");
   } catch {
-    return fail(1, "Invalid sync settings. Check the feed file, writer database URL, and token requirements.");
+    return fail(
+      1,
+      "Invalid sync settings. Check the feed file, writer database URL, and token requirements.",
+    );
   }
   const { feed, feedToken, connectionString } = settings;
   const { feedId, propertyUrl, synthetic, disclosures } = feed;
   try {
-    const client = new pg.Client({ connectionString, connectionTimeoutMillis: 1500 });
+    const client = new pg.Client({
+      connectionString,
+      connectionTimeoutMillis: 1500,
+    });
     // Connection loss also rejects pending queries. Keep event text out of diagnostics.
     client.on("error", () => {});
     try {
       await client.connect();
       const state = await readFeedState(client, feedId);
-      if (!state) return fail(1, "The configured feed is missing from the database.");
+      if (!state)
+        return fail(1, "The configured feed is missing from the database.");
       if (args.command === "status") {
         process.stdout.write(`${JSON.stringify(state.status)}\n`);
         return 0;
       }
       if (args.command === "incremental" && state.waitingSeconds) {
-        process.stdout.write(`${JSON.stringify({ feedId, code: "waiting", secondsLeft: state.waitingSeconds })}\n`);
+        process.stdout.write(
+          `${JSON.stringify({ feedId, code: "waiting", secondsLeft: state.waitingSeconds })}\n`,
+        );
         return 3;
       }
       const options = {
@@ -71,20 +83,28 @@ async function run() {
         disclosures,
         connector: new ResoConnector(propertyUrl.href, feedToken!),
       };
-      const result = args.command === "incremental"
-        ? await syncIncrementally(client, options)
-        : await syncFullScan(client, args.maxRemovals === undefined ? options : {
-          ...options,
-          removeMissing: true,
-          maxRemovals: args.maxRemovals,
-        });
+      const result =
+        args.command === "incremental"
+          ? await syncIncrementally(client, options)
+          : await syncFullScan(
+              client,
+              args.maxRemovals === undefined
+                ? options
+                : {
+                    ...options,
+                    removeMissing: true,
+                    maxRemovals: args.maxRemovals,
+                  },
+            );
       if ("outcomeSaved" in result && !result.outcomeSaved) {
         return fail(1, "Could not save the incremental outcome.");
       }
-      const step = "nextStep" in result ? result.nextStep : { kind: "none" };
-      const nextStep = step.kind === "retry"
-        ? { kind: step.kind, afterSeconds: step.afterSeconds }
-        : { kind: step.kind };
+      const step =
+        "nextStep" in result ? result.nextStep : ({ kind: "none" } as const);
+      const nextStep =
+        step.kind === "retry"
+          ? { kind: step.kind, afterSeconds: step.afterSeconds }
+          : { kind: step.kind };
       const output = {
         feedId,
         code: result.code,
@@ -96,7 +116,9 @@ async function run() {
         }),
         ...("wouldRemove" in result && { wouldRemove: result.wouldRemove }),
         ...("maxRemovals" in result && { maxRemovals: result.maxRemovals }),
-        ...("unreadableRecords" in result && { unreadableRecords: result.unreadableRecords }),
+        ...("unreadableRecords" in result && {
+          unreadableRecords: result.unreadableRecords,
+        }),
       };
       process.stdout.write(`${JSON.stringify(output)}\n`);
       if (result.code === "position_changed" || step.kind === "retry") return 3;

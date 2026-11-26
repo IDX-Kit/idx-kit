@@ -111,7 +111,8 @@ export class ResoConnector {
     completedMark: string | null,
     nextLink: string | null,
   ): Promise<PageResult> {
-    if (!this.base || !isResoAddress(this.base)) return { code: "invalid_link" };
+    if (!this.base || !isResoAddress(this.base))
+      return { code: "invalid_link" };
     const url =
       nextLink === null
         ? new URL(this.base)
