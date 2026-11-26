@@ -46,7 +46,11 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   const second = record("second");
   const third = record("third");
 
-  async function setup(t: TestContext, name: string, initial = [first, second, third]) {
+  async function setup(
+    t: TestContext,
+    name: string,
+    initial = [first, second, third],
+  ) {
     const feedId = `feed_scan_${name}`;
     const siteId = `site_scan_${name}`;
     await seed(db, {
@@ -55,15 +59,21 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       listings: [],
     });
     t.after(async () => {
-      await db.query("DELETE FROM idx.site_secret_keys WHERE site_id = $1", [siteId]);
-      await db.query("DELETE FROM idx.data_licenses WHERE site_id = $1", [siteId]);
+      await db.query("DELETE FROM idx.site_secret_keys WHERE site_id = $1", [
+        siteId,
+      ]);
+      await db.query("DELETE FROM idx.data_licenses WHERE site_id = $1", [
+        siteId,
+      ]);
       await db.query("DELETE FROM idx.sites WHERE id = $1", [siteId]);
       await db.query(
         `DELETE FROM idx.listings l USING idx.source_mappings m
         WHERE l.id = m.listing_id AND m.feed_id = $1`,
         [feedId],
       );
-      await db.query("DELETE FROM idx.source_mappings WHERE feed_id = $1", [feedId]);
+      await db.query("DELETE FROM idx.source_mappings WHERE feed_id = $1", [
+        feedId,
+      ]);
       await db.query("DELETE FROM idx.feeds WHERE id = $1", [feedId]);
     });
     const options = (feed: Feed) => ({
@@ -85,7 +95,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       scan: (feed: Feed, maxRemovals?: number, client = writer) =>
         syncFullScan(client, {
           ...options(feed),
-          ...(maxRemovals === undefined ? {} : { removeMissing: true, maxRemovals }),
+          ...(maxRemovals === undefined
+            ? {}
+            : { removeMissing: true, maxRemovals }),
         }),
       checkpoint: () => readScanCheckpoint(db, feedId),
       async incrementalState() {
@@ -97,7 +109,11 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
           "SELECT * FROM idx.feed_sync_outcomes WHERE feed_id = $1",
           [feedId],
         );
-        return { feed, outcomes, position: await readFeedCheckpoint(db, feedId) };
+        return {
+          feed,
+          outcomes,
+          position: await readFeedCheckpoint(db, feedId),
+        };
       },
       async listings() {
         const { rows } = await db.query<{
@@ -122,264 +138,350 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     };
   }
 
-  await t.test("repairs a missed edit and withdraws a missing listing from the API and storage", async (t) => {
-    const state = await setup(t, "repair");
-    const secret = "synthetic-full-scan-read-key";
-    await db.query(
-      `INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes)
+  await t.test(
+    "repairs a missed edit and withdraws a missing listing from the API and storage",
+    async (t) => {
+      const state = await setup(t, "repair");
+      const secret = "synthetic-full-scan-read-key";
+      await db.query(
+        `INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes)
       VALUES ('key_scan_repair', $1, $2, ARRAY['listings:read'])`,
-      [state.siteId, await hashSecret(secret)],
-    );
-    const app = createApp(repository(runtime), contract, "test", () => {});
-    const [edited, missing, unchanged] = await state.listings();
-    const search = "/api/v1/listings";
-    const detail = `${search}/${missing.id}`;
-    async function request(path: string, status: number) {
-      const response = await app.request(path, {
-        headers: { Authorization: `Bearer ${secret}` },
-      });
-      assert.equal(response.status, status);
-      const body = await response.json();
-      validateResponse(path === search ? search : `${search}/{listingId}`, response, body);
-      return body;
-    }
+        [state.siteId, await hashSecret(secret)],
+      );
+      const app = createApp(repository(runtime), contract, "test", () => {});
+      const [edited, missing, unchanged] = await state.listings();
+      const search = "/api/v1/listings";
+      const detail = `${search}/${missing.id}`;
+      async function request(path: string, status: number) {
+        const response = await app.request(path, {
+          headers: { Authorization: `Bearer ${secret}` },
+        });
+        assert.equal(response.status, status);
+        const body = await response.json();
+        validateResponse(
+          path === search ? search : `${search}/{listingId}`,
+          response,
+          body,
+        );
+        return body;
+      }
 
-    assert.equal((await request(detail, 200)).data.id, missing.id);
-    assert.equal((await request(search, 200)).data.length, 3);
-    const incrementalState = await state.incrementalState();
-    const feed = await standIn(t, (_url, n) =>
-      n === 1 ? page([record("first", 2, "225.00")], `${propertyPath}/next?cursor=2`) : page([third]),
-    );
-    assert.deepEqual(await state.scan(feed, 1), {
-      ...complete,
-      pagesRead: 2,
-      recordsSeen: 2,
-      listingsRemoved: 1,
-    });
-    assert.deepEqual(feed.calls, [
-      { path: propertyPath, query: "", authorized: true },
-      { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
-    ]);
-    assert.deepEqual(await state.incrementalState(), incrementalState);
-    assert.equal((await request(detail, 404)).code, "not_found");
-    const { data } = await request(search, 200);
-    assert.deepEqual(data.map(({ id }: { id: string }) => id), [unchanged.id, edited.id]);
-    assert.equal(data[1].price.amount, "225.00");
-    const after = await state.listings();
-    assert.equal(after[0].id, edited.id);
-    assert.equal(after[0].facts?.price, 225);
-    assert.deepEqual(after[1], { ...missing, facts: null });
-    assert.deepEqual(after[2], { ...unchanged, stamp: "1" });
-  });
-
-  await t.test("a middle fetch failure defers withdrawal until the same chain resumes", async (t) => {
-    const state = await setup(t, "resume");
-    const before = await state.listings();
-    const feed = await standIn(t, (_url, n) => {
-      if (n === 1) return page([first], "?cursor=2");
-      if (n === 2) return { status: 503, retryAfter: "120" };
-      return page([second]);
-    });
-    assert.deepEqual(await state.scan(feed, 1), {
-      code: "http_error",
-      nextStep: { kind: "retry", afterSeconds: 120 },
-      pagesRead: 1,
-      recordsSeen: 1,
-      listingsRemoved: 0,
-    });
-    const pending = await state.checkpoint();
-    assert.equal(pending.active, true);
-    assert.equal(new URL(pending.nextLink!).search, "?cursor=2");
-    assert.deepEqual((await state.listings()).map(({ stamp: _stamp, ...listing }) => listing),
-      before.map(({ stamp: _stamp, ...listing }) => listing));
-    assert.deepEqual(await state.scan(feed, 1), {
-      ...complete,
-      pagesRead: 1,
-      recordsSeen: 1,
-      listingsRemoved: 1,
-    });
-    assert.deepEqual(feed.calls.map(({ query }) => query), ["", "?cursor=2", "?cursor=2"]);
-    assert.deepEqual(await state.checkpoint(), {
-      version: pending.version + 1n,
-      scanNumber: pending.scanNumber,
-      active: false,
-      nextLink: null,
-    });
-    assert.equal((await state.listings())[2].facts, null);
-  });
-
-  await t.test("rejecting a continuation closes the scan and the next scan ignores its stamps", async (t) => {
-    const state = await setup(t, "rejected");
-    const feed = await standIn(t, (_url, n) => {
-      if (n === 1) return page([first], "?cursor=expired");
-      if (n === 2) return { status: 410 };
-      return page([second, third]);
-    });
-    assert.deepEqual(await state.scan(feed, 1), {
-      code: "continuation_rejected",
-      nextStep: { kind: "retry" },
-      pagesRead: 1,
-      recordsSeen: 1,
-      listingsRemoved: 0,
-    });
-    const ended = await state.checkpoint();
-    assert.equal(ended.active, false);
-    assert.equal(ended.nextLink, null);
-    assert.ok((await state.listings()).every(({ facts }) => facts !== null));
-    assert.deepEqual(await state.scan(feed, 1), {
-      ...complete,
-      pagesRead: 1,
-      recordsSeen: 2,
-      listingsRemoved: 1,
-    });
-    assert.equal((await state.checkpoint()).scanNumber, ended.scanNumber + 1n);
-    assert.deepEqual(feed.calls.map(({ query }) => query), ["", "?cursor=expired", ""]);
-    assert.equal((await state.listings())[0].facts, null);
-  });
-
-  await t.test("incremental additions, edits, replays and withdrawals survive a running scan", async (t) => {
-    const withdrawn = record("withdrawn");
-    const replay = record("replay", 2);
-    const state = await setup(t, "interleaved", [first, second, third, withdrawn, replay]);
-    const peer = await connectWriter(t);
-    let afterPoll: Awaited<ReturnType<typeof state.listings>> | undefined;
-    let pollState: Awaited<ReturnType<typeof state.incrementalState>> | undefined;
-    const feed = await standIn(t, async (_url, n) => {
-      if (n === 1) return page([third], "?cursor=2");
-      await state.poll([
-        record("added", 3, "33.00"),
-        record("first", 3, "333.00"),
-        record("replay"),
-        { ...record("withdrawn", 3), StandardStatus: "Withdrawn" },
-      ], peer);
-      afterPoll = await state.listings();
-      pollState = await state.incrementalState();
-      return page([withdrawn]);
-    });
-    assert.deepEqual(await state.scan(feed, 1), {
-      ...complete,
-      pagesRead: 2,
-      recordsSeen: 2,
-      listingsRemoved: 1,
-    });
-    assert.deepEqual(await state.incrementalState(), pollState);
-    const after = await state.listings();
-    assert.deepEqual(after, afterPoll!.map((listing) =>
-      listing.key === second.ListingKey ? { ...listing, facts: null } : listing));
-    assert.deepEqual(after.map(({ facts }) => facts?.price ?? null), [
-      33, 333, 100, null, 100, null,
-    ]);
-  });
-
-  await t.test("the limit stops all absence withdrawals, including after an empty reply", async (t) => {
-    const state = await setup(t, "limit");
-    const before = await state.listings();
-    const feed = await standIn(t, (_url, n) => page(n === 1 ? [first] : []));
-    for (const invalid of [-1, 1.5, Infinity]) {
-      assert.deepEqual(await state.scan(feed, invalid), {
-        code: "invalid_removal_limit",
-        nextStep: { kind: "stop" },
-        pagesRead: 0,
-        recordsSeen: 0,
-        listingsRemoved: 0,
-      });
-    }
-    assert.equal(feed.calls.length, 0);
-    for (const recordsSeen of [1, 0]) {
+      assert.equal((await request(detail, 200)).data.id, missing.id);
+      assert.equal((await request(search, 200)).data.length, 3);
+      const incrementalState = await state.incrementalState();
+      const feed = await standIn(t, (_url, n) =>
+        n === 1
+          ? page(
+              [record("first", 2, "225.00")],
+              `${propertyPath}/next?cursor=2`,
+            )
+          : page([third]),
+      );
       assert.deepEqual(await state.scan(feed, 1), {
-        code: "removal_limit_exceeded",
-        nextStep: { kind: "stop" },
-        pagesRead: 1,
-        recordsSeen,
-        listingsRemoved: 0,
-        wouldRemove: 3 - recordsSeen,
-        maxRemovals: 1,
+        ...complete,
+        pagesRead: 2,
+        recordsSeen: 2,
+        listingsRemoved: 1,
       });
-      assert.equal((await state.checkpoint()).active, false);
-      assert.deepEqual((await state.listings()).map(({ facts }) => facts), before.map(({ facts }) => facts));
-    }
-    assert.deepEqual(feed.calls.map(({ query }) => query), ["", ""]);
-  });
+      assert.deepEqual(feed.calls, [
+        { path: propertyPath, query: "", authorized: true },
+        { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
+      ]);
+      assert.deepEqual(await state.incrementalState(), incrementalState);
+      assert.equal((await request(detail, 404)).code, "not_found");
+      const { data } = await request(search, 200);
+      assert.deepEqual(
+        data.map(({ id }: { id: string }) => id),
+        [unchanged.id, edited.id],
+      );
+      assert.equal(data[1].price.amount, "225.00");
+      const after = await state.listings();
+      assert.equal(after[0].id, edited.id);
+      assert.equal(after[0].facts?.price, 225);
+      assert.deepEqual(after[1], { ...missing, facts: null });
+      assert.deepEqual(after[2], { ...unchanged, stamp: "1" });
+    },
+  );
 
-  await t.test("repairs edits without removing missing listings unless requested", async (t) => {
-    const state = await setup(t, "keep");
-    const feed = await standIn(t, () => page([record("first", 2, "225.00")]));
-    assert.deepEqual(await state.scan(feed), {
-      ...complete,
-      pagesRead: 1,
-      recordsSeen: 1,
-      listingsRemoved: 0,
-    });
-    assert.deepEqual((await state.listings()).map(({ facts }) => facts?.price), [225, 100, 100]);
-  });
+  await t.test(
+    "a middle fetch failure defers withdrawal until the same chain resumes",
+    async (t) => {
+      const state = await setup(t, "resume");
+      const before = await state.listings();
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) return page([first], "?cursor=2");
+        if (n === 2) return { status: 503, retryAfter: "120" };
+        return page([second]);
+      });
+      assert.deepEqual(await state.scan(feed, 1), {
+        code: "http_error",
+        nextStep: { kind: "retry", afterSeconds: 120 },
+        pagesRead: 1,
+        recordsSeen: 1,
+        listingsRemoved: 0,
+      });
+      const pending = await state.checkpoint();
+      assert.equal(pending.active, true);
+      assert.equal(new URL(pending.nextLink!).search, "?cursor=2");
+      assert.deepEqual(
+        (await state.listings()).map(
+          ({ stamp: _stamp, ...listing }) => listing,
+        ),
+        before.map(({ stamp: _stamp, ...listing }) => listing),
+      );
+      assert.deepEqual(await state.scan(feed, 1), {
+        ...complete,
+        pagesRead: 1,
+        recordsSeen: 1,
+        listingsRemoved: 1,
+      });
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", "?cursor=2", "?cursor=2"],
+      );
+      assert.deepEqual(await state.checkpoint(), {
+        version: pending.version + 1n,
+        scanNumber: pending.scanNumber,
+        active: false,
+        nextLink: null,
+      });
+      assert.equal((await state.listings())[2].facts, null);
+    },
+  );
 
-  await t.test("an authoritative page restores a listing after an unreadable removal", async (t) => {
-    const state = await setup(t, "unknown", [first]);
-    const [before] = await state.listings();
-    await state.poll([{ ...first, StandardStatus: "Withdrawn", ModificationTimestamp: "unreadable" }]);
-    const [hidden] = await state.listings();
-    assert.equal(hidden.facts, null);
-    assert.equal(hidden.revision, "infinity");
-    const feed = await standIn(t, () => page([first]));
-    assert.deepEqual(await state.scan(feed, 0), {
-      ...complete,
-      pagesRead: 1,
-      recordsSeen: 1,
-      listingsRemoved: 0,
-    });
-    const [restored] = await state.listings();
-    assert.equal(restored.id, before.id);
-    assert.equal(restored.facts?.price, 100);
-    assert.equal(restored.revision, before.revision);
-  });
-
-  await t.test("a competing runner cannot write a page after another runner finishes", async (t) => {
-    const state = await setup(t, "competing");
-    const peer = await connectWriter(t);
-    const winner = await standIn(t, () => page([first, second]));
-    let winningState: Awaited<ReturnType<typeof state.checkpoint>> | undefined;
-    let winningListings: Awaited<ReturnType<typeof state.listings>> | undefined;
-    const loser = await standIn(t, async () => {
-      assert.deepEqual(await state.scan(winner, 1, peer), {
+  await t.test(
+    "rejecting a continuation closes the scan and the next scan ignores its stamps",
+    async (t) => {
+      const state = await setup(t, "rejected");
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) return page([first], "?cursor=expired");
+        if (n === 2) return { status: 410 };
+        return page([second, third]);
+      });
+      assert.deepEqual(await state.scan(feed, 1), {
+        code: "continuation_rejected",
+        nextStep: { kind: "retry" },
+        pagesRead: 1,
+        recordsSeen: 1,
+        listingsRemoved: 0,
+      });
+      const ended = await state.checkpoint();
+      assert.equal(ended.active, false);
+      assert.equal(ended.nextLink, null);
+      assert.ok((await state.listings()).every(({ facts }) => facts !== null));
+      assert.deepEqual(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
         recordsSeen: 2,
         listingsRemoved: 1,
       });
-      winningState = await state.checkpoint();
-      winningListings = await state.listings();
-      return page([record("loser", 2), record("first", 2)]);
-    });
-    assert.deepEqual(await state.scan(loser, 1), {
-      code: "position_changed",
-      nextStep: none,
-      pagesRead: 1,
-      recordsSeen: 2,
-      listingsRemoved: 0,
-    });
-    assert.deepEqual(await state.checkpoint(), winningState);
-    assert.deepEqual(await state.listings(), winningListings);
-    assert.equal((await state.checkpoint()).scanNumber, 1n);
-  });
+      assert.equal(
+        (await state.checkpoint()).scanNumber,
+        ended.scanNumber + 1n,
+      );
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", "?cursor=expired", ""],
+      );
+      assert.equal((await state.listings())[0].facts, null);
+    },
+  );
 
-  await t.test("a missing listing returns under the same public ID only at a newer revision", async (t) => {
-    const state = await setup(t, "restore", [first, second]);
-    const [before] = await state.listings();
-    const feed = await standIn(t, () => page([second]));
-    assert.deepEqual(await state.scan(feed, 1), {
-      ...complete,
-      pagesRead: 1,
-      recordsSeen: 1,
-      listingsRemoved: 1,
-    });
-    const [removed] = await state.listings();
-    assert.deepEqual(removed, { ...before, facts: null });
-    await state.poll([first]);
-    assert.deepEqual((await state.listings())[0], removed);
-    await state.poll([record("first", 2, "225.00")]);
-    const [restored] = await state.listings();
-    assert.equal(restored.id, before.id);
-    assert.equal(restored.facts?.price, 225);
-    assert.equal(restored.revision, revision(2));
-  });
+  await t.test(
+    "incremental additions, edits, replays and withdrawals survive a running scan",
+    async (t) => {
+      const withdrawn = record("withdrawn");
+      const replay = record("replay", 2);
+      const state = await setup(t, "interleaved", [
+        first,
+        second,
+        third,
+        withdrawn,
+        replay,
+      ]);
+      const peer = await connectWriter(t);
+      let afterPoll: Awaited<ReturnType<typeof state.listings>> | undefined;
+      let pollState:
+        Awaited<ReturnType<typeof state.incrementalState>> | undefined;
+      const feed = await standIn(t, async (_url, n) => {
+        if (n === 1) return page([third], "?cursor=2");
+        await state.poll(
+          [
+            record("added", 3, "33.00"),
+            record("first", 3, "333.00"),
+            record("replay"),
+            { ...record("withdrawn", 3), StandardStatus: "Withdrawn" },
+          ],
+          peer,
+        );
+        afterPoll = await state.listings();
+        pollState = await state.incrementalState();
+        return page([withdrawn]);
+      });
+      assert.deepEqual(await state.scan(feed, 1), {
+        ...complete,
+        pagesRead: 2,
+        recordsSeen: 2,
+        listingsRemoved: 1,
+      });
+      assert.deepEqual(await state.incrementalState(), pollState);
+      const after = await state.listings();
+      assert.deepEqual(
+        after,
+        afterPoll!.map((listing) =>
+          listing.key === second.ListingKey
+            ? { ...listing, facts: null }
+            : listing,
+        ),
+      );
+      assert.deepEqual(
+        after.map(({ facts }) => facts?.price ?? null),
+        [33, 333, 100, null, 100, null],
+      );
+    },
+  );
+
+  await t.test(
+    "the limit stops all absence withdrawals, including after an empty reply",
+    async (t) => {
+      const state = await setup(t, "limit");
+      const before = await state.listings();
+      const feed = await standIn(t, (_url, n) => page(n === 1 ? [first] : []));
+      for (const invalid of [-1, 1.5, Infinity]) {
+        assert.deepEqual(await state.scan(feed, invalid), {
+          code: "invalid_removal_limit",
+          nextStep: { kind: "stop" },
+          pagesRead: 0,
+          recordsSeen: 0,
+          listingsRemoved: 0,
+        });
+      }
+      assert.equal(feed.calls.length, 0);
+      for (const recordsSeen of [1, 0]) {
+        assert.deepEqual(await state.scan(feed, 1), {
+          code: "removal_limit_exceeded",
+          nextStep: { kind: "stop" },
+          pagesRead: 1,
+          recordsSeen,
+          listingsRemoved: 0,
+          wouldRemove: 3 - recordsSeen,
+          maxRemovals: 1,
+        });
+        assert.equal((await state.checkpoint()).active, false);
+        assert.deepEqual(
+          (await state.listings()).map(({ facts }) => facts),
+          before.map(({ facts }) => facts),
+        );
+      }
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", ""],
+      );
+    },
+  );
+
+  await t.test(
+    "repairs edits without removing missing listings unless requested",
+    async (t) => {
+      const state = await setup(t, "keep");
+      const feed = await standIn(t, () => page([record("first", 2, "225.00")]));
+      assert.deepEqual(await state.scan(feed), {
+        ...complete,
+        pagesRead: 1,
+        recordsSeen: 1,
+        listingsRemoved: 0,
+      });
+      assert.deepEqual(
+        (await state.listings()).map(({ facts }) => facts?.price),
+        [225, 100, 100],
+      );
+    },
+  );
+
+  await t.test(
+    "an authoritative page restores a listing after an unreadable removal",
+    async (t) => {
+      const state = await setup(t, "unknown", [first]);
+      const [before] = await state.listings();
+      await state.poll([
+        {
+          ...first,
+          StandardStatus: "Withdrawn",
+          ModificationTimestamp: "unreadable",
+        },
+      ]);
+      const [hidden] = await state.listings();
+      assert.equal(hidden.facts, null);
+      assert.equal(hidden.revision, "infinity");
+      const feed = await standIn(t, () => page([first]));
+      assert.deepEqual(await state.scan(feed, 0), {
+        ...complete,
+        pagesRead: 1,
+        recordsSeen: 1,
+        listingsRemoved: 0,
+      });
+      const [restored] = await state.listings();
+      assert.equal(restored.id, before.id);
+      assert.equal(restored.facts?.price, 100);
+      assert.equal(restored.revision, before.revision);
+    },
+  );
+
+  await t.test(
+    "a competing runner cannot write a page after another runner finishes",
+    async (t) => {
+      const state = await setup(t, "competing");
+      const peer = await connectWriter(t);
+      const winner = await standIn(t, () => page([first, second]));
+      let winningState:
+        Awaited<ReturnType<typeof state.checkpoint>> | undefined;
+      let winningListings:
+        Awaited<ReturnType<typeof state.listings>> | undefined;
+      const loser = await standIn(t, async () => {
+        assert.deepEqual(await state.scan(winner, 1, peer), {
+          ...complete,
+          pagesRead: 1,
+          recordsSeen: 2,
+          listingsRemoved: 1,
+        });
+        winningState = await state.checkpoint();
+        winningListings = await state.listings();
+        return page([record("loser", 2), record("first", 2)]);
+      });
+      assert.deepEqual(await state.scan(loser, 1), {
+        code: "position_changed",
+        nextStep: none,
+        pagesRead: 1,
+        recordsSeen: 2,
+        listingsRemoved: 0,
+      });
+      assert.deepEqual(await state.checkpoint(), winningState);
+      assert.deepEqual(await state.listings(), winningListings);
+      assert.equal((await state.checkpoint()).scanNumber, 1n);
+    },
+  );
+
+  await t.test(
+    "a missing listing returns under the same public ID only at a newer revision",
+    async (t) => {
+      const state = await setup(t, "restore", [first, second]);
+      const [before] = await state.listings();
+      const feed = await standIn(t, () => page([second]));
+      assert.deepEqual(await state.scan(feed, 1), {
+        ...complete,
+        pagesRead: 1,
+        recordsSeen: 1,
+        listingsRemoved: 1,
+      });
+      const [removed] = await state.listings();
+      assert.deepEqual(removed, { ...before, facts: null });
+      await state.poll([first]);
+      assert.deepEqual((await state.listings())[0], removed);
+      await state.poll([record("first", 2, "225.00")]);
+      const [restored] = await state.listings();
+      assert.equal(restored.id, before.id);
+      assert.equal(restored.facts?.price, 225);
+      assert.equal(restored.revision, revision(2));
+    },
+  );
 });

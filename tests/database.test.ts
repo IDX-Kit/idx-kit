@@ -163,7 +163,9 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
   await t.test(
     "the scan migration preserves listings, mappings, positions and outcomes",
     async () => {
-      await db.query("DROP TABLE idx.feed_scan_positions, idx.listing_scan_stamps");
+      await db.query(
+        "DROP TABLE idx.feed_scan_positions, idx.listing_scan_stamps",
+      );
       await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
         "009_feed_scan.sql",
       ]);
@@ -190,8 +192,14 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       assert.ok(before.every((rows) => rows.length > 0));
       await migrate(db);
       assert.deepEqual(await stored(), before);
-      assert.equal((await db.query("SELECT * FROM idx.feed_scan_positions")).rowCount, 0);
-      assert.equal((await db.query("SELECT * FROM idx.listing_scan_stamps")).rowCount, 0);
+      assert.equal(
+        (await db.query("SELECT * FROM idx.feed_scan_positions")).rowCount,
+        0,
+      );
+      assert.equal(
+        (await db.query("SELECT * FROM idx.listing_scan_stamps")).rowCount,
+        0,
+      );
     },
   );
   await t.test(

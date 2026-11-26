@@ -84,7 +84,13 @@ export async function syncIncrementally(client: pg.Client, feed: SyncFeed) {
   if (!checkpoint) return { ...result, outcomeSaved: false } as const;
   try {
     const nextStep = result.code === "complete" ? null : result.nextStep;
-    await saveFeedOutcome(client, feedId, checkpoint.version, outcome, nextStep);
+    await saveFeedOutcome(
+      client,
+      feedId,
+      checkpoint.version,
+      outcome,
+      nextStep,
+    );
   } catch {
     return { ...result, outcomeSaved: false } as const;
   }

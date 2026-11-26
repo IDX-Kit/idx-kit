@@ -80,7 +80,10 @@ export async function syncFullScan(
           feedId,
           changes,
           disclosures,
-          { authoritativeSnapshot: true, scan: { checkpoint: next, maxRemovals } },
+          {
+            authoritativeSnapshot: true,
+            scan: { checkpoint: next, maxRemovals },
+          },
         );
         checkpoint = { ...next, version: next.version + 1n };
         if (removal) {
@@ -110,7 +113,11 @@ export async function syncFullScan(
     return { ...counts, code: "complete", nextStep: { kind: "none" } };
   } catch (error) {
     if (error instanceof FeedPositionChanged) {
-      return { ...counts, code: "position_changed", nextStep: { kind: "none" } };
+      return {
+        ...counts,
+        code: "position_changed",
+        nextStep: { kind: "none" },
+      };
     }
     return { ...counts, code: "write_failed", nextStep: { kind: "retry" } };
   }

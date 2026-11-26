@@ -13,8 +13,7 @@ export interface SyncFeed {
 type PageResult = Awaited<ReturnType<ResoConnector["readPage"]>>;
 type Page = Extract<PageResult, { code: "page" }>;
 export type StoppedRun =
-  | Exclude<PageResult, Page>
-  | { code: "write_failed"; status?: number };
+  Exclude<PageResult, Page> | { code: "write_failed"; status?: number };
 
 export function nextStepFor(outcome: StoppedRun): FeedNextStep {
   if (outcome.code === "invalid_link") return { kind: "stop" };
