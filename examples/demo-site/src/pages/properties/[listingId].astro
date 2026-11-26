@@ -12,12 +12,14 @@ import Listing from "../../components/Listing.astro";
 import Failure from "../../components/Failure.astro";
 const listingId = Astro.params.listingId ?? "";
 const path = `/properties/${listingId}`;
+const isPost = Astro.request.method === "POST";
+const isReceiptLookup = !isPost && Astro.url.searchParams.has("receipt");
 let form = emptyInquiry();
 let receipt;
 let response;
 let status = 200;
 let engine: ReturnType<typeof engineClient> | undefined;
-if (Astro.request.method === "POST") {
+if (isPost) {
   const result = await sendInquiry(Astro.request, listingId);
   if (result.receipt)
     return Astro.redirect(
@@ -26,7 +28,7 @@ if (Astro.request.method === "POST") {
     );
   form = result.form;
   status = result.status;
-} else if (Astro.url.searchParams.has("receipt")) {
+} else if (isReceiptLookup) {
   try {
     engine = engineClient();
     receipt = await engine.receipt(Astro.url.searchParams.get("receipt") ?? "");
@@ -37,7 +39,7 @@ if (Astro.request.method === "POST") {
 } else
   try {
     engine = engineClient();
-    response = await engine.listing(Astro.params.listingId ?? "");
+    response = await engine.listing(listingId);
     displayBlocks(response.data.display, response.display);
   } catch (error) {
     logFailure(error, engine?.context());
@@ -72,8 +74,7 @@ const message =
       </p>
       <a href={path}>Send another inquiry</a>
     </section>
-  ) : Astro.url.searchParams.has("receipt") &&
-    Astro.request.method !== "POST" ? (
+  ) : isReceiptLookup ? (
     <section>
       <h1>Inquiry receipt</h1>
       <p role="alert">
@@ -90,14 +91,12 @@ const message =
     <>
       {status === 200 && response ? (
         <Listing listing={response.data} pageDisplay={response.display} />
-      ) : Astro.request.method === "POST" ? (
+      ) : isPost ? (
         <h1>Inquiry</h1>
       ) : (
         <Failure status={status} />
       )}
-      {(response || Astro.request.method === "POST") && (
-        <Inquiry form={form} path={path} />
-      )}
+      {(response || isPost) && <Inquiry form={form} path={path} />}
     </>
   )}
 </Page>

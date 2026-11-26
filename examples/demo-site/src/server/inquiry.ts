@@ -113,7 +113,8 @@ export async function sendInquiry(request: Request, listingId: string) {
       },
       form.key,
     );
-    return { form, status: 303, receipt: receipt.data };
+    if (receipt.data) return { receipt: receipt.data };
+    return { form, status: 303 };
   } catch (error) {
     logFailure(error, engine?.context());
     const status = inquiryFailure(
