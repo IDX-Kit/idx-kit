@@ -6,6 +6,8 @@ Run the commands from the repository root in one Bash session. Ports 55432,
 8787, and 4321 must be free. Use only the synthetic listings and invented form
 values. Both servers listen on loopback.
 
+CI runs the shell blocks marked `ci` in order on a fresh runner.
+
 ## Install
 
 ```bash ci
@@ -99,7 +101,7 @@ demo_site() {
   HOST=127.0.0.1 PORT=4321 IDX_ENGINE_URL=http://127.0.0.1:8787 \
     IDX_SECRET_KEY="$(cat "$IDX_DEMO_DIR/site.secret")" exec node start.mjs
 }
-export -f demo_engine demo_site demo_db_start demo_db_stop
+declare -f demo_engine demo_site demo_db_start demo_db_stop > "$IDX_DEMO_DIR/commands.sh"
 ```
 
 Run this check with the server ports still free. It starts both servers, opens
@@ -112,7 +114,7 @@ values, restarts the database, and retries. The retry stores one new inquiry.
 The check stops both servers when it finishes.
 
 ```bash ci
-npm run test:demo -- setup.spec.ts
+BASH_ENV="$IDX_DEMO_DIR/commands.sh" npm run test:demo -- setup.spec.ts
 node scripts/check-logs.mjs
 ```
 

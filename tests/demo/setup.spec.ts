@@ -56,7 +56,11 @@ test.describe("clean demo quick start", () => {
     const manifest = JSON.parse(
       await readFile(new URL("package.json", root), "utf8"),
     );
-    for (const path of ["AGENTS.md", "docs/api-rules.md", "docs/demo-setup.md"]) {
+    for (const path of [
+      "AGENTS.md",
+      "docs/api-rules.md",
+      "docs/demo-setup.md",
+    ]) {
       expect(readme).toContain(`](${path})`);
       const document = new URL(path, root);
       const text = await readFile(document, "utf8");
@@ -89,7 +93,9 @@ test.describe("clean demo quick start", () => {
       const site = await startNodeSite(4321, "bash", ["-ec", "demo_site"]);
       try {
         await page.goto("/");
-        await page.getByRole("link", { name: "Search Example Springs" }).click();
+        await page
+          .getByRole("link", { name: "Search Example Springs" })
+          .click();
         await expect(page).toHaveURL(/\/search\?/);
         await page
           .locator('[data-listing="lst_demo_0001"]')
