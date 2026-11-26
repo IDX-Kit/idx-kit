@@ -1,85 +1,44 @@
 import type { DisplayBlock, Listing } from "@idx-kit/client";
 
-// Apply while the connector still has the source address; never retain it in public facts.
+export const genericPhotoAlt = "Property photo";
+const plain = (value: string) =>
+  value.toLowerCase().replace(/[^\p{L}\p{Nd}]/gu, "");
+
 export function addressProtection(...addresses: Listing["address"][]) {
-  const streets = [
-    ...new Set(
-      addresses.flatMap((address) =>
-        address?.line1.trim() ? [address.line1.trim()] : [],
-      ),
-    ),
-  ];
-  const escape = (value: string) =>
-    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = streets.length
-    ? new RegExp(
-        streets
-          .flatMap((street) => [
-            street.split(/\s+/).map(escape).join("\\s+"),
-            escape(encodeURIComponent(street)),
-          ])
-          .join("|"),
-        "gi",
-      )
-    : null;
-  const text = (value: string) =>
-    pattern ? value.replace(pattern, "Address withheld") : value;
-  const referencePattern = streets.length
-    ? new RegExp(
-        streets
-          .map((street) => street.split(/\s+/).map(escape).join("[\\s_+-]+"))
-          .join("|"),
-        "i",
-      )
-    : null;
-  const referenceContainsStreet = (reference: string) => {
-    if (!referencePattern) return;
+  const streets = [...new Set(addresses.map((address) => plain(address?.line1 ?? "")).filter(Boolean))];
+  const containsStreet = (value: string) => {
+    if (!streets.length) return;
+    const matches = (value: string) => {
+      const folded = plain(value);
+      return streets.some((street) => folded.includes(street));
+    };
+    if (matches(value)) return true;
     try {
-      const url = new URL(reference, "https://synthetic.example.invalid");
-      const parts = [
-        reference,
-        ...[
-          reference,
-          url.username,
-          url.password,
-          url.hostname,
-          url.pathname,
-          url.search,
-          url.hash,
-        ].map((part) => decodeURIComponent(part)),
-        ...Array.from(url.searchParams).flat(),
-      ];
-      return parts.some(
-        (part) => referencePattern.test(part) || text(part) !== part,
-      );
+      return matches(decodeURIComponent(value));
     } catch {
       // An undecodable reference cannot be checked for a street.
       return;
     }
   };
+  const text = (value: string) =>
+    containsStreet(value) ? "Address withheld" : value;
   const image = (value: NonNullable<Listing["images"]>[number]) => {
-    if (pattern && referenceContainsStreet(value.url) !== false)
+    if (streets.length && containsStreet(value.url) !== false)
       throw new Error("Withheld address in media reference");
     return { url: value.url, alt: text(value.alt) };
   };
   const photos = (values: Listing["images"], hideAddress: boolean) =>
     values?.flatMap((value) => {
-      const containsStreet = referenceContainsStreet(value.url);
-      if (containsStreet || (hideAddress && containsStreet === undefined))
-        return [];
-      return [
-        {
-          url: value.url,
-          alt:
-            pattern && text(value.alt) === value.alt
-              ? value.alt
-              : "Property photo",
-        },
-      ];
+      const unsafe = containsStreet(value.url);
+      if (unsafe || (hideAddress && unsafe === undefined)) return [];
+      return [{
+        url: value.url,
+        alt: containsStreet(value.alt) === false ? value.alt : genericPhotoAlt,
+      }];
     }) ?? null;
   const blocks = (values: DisplayBlock[]): DisplayBlock[] =>
     values.map((value) => {
-      if (text(value.id) !== value.id)
+      if (containsStreet(value.id))
         throw new Error("Withheld address in disclosure ID");
       return {
         id: value.id,

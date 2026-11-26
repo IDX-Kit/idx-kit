@@ -14,6 +14,7 @@ import type { ListingChange } from "@idx-kit/engine/src/db/listings.ts";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { createApp } from "@idx-kit/engine/src/http/app.ts";
+import { workerRuntime } from "../workers/runtime.ts";
 import { contract, valid, validateResponse } from "./contract.ts";
 import { fixtureDisclosures } from "./listing-page.ts";
 import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
@@ -346,12 +347,22 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const street = "1000 Synthetic Writer Way";
           hidden.listing.source.Address!.line1 = street;
           hidden.listing.source.InternetAddressDisplayYN = false;
-          const generic = { url: oldPhoto, alt: "Property photo" };
+          const spellings = [
+            street,
+            "999-synthetic-writer-way",
+            "1000_Synthetic_Writer_Way",
+            "999 SYNtHETic wRIteR WaY",
+            "1000SyntheticWriterWay",
+          ];
+          const captions = spellings.map((alt, index) => ({ url: `/media/photo-${index}.svg`, alt }));
+          const abbreviation = { url: oldPhoto, alt: "Front view of 999 Synthetic Writer Wy." };
+          const missingCaptions = [{ url: "/media/blank.svg", alt: "" }, { url: "/media/spaces.svg", alt: "   " }, { url: "/media/missing.svg" }];
           hidden.listing.source.Images = [
             safe,
-            { ...generic, alt: `Rear view of ${oldStreet} and ${street}` },
-            { url: `/media/${encodeURIComponent(street)}.svg`, alt: safe.alt },
-            { url: "/media/999-synthetic-writer-way.svg", alt: safe.alt },
+            abbreviation,
+            ...captions,
+            ...missingCaptions,
+            ...spellings.map((spelling) => ({ url: `/media/${encodeURIComponent(spelling)}.svg`, alt: safe.alt })),
             { url: "/media/%ZZ.svg", alt: safe.alt },
           ];
           assert.deepEqual((await write([hidden])).rejected, []);
@@ -362,10 +373,16 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             assert.equal(item.status, "active");
             assert.equal(item.address, null);
             assert.deepEqual(item.withheldFields, ["address"]);
-            assert.deepEqual(item.images, [safe, generic]);
+            assert.deepEqual(item.images, [safe, abbreviation, ...[...captions, ...missingCaptions].map(({ url }) => ({ url, alt: "Property photo" }))]);
           }
 
-          const unknownStreet = upsert(key, 3);
+          const carryingStreet = structuredClone(hidden);
+          carryingStreet.revision = revision(3);
+          carryingStreet.listing.source.StandardStatus = `Active at ${spellings[2]}`;
+          await write([carryingStreet]);
+          assert.equal((await searchItem(id)).status, "Address withheld");
+
+          const unknownStreet = upsert(key, 4);
           unknownStreet.listing.source.Address = null;
           unknownStreet.listing.source.Images = [safe];
           await write([unknownStreet]);
@@ -560,15 +577,50 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
-        "a removal with an unreadable revision records the greatest known revision",
+        "a connection dropped during search returns 503 and the Node engine recovers",
+        { skip: workerRuntime },
+        async (t) => {
+          const observer = new pg.Client({
+            connectionString: process.env.RUNTIME_DATABASE_URL,
+          });
+          await observer.connect();
+          t.after(() => observer.end());
+          await db.query("BEGIN");
+          try {
+            await db.query("LOCK TABLE idx.feeds IN ACCESS EXCLUSIVE MODE");
+            const pending = request("/api/v1/listings", 503);
+            void pending.catch(() => {});
+            let terminated = false;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              const { rows } = await observer.query(`
+                SELECT pg_terminate_backend(pid, 500) AS terminated
+                FROM pg_stat_activity
+                WHERE usename = current_user AND pid <> pg_backend_pid()
+                  AND query LIKE '%oldest_listing_ingested_at%'
+                  AND wait_event_type = 'Lock'
+              `);
+              if (rows.length) {
+                terminated = rows[0].terminated;
+                break;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            assert.ok(terminated, "The active search connection was terminated");
+            assert.equal((await pending).body.code, "service_unavailable");
+          } finally {
+            await db.query("ROLLBACK");
+          }
+          await search();
+        },
+      );
+
+      await t.test(
+        "an unreadable removal wins even against a readable revision on the same page",
         async () => {
           const key = "Synthetic writer unreadable revision";
           await write([upsert(key, 1)]);
           const id = await identity(primary, key);
-          const newer = {
-            ...upsert(key, 2),
-            revision: new Date(Date.now() + 60_000).toISOString(),
-          };
+          const newer = upsert(key, 2);
           const bad = { ...remove(key, 0), revision: "unreadable" };
           assert.deepEqual((await write([newer, bad])).rejected, [
             { index: 1, code: "invalid_change", hidden: true },
@@ -576,15 +628,15 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           await write([newer]);
           await absent(id);
           const result = await db.query(
-            "SELECT source_revision = $2::timestamptz AS retained FROM idx.source_mappings WHERE listing_id=$1",
-            [id, newer.revision],
+            "SELECT source_revision::text FROM idx.source_mappings WHERE listing_id=$1",
+            [id],
           );
-          assert.equal(result.rows[0].retained, true);
+          assert.equal(result.rows[0].source_revision, "infinity");
         },
       );
 
       await t.test(
-        "an unreadable removal for an unseen key blocks an older page from another writer",
+        "only a valid authoritative upsert clears an order-unknown tombstone",
         async (t) => {
           const peer = new pg.Client({
             connectionString: process.env.LISTING_WRITER_DATABASE_URL,
@@ -592,29 +644,28 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           await peer.connect();
           t.after(() => peer.end());
           const key = "Synthetic writer unseen removal";
-          const prior = new Date(Date.now() - 60_000).toISOString();
           const removal = { ...remove(key, 0), revision: "unreadable" };
-          const beforeReceipt = Date.now();
           assert.deepEqual((await write([removal])).rejected, [
             { index: 0, code: "invalid_change", hidden: true },
           ]);
           const id = await identity(primary, key);
-          const { rows } = await db.query<{ source_revision: Date }>(
-            "SELECT source_revision FROM idx.source_mappings WHERE listing_id=$1",
-            [id],
-          );
-          const floor = rows[0].source_revision.getTime();
-          assert.ok(floor >= beforeReceipt);
-          const replay = { ...upsert(key, 1), revision: prior };
-          await applyListingPage(peer, primary, [replay], feed);
+          const older = { ...upsert(key, 1), revision: "2001-01-01T00:00:00Z" };
+          const newer = { ...upsert(key, 2), revision: "9999-01-01T00:00:00Z" };
+          const snapshot = { authoritativeSnapshot: true };
+          await applyListingPage(peer, primary, [remove(key, 3)], feed, snapshot);
+          for (const replay of [older, newer]) {
+            await applyListingPage(peer, primary, [replay], feed);
+            await absent(id);
+          }
+          assert.deepEqual((await applyListingPage(peer, primary, [{ ...older, revision: "unreadable" }], feed, snapshot)).rejected, [
+            { index: 0, code: "invalid_change", hidden: true },
+          ]);
           await absent(id);
-          const newer = {
-            ...replay,
-            revision: new Date(floor + 1).toISOString(),
-          };
-          await applyListingPage(peer, primary, [newer], feed);
+          await applyListingPage(peer, primary, [older], feed, snapshot);
           assert.equal((await publicDetail(id)).body.data.id, id);
           assert.equal((await searchItem(id)).id, id);
+          await applyListingPage(peer, primary, [remove(key, 4)], feed);
+          await absent(id);
         },
       );
 
@@ -934,10 +985,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(body.data.address, null);
         assert.deepEqual(body.data.withheldFields, ["address"]);
         assert.ok(!text.toLowerCase().includes(street.toLowerCase()));
-        assert.equal(
-          body.data.images[0].alt,
-          "Synthetic illustration of Address withheld",
-        );
+        assert.equal(body.data.images[0].alt, "Address withheld");
         for (const [blocks, id] of [
           [body.data.display.blocks, "listing_address"],
           [body.display.blocks, "feed_address"],
@@ -946,14 +994,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const disclosure = blocks.find(
             (item: DisplayBlock) => item.id === id,
           );
-          assert.equal(
-            disclosure.text,
-            "Synthetic disclosure for Address withheld.",
-          );
-          assert.equal(
-            disclosure.image.alt,
-            "Synthetic icon for Address withheld",
-          );
+          assert.equal(disclosure.text, "Address withheld");
+          assert.equal(disclosure.image.alt, "Address withheld");
         }
         // Shared feed disclosures must also be safe when another listing is requested.
         const visible = await request(listing);

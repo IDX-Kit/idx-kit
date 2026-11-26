@@ -1,6 +1,6 @@
 import type { Listing, DisplayBlock } from "@idx-kit/client";
 import { z } from "zod";
-import { addressProtection } from "./withholding.ts";
+import { addressProtection, genericPhotoAlt } from "./withholding.ts";
 
 const text = z
   .string()
@@ -21,6 +21,9 @@ const mediaUrl = imageFields.shape.url.refine((value) => {
   return url?.protocol === "https:" && !url.username && !url.password;
 });
 const imageSchema = imageFields.extend({ url: mediaUrl });
+const photoInput = imageFields.extend({
+  alt: boundedText.nullish().transform((value) => value?.trim() ? value : genericPhotoAlt),
+});
 const blockSchema = z.object({
   id: z
     .string()
@@ -61,7 +64,7 @@ export interface ListingRecord {
     ListPrice: string | null;
     BedroomsTotal: Listing["bedrooms"];
     Address: Listing["address"];
-    Images: Listing["images"];
+    Images: z.input<typeof photoInput>[] | null;
     InternetAddressDisplayYN: boolean;
     InternetEntireListingDisplayYN: boolean;
   };
@@ -122,16 +125,10 @@ export function normalize(record: ListingRecord, feedPage = false) {
   const protection = addressProtection(
     hideAddress && !feedPage ? address : null,
   );
-  const images = feedPage
-    ? hideAddress
-      ? (z
-          .array(imageFields)
-          .max(128)
-          .nullable()
-          .parse(source.Images)
-          ?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null)
-      : imagesSchema.parse(source.Images)
-    : imagesSchema.parse(source.Images?.map(protection.image) ?? null);
+  const photos = z.array(photoInput).max(128).nullable().parse(source.Images);
+  const images = feedPage && hideAddress
+    ? photos?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null
+    : imagesSchema.parse(feedPage ? photos : photos?.map(protection.image) ?? null);
   if (hideAddress) fields.add("address");
   const facts: Pick<
     Listing,

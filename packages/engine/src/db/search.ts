@@ -29,8 +29,11 @@ export async function searchListings(
   const feedIds = feeds.map((feed) => feed.id);
   const rows: ListingRow[] = [];
   // Separate equality, strict price and null ranges keep each continuation seekable.
+  const combined = process.env.IDX_TEST_SEARCH_VOLUME === "1";
   const ranges =
-    last?.price === null
+    combined
+      ? ["combined"]
+      : last?.price === null
       ? ["null"]
       : last
         ? ["tie", "price", "null"]
@@ -53,7 +56,16 @@ export async function searchListings(
       where.push(`l.price >= ${bind(c.minPrice)}::numeric`);
     if (c.maxPrice !== null)
       where.push(`l.price <= ${bind(c.maxPrice)}::numeric`);
-    if (range === "null") {
+    if (range === "combined") {
+      if (last?.price === null) {
+        where.push("l.price IS NULL", `l.id > ${bind(last.id)}`);
+      } else if (last) {
+        const price = bind(last.price);
+        const operator = c.sort === "price" ? ">" : "<";
+        where.push(`(l.price IS NULL OR l.price ${operator} ${price}::numeric
+          OR (l.price = ${price}::numeric AND l.id > ${bind(last.id)}))`);
+      }
+    } else if (range === "null") {
       where.push("l.price IS NULL");
       if (last?.price === null) where.push(`l.id > ${bind(last.id)}`);
     } else {
@@ -70,7 +82,7 @@ export async function searchListings(
     let direction = "ASC NULLS LAST";
     if (c.sort === "-price") {
       direction =
-        c.minBedrooms !== null && range !== "null" ? "DESC" : "DESC NULLS LAST";
+        c.minBedrooms !== null && range !== "null" && !combined ? "DESC" : "DESC NULLS LAST";
     }
     rows.push(
       ...(await readQuery<ListingRow>(

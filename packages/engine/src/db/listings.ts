@@ -18,6 +18,9 @@ import type {
 } from "../domain/normalize.ts";
 
 export const listingPageLimit = 200;
+// PostgreSQL stores this sentinel in the existing timestamp column. Source
+// timestamps must be finite, so only the writer can mark order as unknown.
+const orderUnknown = "infinity";
 
 type ListingChangeSource = Omit<ListingRecord["source"], "ListingKey">;
 
@@ -112,7 +115,7 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
       INSERT INTO idx.source_mappings AS m (feed_id, source_key, listing_id, source_revision)
       SELECT $1, source_key, candidate, revision FROM incoming
       ON CONFLICT (feed_id, source_key) DO UPDATE
-      SET source_revision = GREATEST(EXCLUDED.source_revision, m.source_revision)
+      SET source_revision = EXCLUDED.source_revision
       RETURNING source_key, listing_id
     ), changes AS (
       SELECT accepted.listing_id, incoming.listing
@@ -162,7 +165,9 @@ async function readExisting(
 ) {
   const result = await client.query<Stored>(
     `SELECT m.source_key, l.address,
-      to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS revision,
+      CASE WHEN m.source_revision = '${orderUnknown}'::timestamptz THEN '${orderUnknown}'
+        ELSE to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+      END AS revision,
       CASE WHEN $3 OR l.entire_listing_display THEN l.withheld_fields END AS withheld
     FROM idx.source_mappings m LEFT JOIN idx.listings l ON l.id = m.listing_id
     WHERE m.feed_id = $1 AND m.source_key = ANY($2::text[])`,
@@ -194,30 +199,26 @@ function validateNewKey(feedId: string, sourceKey: string, stored?: Stored) {
 function selectChange(
   rows: Candidate[],
   stored: Stored | undefined,
-  receivedAt: string | null = null,
+  mode: "fixture" | "stream" | "snapshot",
 ) {
-  const fixture = receivedAt === null;
+  const unknown = rows.find((row) => row.revision === orderUnknown);
+  if (unknown) return unknown;
+  const blocked = stored?.revision === orderUnknown;
+  if (blocked && mode !== "snapshot") return;
+  const previous = blocked ? undefined : stored;
+
   // Higher revisions win. Ties combine field restrictions, and a removal wins
-  // a tie. An unreadable revision removes the listing and sets a floor at
-  // receipt time or the greatest stored or incoming revision, whichever is later.
-  let revision = rows.reduce((latest, row) => {
+  // a tie. Only a valid authoritative upsert clears an order-unknown tombstone.
+  const revision = rows.reduce((latest, row) => {
     return row.revision !== null && (latest === null || row.revision > latest)
       ? row.revision
       : latest;
-  }, stored?.revision ?? null);
-  if (
-    receivedAt !== null &&
-    rows.some((row) => row.revision === null) &&
-    (revision === null || receivedAt > revision)
-  )
-    revision = receivedAt;
-  const latest = rows.filter(
-    (row) => row.revision === revision || (!fixture && row.revision === null),
-  );
+  }, previous?.revision ?? null);
+  const latest = rows.filter((row) => row.revision === revision);
   const removal = latest.find((row) => row.listing === null);
-  const sameRevision = stored !== undefined && stored.revision === revision;
-  if (sameRevision && stored.withheld === null) return;
-  if (removal) return { ...removal, revision };
+  const sameRevision = previous !== undefined && previous.revision === revision;
+  if (sameRevision && previous.withheld === null) return;
+  if (removal) return blocked ? undefined : removal;
 
   const alive = latest.flatMap((row) => {
     return row.listing
@@ -226,13 +227,13 @@ function selectChange(
   });
   if (!alive.length) return;
   const fields = new Set<WithheldField>(
-    sameRevision ? (stored.withheld ?? []) : [],
+    sameRevision ? (previous.withheld ?? []) : [],
   );
   const before = fields.size;
   for (const { listing } of alive) {
     for (const field of listing.facts.withheldFields) fields.add(field);
   }
-  if (sameRevision && fields.size === before && !fixture) return;
+  if (sameRevision && fields.size === before && mode !== "fixture") return;
 
   const [winner] = alive.sort((a, b) => {
     const difference =
@@ -284,7 +285,7 @@ export async function writeFixturePages(
       const stored = existing.get(key);
       if (!validateNewKey(feedId, key, stored))
         throw new Error("Invalid source key");
-      const selected = selectChange(changes, stored);
+      const selected = selectChange(changes, stored, "fixture");
       if (selected) rows.push(selected);
     }
     await writePage(client, feedId, rows);
@@ -314,8 +315,8 @@ export async function applyListingPage(
   feedId: string,
   changes: readonly ListingChange[],
   disclosures: ListingPageDisclosures,
+  { authoritativeSnapshot = false }: { authoritativeSnapshot?: boolean } = {},
 ) {
-  const receivedAt = revisionKey(new Date().toISOString());
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
   const feedBlocks = disclosureSchema
@@ -387,12 +388,16 @@ export async function applyListingPage(
         return {
           index,
           source_key: key,
-          revision: revision.success ? revisionKey(revision.data) : null,
+          revision: revision.success ? revisionKey(revision.data) : orderUnknown,
           candidate: `lst_${randomUUID()}`,
           listing,
         };
       });
-      const selected = selectChange(candidates, stored, receivedAt);
+      const selected = selectChange(
+        candidates,
+        stored,
+        authoritativeSnapshot ? "snapshot" : "stream",
+      );
       if (!selected) continue;
       if (selected.listing) {
         const { facts } = selected.listing;
