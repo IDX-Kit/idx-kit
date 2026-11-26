@@ -474,11 +474,28 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     });
     expect((await send(page)).status()).toBe(403);
     await expect(page.getByRole("heading", { name: received })).toHaveCount(0);
+    const crossSiteHeaders = {
+      Origin: "https://foreign.example.invalid",
+      "Sec-Fetch-Site": "cross-site",
+    };
+    const crossSiteLogs = () =>
+      faultSite.logs().match(/"errorType":"CrossSitePost"/g) ?? [];
+    const previousRejections = crossSiteLogs().length;
+    const search = await request.post(faultOrigin + "/search", {
+      headers: crossSiteHeaders,
+      form: { city: "Example Springs" },
+    });
+    expect(search.status()).toBe(403);
+    expect(await search.text()).toBe(
+      "Cross-site POST form submissions are forbidden",
+    );
+    const searchHeaders = search.headers();
+    expect(searchHeaders["cache-control"]).toBeUndefined();
+    expect(searchHeaders["referrer-policy"]).toBeUndefined();
+    expect(searchHeaders["request-id"]).toBeUndefined();
+
     const crossSite = await request.post(faultOrigin + property, {
-      headers: {
-        Origin: "https://foreign.example.invalid",
-        "Sec-Fetch-Site": "cross-site",
-      },
+      headers: crossSiteHeaders,
       form: { ...visitor, idempotencyKey: crypto.randomUUID(), website: "" },
     });
     expect(crossSite.status()).toBe(403);
@@ -494,6 +511,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       requestId,
     });
     await expect.poll(() => faultSite.logs()).toContain(rejection);
+    expect(crossSiteLogs()).toHaveLength(previousRejections + 1);
     expect(posts).toBe(0);
     expect(await rows()).toHaveLength(0);
   });

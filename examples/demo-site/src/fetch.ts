@@ -3,10 +3,12 @@ import { writeLog } from "./server/log.ts";
 
 export default {
   fetch: async (request: Request): Promise<Response> => {
-    const response = await astro(new FetchState(request));
+    const state = new FetchState(request);
+    const response = await astro(state);
     // Astro's origin check can reject a POST before middleware sets no-store.
     if (
       request.method === "POST" &&
+      state.routeData?.route === "/properties/[listingId]" &&
       response.status === 403 &&
       !response.headers.has("Cache-Control")
     ) {
