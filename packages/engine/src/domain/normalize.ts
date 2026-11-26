@@ -124,8 +124,12 @@ export function normalize(record: ListingRecord, feedPage = false) {
   );
   const images = feedPage
     ? hideAddress
-      ? z.array(imageFields).max(128).nullable().parse(source.Images)
-          ?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null
+      ? (z
+          .array(imageFields)
+          .max(128)
+          .nullable()
+          .parse(source.Images)
+          ?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null)
       : imagesSchema.parse(source.Images)
     : imagesSchema.parse(source.Images?.map(protection.image) ?? null);
   if (hideAddress) fields.add("address");

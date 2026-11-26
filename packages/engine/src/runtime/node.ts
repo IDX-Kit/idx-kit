@@ -39,10 +39,16 @@ const contract = parse(
 const { version } = JSON.parse(
   await readFile(new URL("../../package.json", import.meta.url), "utf8"),
 );
-const app = createApp(repository(pool, () => pool.connect()), contract, version, console.error, {
-  email: { settings: emailSettings },
-  turnstileSecret: process.env.TURNSTILE_SECRET_KEY,
-});
+const app = createApp(
+  repository(pool, () => pool.connect()),
+  contract,
+  version,
+  console.error,
+  {
+    email: { settings: emailSettings },
+    turnstileSecret: process.env.TURNSTILE_SECRET_KEY,
+  },
+);
 const server = serve(
   { fetch: app.fetch, hostname: "127.0.0.1", port: 8787 },
   () => process.stdout.write("Engine ready\n"),

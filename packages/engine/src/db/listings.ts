@@ -397,7 +397,10 @@ export async function applyListingPage(
       if (selected.listing) {
         const { facts } = selected.listing;
         const protection = addressProtection(...addresses);
-        facts.images = protection.photos(facts.images, facts.withheldFields.includes("address"));
+        facts.images = protection.photos(
+          facts.images,
+          facts.withheldFields.includes("address"),
+        );
         if (facts.status !== null) facts.status = protection.text(facts.status);
       }
       rows.push(selected);

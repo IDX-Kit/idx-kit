@@ -69,7 +69,10 @@ export const licensedListing = `${listingSelect}
   JOIN idx.source_mappings m ON m.listing_id = l.id
   JOIN idx.feeds f ON f.id = m.feed_id
   JOIN idx.data_licenses d ON d.feed_id = m.feed_id AND d.site_id = $1`;
-export function repository(pool: Database, connectSearch?: () => Promise<pg.PoolClient>) {
+export function repository(
+  pool: Database,
+  connectSearch?: () => Promise<pg.PoolClient>,
+) {
   const query = <T extends pg.QueryResultRow>(
     sql: string,
     values: unknown[],
@@ -84,7 +87,12 @@ export function repository(pool: Database, connectSearch?: () => Promise<pg.Pool
       const db = client ?? pool;
       let discard = false;
       try {
-        await readQuery(db, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", [], "search.begin");
+        await readQuery(
+          db,
+          "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+          [],
+          "search.begin",
+        );
         const result = await searchListings(db, query);
         await readQuery(db, "COMMIT", [], "search.commit");
         return result;
