@@ -1,4 +1,5 @@
 import { ApiError } from "@idx-kit/client";
+import { z } from "astro/zod";
 import {
   engineClient,
   logFailure,
@@ -8,6 +9,14 @@ import {
 import { writeLog } from "./log.ts";
 
 export const inquiryFields = ["name", "email", "message"] as const;
+const validationIssues = z.array(
+  z.object({
+    detail: z.string(),
+    pointer: z.string().optional(),
+    parameter: z.string().optional(),
+    header: z.string().optional(),
+  }),
+);
 export type InquiryField = (typeof inquiryFields)[number];
 export function emptyInquiry() {
   return {
@@ -35,7 +44,8 @@ export function inquiryFailure(
     form.key = crypto.randomUUID();
     form.message = "Your message has changed. Please send it again.";
   } else if (status === 400 || status === 422) {
-    for (const issue of problem.errors ?? []) {
+    const issues = validationIssues.safeParse(problem.errors);
+    for (const issue of issues.data ?? []) {
       const field = inquiryFields.find(
         (name) =>
           issue.pointer ===
@@ -43,7 +53,7 @@ export function inquiryFailure(
       );
       if (field) form.errors[field] = "Check this field.";
     }
-    // Unrecognized fields must still leave a useful, safe correction prompt.
+    // Malformed errors and unrecognized fields still need a safe prompt.
     if (!Object.keys(form.errors).length) form.message = "Check this field.";
   } else if (status === 401 || status === 403) {
     form.message = "This form isn't available right now.";

@@ -28,6 +28,7 @@ let site: Awaited<ReturnType<typeof startSite>>;
 let faultSite: Awaited<ReturnType<typeof startSite>>;
 let fault: number | "network" | "timeout" | "lost" = 500;
 let receiptLookupTimesOut = false;
+let malformedErrors = false;
 let code = "invalid_input";
 let posts = 0;
 let upstreamId: string | null = null;
@@ -87,6 +88,7 @@ const stub = createServer(async (req, res) => {
     "Request-Id": upstreamId,
     ...([409, 429].includes(fault) ? { "Retry-After": "17" } : {}),
   });
+  const issue = { pointer: "/visitor/email", detail: visitor.message };
   res.end(
     JSON.stringify({
       type: "about:blank",
@@ -95,7 +97,7 @@ const stub = createServer(async (req, res) => {
       code,
       requestId: upstreamId,
       detail: Object.values(visitor).join(" "),
-      errors: [{ pointer: "/visitor/email", detail: visitor.message }],
+      errors: malformedErrors ? issue : [issue],
     }),
   );
 });
@@ -173,6 +175,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     code = "invalid_input";
     lostReceipt = undefined;
     receiptLookupTimesOut = false;
+    malformedErrors = false;
   });
   test.afterAll(async () => {
     await faultSite?.stop();
@@ -360,6 +363,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
   for (const failure of [
     400,
     422,
+    "malformed validation",
     401,
     403,
     404,
@@ -374,12 +378,15 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     test(`safe guidance and retained values for ${failure}`, async ({
       page,
     }) => {
-      fault = failure === "mismatch" ? 422 : failure;
+      const malformed = failure === "malformed validation";
+      malformedErrors = malformed;
+      fault = failure === "mismatch" || malformed ? 422 : failure;
       code = failure === "mismatch" ? "idempotency_mismatch" : "invalid_input";
       await headers(await page.goto(faultOrigin + property));
       const originalKey = await key(page);
       await fill(page);
       const response = await send(page);
+      if (malformed) expect(response.status()).toBe(422);
       await headers(response);
       const newKey = await key(page);
       if (failure === "mismatch") {
@@ -390,7 +397,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       const expected =
         failure === "mismatch"
           ? "Your message has changed. Please send it again."
-          : failure === 400 || failure === 422
+          : failure === 400 || failure === 422 || malformed
             ? "Check this field."
             : failure === 401 || failure === 403
               ? "This form isn't available right now."
@@ -429,7 +436,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       await expect(page.getByRole("heading", { name: received })).toHaveCount(
         0,
       );
-      if (typeof failure === "number" || failure === "mismatch") {
+      if (typeof fault === "number") {
         await expect
           .poll(() => faultSite.logs())
           .toContain(`"requestId":"${upstreamId}"`);
@@ -475,6 +482,18 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       form: { ...visitor, idempotencyKey: crypto.randomUUID(), website: "" },
     });
     expect(crossSite.status()).toBe(403);
+    const rejectedHeaders = crossSite.headers();
+    expect(rejectedHeaders["cache-control"]).toBe("no-store");
+    expect(rejectedHeaders["referrer-policy"]).toBe("no-referrer");
+    const requestId = rejectedHeaders["request-id"];
+    expect(requestId).toMatch(uuid);
+    const rejection = JSON.stringify({
+      event: "demo_inquiry_rejected",
+      errorType: "CrossSitePost",
+      upstreamStatus: null,
+      requestId,
+    });
+    await expect.poll(() => faultSite.logs()).toContain(rejection);
     expect(posts).toBe(0);
     expect(await rows()).toHaveLength(0);
   });
