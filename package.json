@@ -21,7 +21,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit --project examples/demo-site/tsconfig.json",
     "pretest": "npm run build --workspace @idx-kit/client",
     "test": "node --test tests/*.test.ts",
-    "test:api": "node --test tests/api/search.test.ts && node --test tests/api/detail.test.ts && node --test tests/api/inquiry.test.ts",
+    "test:api": "node --test tests/api/search.test.ts && node --test tests/api/detail.test.ts && node --test tests/api/inquiry.test.ts && node --test tests/api/listing-limit.test.ts",
     "test:demo": "playwright test",
     "demo:site:build": "npm run build --workspace @idx-kit/demo-site",
     "demo:site": "npm run start --workspace @idx-kit/demo-site",

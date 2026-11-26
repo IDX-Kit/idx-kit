@@ -8,7 +8,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import pg from "pg";
-import { execute, keyCommand, startEngine } from "../api/runtime.ts";
+import {
+  execute,
+  keyCommand,
+  setListingRequestLimit,
+  startEngine,
+} from "../api/runtime.ts";
 import type { ListingResponse, SearchResponse } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
@@ -40,14 +45,14 @@ test.describe.serial("SSR property pages through the public engine", () => {
     db = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await db.connect();
     await execute("npm", ["run", "--silent", "demo:seed"]);
-    secret = (
-      await keyCommand(
-        directory,
-        "create",
-        "site_demo_primary",
-        "listings:read",
-      )
-    ).secret;
+    const key = await keyCommand(
+      directory,
+      "create",
+      "site_demo_primary",
+      "listings:read",
+    );
+    secret = key.secret;
+    await setListingRequestLimit(db, key.id, 1000);
     engine = await startEngine();
     site = await startSite(secret);
   });

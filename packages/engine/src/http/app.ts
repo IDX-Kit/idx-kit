@@ -37,6 +37,7 @@ type AppEnv = {
     code: string;
     route: string;
     site: string;
+    keyId: string;
     failure: Record<string, unknown>;
   };
 };
@@ -87,6 +88,8 @@ export function createApp(
         code: c.get("code"),
         duration: Math.round((performance.now() - started) * 1000) / 1000,
         requestId: c.get("requestId"),
+        timestamp: new Date().toISOString(),
+        keyId: c.get("keyId"),
         engineRelease: release,
         ...c.get("failure"),
       }),
@@ -115,13 +118,15 @@ export function createApp(
         ? { operation: problem.operation }
         : c.get("route").startsWith("/api/v1/inquiries")
           ? { operation: "inquiry.request" }
-          : {
-              message: error.message,
-              ...(problem instanceof HttpProblem ||
-              error instanceof HTTPException
-                ? {}
-                : { stack: error.stack }),
-            }),
+          : c.get("route").startsWith("/api/v1/listings")
+            ? {}
+            : {
+                message: error.message,
+                ...(problem instanceof HttpProblem ||
+                error instanceof HTTPException
+                  ? {}
+                  : { stack: error.stack }),
+              }),
     });
     return problemResponse(problem, c.get("requestId"));
   });
@@ -223,13 +228,21 @@ export function createApp(
         message: new Response(null, { status: 401 }),
       },
       async verifyToken(token, c) {
-        const key = await db.key(await hashSecret(token));
+        const key = await db.key(await hashSecret(token), scope);
         if (!key) return false;
         if (!key.scopes.includes(scope))
           throw new HttpProblem(
             403,
             "insufficient_scope",
             "The key does not grant this operation.",
+          );
+        if (key.key_id) c.set("keyId", key.key_id);
+        if (key.retry_after != null)
+          throw new HttpProblem(
+            429,
+            "rate_limited",
+            "The key has reached its listing request limit. Wait and try again.",
+            { retryAfter: key.retry_after },
           );
         c.set("site", key.site_id);
         return true;

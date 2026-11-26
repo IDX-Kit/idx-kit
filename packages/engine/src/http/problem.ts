@@ -7,24 +7,31 @@ export class HttpProblem extends Error {
   readonly detail: string;
   readonly operation?: string;
   readonly allowedMethod?: string;
+  readonly retryAfter?: number;
   errors?: Problem["errors"];
   constructor(
     status: number,
     code: string,
     detail: string,
-    options?: { cause?: unknown; operation?: string; allowedMethod?: string },
+    options?: {
+      cause?: unknown;
+      operation?: string;
+      allowedMethod?: string;
+      retryAfter?: number;
+    },
   ) {
     super(code, options);
     this.name = "HttpProblem";
     this.operation = options?.operation;
     this.allowedMethod = options?.allowedMethod;
+    this.retryAfter = options?.retryAfter;
     this.status = status;
     this.code = code;
     this.detail = detail;
   }
 }
 export function problemResponse(error: unknown, requestId: string) {
-  const { status, code, detail, allowedMethod } =
+  const { status, code, detail, allowedMethod, retryAfter } =
     error instanceof HttpProblem
       ? error
       : new HttpProblem(
@@ -50,5 +57,6 @@ export function problemResponse(error: unknown, requestId: string) {
   });
   if (status === 401) headers.set("WWW-Authenticate", "Bearer");
   if (allowedMethod) headers.set("Allow", allowedMethod);
+  if (retryAfter !== undefined) headers.set("Retry-After", String(retryAfter));
   return Response.json(body, { status, headers });
 }

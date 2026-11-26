@@ -16,7 +16,12 @@ import type { SearchQuery } from "@idx-kit/engine/src/domain/search-query.ts";
 import type { FixtureRecord } from "@idx-kit/engine/src/domain/normalize.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { validateResponse } from "./contract.ts";
-import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
+import {
+  keyCommand,
+  preserveKeys,
+  setListingRequestLimit,
+  startEngine,
+} from "./runtime.ts";
 import { explainSearch, flatten, summarizeSearch } from "./search-plan.ts";
 
 test(
@@ -64,6 +69,7 @@ test(
       "inquiries:read",
       "limited",
     );
+    await setListingRequestLimit(db, key.id, 1000);
     const engine = await startEngine();
     t.after(() => engine.stop());
     const clearExtra = async () => {

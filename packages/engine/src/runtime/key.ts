@@ -34,15 +34,17 @@ if (action === "sync-demo") {
     await db.connect();
     await db.query("BEGIN");
     let site = subject;
+    let listingRequestLimit: number | undefined;
     if (action !== "create") {
       const old = (
-        await db.query<{ site_id: string }>(
-          "SELECT site_id FROM idx.site_secret_keys WHERE id = $1 AND revoked_at IS NULL FOR UPDATE",
+        await db.query<{ site_id: string; listing_request_limit: number }>(
+          "SELECT site_id, listing_request_limit FROM idx.site_secret_keys WHERE id = $1 AND revoked_at IS NULL FOR UPDATE",
           [subject],
         )
       ).rows[0];
       if (!old) throw new Error("Key unavailable");
       site = old.site_id;
+      listingRequestLimit = old.listing_request_limit;
       await db.query(
         "UPDATE idx.site_secret_keys SET revoked_at = now() WHERE id = $1",
         [subject],
@@ -52,10 +54,17 @@ if (action === "sync-demo") {
     if (creating) {
       const secret = "idx_secret_" + randomBytes(32).toString("base64url");
       id = "key_" + randomUUID();
-      await db.query(
-        "INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes) VALUES ($1,$2,$3,$4)",
-        [id, site, await hashSecret(secret), [...new Set(requested)]],
-      );
+      const values = [id, site, await hashSecret(secret), [...new Set(requested)]];
+      if (listingRequestLimit === undefined)
+        await db.query(
+          "INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes) VALUES ($1,$2,$3,$4)",
+          values,
+        );
+      else
+        await db.query(
+          "INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes, listing_request_limit) VALUES ($1,$2,$3,$4,$5)",
+          [...values, listingRequestLimit],
+        );
       const file = await open(path!, "wx", 0o600);
       createdFile = true;
       try {

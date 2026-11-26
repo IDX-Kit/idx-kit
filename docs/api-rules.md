@@ -92,6 +92,29 @@ listings it may read. Create, rotate, and revoke keys through the
 [operator commands](../README.md#engine-and-secret-keys). Rotation replaces a
 key for the same Site and revokes the original.
 
+### Listing request limit
+
+Each key gets 60 listing requests per 60-second window by default. Search pages
+and property detail draw from the same budget. The first admitted request
+starts the window by the database clock. Once a request passes the key and
+scope checks and is admitted, it counts even if a later check returns an
+error. Discovery, the contract, and inquiry submissions, replays, and
+receipt reads are outside the budget.
+
+The database owner can set a positive whole-number ceiling for a key using
+its internal ID. The change applies to the next request, including in an
+active window. A rotated key inherits the ceiling and starts a fresh window
+on its first admitted request.
+
+```sql
+UPDATE idx.site_secret_keys SET listing_request_limit = 120 WHERE id = 'key_example';
+```
+
+When the budget is spent, listing reads return `429 rate_limited` and
+`Retry-After` gives the seconds until the window ends, rounded up. The
+engine's request log records the internal `keyId` and UTC `timestamp` for
+admitted and rate-limited listing requests.
+
 ## Errors and Request-Id
 
 Errors use `application/problem+json` with `type`, `title`, `status`, `detail`,
@@ -108,6 +131,7 @@ for decisions, falling back to HTTP status for unfamiliar codes. Optional
 | 405 | Unsupported method. `Allow` gives the supported method. |
 | 413 / 415 | Inquiry body too large or unsupported content type. |
 | 422 | Invalid inquiry fields, changed retry body, or failed spam check. |
+| 429 | Listing request limit reached. Wait for the number of seconds in `Retry-After`. |
 | 500 / 503 | Unexpected failure or temporary service unavailability. |
 
 Every response includes a fresh server-generated `Request-Id`, including errors

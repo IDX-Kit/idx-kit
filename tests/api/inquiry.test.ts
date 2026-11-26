@@ -11,7 +11,12 @@ import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { applyListingPage } from "@idx-kit/engine/src/db/listings.ts";
 import { registerSecret } from "../logs.ts";
 import { workerRuntime } from "../workers/runtime.ts";
-import { execute, keyCommand, startEngine } from "./runtime.ts";
+import {
+  execute,
+  keyCommand,
+  setListingRequestLimit,
+  startEngine,
+} from "./runtime.ts";
 import { valid, validateResponse } from "./contract.ts";
 import { fixtureDisclosures } from "./listing-page.ts";
 
@@ -51,9 +56,10 @@ test(
       directory,
       "create",
       site,
-      "inquiries:write,inquiries:read",
+      "listings:read,inquiries:write,inquiries:read",
       "main",
     );
+    await setListingRequestLimit(db, main.id, 1);
     const other = await keyCommand(
       directory,
       "create",
@@ -198,6 +204,9 @@ test(
       );
     }
     const key = actionKey();
+    const missingListing = "/api/v1/listings/synthetic_missing";
+    await request(missingListing, {}, 404);
+    await request(missingListing, {}, 429);
     const first = await request(path, post(key));
     const location = first.response.headers.get("Location")!;
     assert.equal(location, `${path}/${first.body.data.id}`);
@@ -206,10 +215,11 @@ test(
     assert.deepEqual(Object.keys(first.body.data).sort(), ["id", "receivedAt"]);
 
     await t.test(
-      "create, read, replay and canonical property order return one receipt",
+      "create, read and replay return one receipt with the listing budget spent",
       async () => {
         assert.deepEqual((await request(location, {}, 200)).body, first.body);
         assert.deepEqual((await request(path, post(key))).body, first.body);
+        await request(missingListing, {}, 429);
         const reordered = {
           context: Object.fromEntries(Object.entries(input.context).reverse()),
           message: input.message,
@@ -494,7 +504,7 @@ test(
           "/api/v1/listings",
           "/api/v1/listings/lst_demo_0001",
         ])
-          await request(target, {}, 403, main.secret);
+          await request(target, {}, 403, other.secret);
         await keyCommand(directory, "revoke", readKey.id);
         await request(location, {}, 401, readKey.secret);
         await request(path, post(key), 401, readKey.secret);

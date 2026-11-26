@@ -59,8 +59,14 @@ export function validateResponse(
     const actual = response.headers.get(name);
     if ((header as { required?: boolean }).required)
       assert.notEqual(actual, null, `Required header: ${name}`);
-    if (actual !== null)
-      valid(`${reference}/headers/${pointer(name)}/schema`, actual);
+    if (actual === null) continue;
+    const schema = `${reference}/headers/${pointer(name)}/schema`;
+    if (name === "Retry-After") {
+      assert.match(actual, /^\d+$/);
+      valid(schema, Number(actual));
+    } else {
+      valid(schema, actual);
+    }
   }
   const mediaType = response.headers.get("content-type")?.split(";")[0];
   assert.ok(

@@ -10,9 +10,8 @@ info:
     authorized, not unrestricted data access. RESO is a standard, not a data license. All examples are invented.
     No runtime or deployment is claimed. Responses are open for extension; clients ignore unfamiliar members and handle any array/string length
     unless a bound is explicitly promised. Unknown request members and duplicate query keys are rejected. Every
-    business call specifies /api/v1. All operations return Request-Id. S01 has no limiter, conditional requests,
-    CORS headers, browser keys, sync or external delivery. Business operations reserve 429 plus Retry-After for
-    later enforcement.
+    business call specifies /api/v1. All operations return Request-Id. Search and listing detail share a
+    request limit per key. S01 has no conditional requests, CORS headers, browser keys, sync or external delivery.
   contact: {name: IDX Kit repository maintainers, url: 'https://github.com/IDX-Kit/idx-kit'}
   license: {name: FSL-1.1-ALv2, url: 'https://github.com/IDX-Kit/idx-kit/blob/main/LICENSE.md'}
 servers:
@@ -55,7 +54,6 @@ paths:
                         capabilities: [listingSearch, listingDetail, inquiryCreate, inquiryReceipt, displayRulesV1]
                     meta: {}
         '405': {$ref: '#/components/responses/MethodNotAllowed'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         default: {$ref: '#/components/responses/Problem'}
   /api/v1/openapi.json:
     get:
@@ -87,7 +85,6 @@ paths:
                   info: {type: object}
                   paths: {type: object}
         '405': {$ref: '#/components/responses/MethodNotAllowed'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         default: {$ref: '#/components/responses/Problem'}
   /api/v1/listings:
     get:
@@ -102,8 +99,8 @@ paths:
         context. Results can shift between pages as records change; this is not a snapshot or exhaustive download.
         Each page rechecks visibility. The opaque cursor has no dataset revision, time expiry, signature or traversal
         count in S01; clients never parse or construct it. Malformed/mismatched cursors return 400 cursor_invalid
-        and tell the client to restart. Signing may be added later without a wire change. No limiter is implemented.
-        A future 429 search_window_exceeded requires narrowing the search. Raw search terms, excluding the after
+        and tell the client to restart. Signing may be added later without a wire change. Every page uses the
+        same per-key request budget as listing detail. Raw search terms, excluding the after
         pair and its separating ampersand, have a maximum of 2,048 bytes on every page; exceeding this limit returns
         400 invalid_query. The after cursor has a maximum of 4,096 bytes. Its raw pair, including after= and any
         extra percent encoding, has a maximum of 4,102 bytes; an oversized cursor or pair returns 400 cursor_invalid.
@@ -179,6 +176,7 @@ paths:
         because of display rules; null without that name means unknown. A withheld address appears nowhere else
         in response text or media. Visibility and freshness are checked on every request; expired data returns 503.
         A page shows what was permitted when served; withdrawal takes effect on the next request.
+        Listing detail uses the same per-key request budget as search.
       x-required-scopes: ['listings:read']
       responses:
         '200':
@@ -295,7 +293,6 @@ paths:
                     code: spam_check_failed
                     requestId: req_demo_0004
         '405': {$ref: '#/components/responses/MethodNotAllowed'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
         default: {$ref: '#/components/responses/Problem'}
   /api/v1/inquiries/{inquiryId}:
@@ -331,7 +328,6 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '405': {$ref: '#/components/responses/MethodNotAllowed'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
         default: {$ref: '#/components/responses/Problem'}
 components:
@@ -367,9 +363,9 @@ components:
       required: true
       schema: {type: string, const: 'private, no-store'}
     RetryAfter:
-      description: Minimum delay in seconds before retry; mandatory on 429.
+      description: Seconds until the key's listing request window ends, rounded up to at least one second.
       required: true
-      schema: {type: integer, minimum: 1, maximum: 9007199254740991}
+      schema: {type: integer, minimum: 1, maximum: 60}
       example: 60
   responses:
     Problem:
@@ -432,15 +428,21 @@ components:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     RateLimited:
-      description: Reserved for future limits, including search_window_exceeded. No limiter is implemented in S01.
-        Retry-After is required; narrow a search instead of retrying the same window-limited cursor.
+      description: The key has spent its listing request budget for the current 60-second window.
+        Wait for Retry-After before making another listing request with this key.
       headers:
         Request-Id: {$ref: '#/components/headers/RequestId'}
         Cache-Control: {$ref: '#/components/headers/NoStore'}
         Retry-After: {$ref: '#/components/headers/RetryAfter'}
       content:
         application/problem+json:
-          schema: {$ref: '#/components/schemas/Problem'}
+          schema:
+            allOf:
+            - {$ref: '#/components/schemas/Problem'}
+            - type: object
+              properties:
+                status: {const: 429}
+                code: {const: rate_limited}
     Unavailable:
       description: Known database/freshness failure; never claims a receipt before durable commit.
       headers:

@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      9,
+      10,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -235,6 +235,8 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "DELETE FROM idx.listing_scan_stamps",
         "SELECT idx.renew_feed_freshness('feed_demo_primary')",
         "INSERT INTO idx.sites VALUES ('forbidden')",
+        "UPDATE idx.site_secret_keys SET listing_request_limit=1000",
+        "DELETE FROM idx.listing_request_windows",
         "UPDATE idx.inquiries SET message='forbidden'",
         "DELETE FROM idx.inquiries",
         "TRUNCATE idx.inquiries",

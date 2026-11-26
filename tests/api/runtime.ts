@@ -8,6 +8,17 @@ import { promisify } from "node:util";
 import type pg from "pg";
 
 export const execute = promisify(execFile);
+export async function setListingRequestLimit(
+  db: pg.Client,
+  id: string,
+  limit: number,
+) {
+  await db.query(
+    "UPDATE idx.site_secret_keys SET listing_request_limit = $2 WHERE id = $1",
+    [id, limit],
+  );
+}
+
 export async function preserveKeys(db: pg.Client) {
   const { rows } = await db.query(
     "SELECT id, revoked_at FROM idx.site_secret_keys",

@@ -17,7 +17,12 @@ import { createApp } from "@idx-kit/engine/src/http/app.ts";
 import { workerRuntime } from "../workers/runtime.ts";
 import { contract, valid, validateResponse } from "./contract.ts";
 import { fixtureDisclosures } from "./listing-page.ts";
-import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
+import {
+  keyCommand,
+  preserveKeys,
+  setListingRequestLimit,
+  startEngine,
+} from "./runtime.ts";
 
 test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
   const directory = await mkdtemp(`${tmpdir()}/idx-api-`);
@@ -58,6 +63,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
     "limited",
   );
   const secrets = [key.secret, other.secret, limited.secret];
+  await setListingRequestLimit(db, key.id, 1000);
   const restoreSuiteKeys = await preserveKeys(db);
   t.afterEach(restoreSuiteKeys);
   const engine = await startEngine();
@@ -572,7 +578,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           );
           const query = reader.query.bind(reader);
           let afterFeeds: (() => Promise<void>) | undefined;
-          t.mock.method(
+          const counted = t.mock.method(
             reader,
             "query",
             async (sql: string, values: unknown[]) => {
@@ -608,10 +614,12 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             const path = empty
               ? "/api/v1/listings?city=Imaginary%20Snapshot%20City"
               : "/api/v1/listings?limit=50";
+            counted.mock.resetCalls();
             const response = await app.request(path, {
               headers: { Authorization: `Bearer ${secrets[0]}` },
             });
             assert.equal(response.status, 200);
+            assert.equal(counted.mock.callCount(), 6);
             const earlier = await response.json();
             validateResponse("/api/v1/listings", response, earlier);
             assert.equal(afterFeeds, undefined);
@@ -1433,6 +1441,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(log.engineRelease, "0.1.0");
         assert.equal(typeof log.duration, "number");
         assert.ok(log.duration >= 0);
+        assert.equal(new Date(log.timestamp).toISOString(), log.timestamp);
         assert.deepEqual(
           Object.keys(log)
             .filter(
@@ -1454,6 +1463,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             "duration",
             "requestId",
             "engineRelease",
+            "timestamp",
+            ...(log.keyId === undefined ? [] : ["keyId"]),
           ].sort(),
         );
         assert.ok(
