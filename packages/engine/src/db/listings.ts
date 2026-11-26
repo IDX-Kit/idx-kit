@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import type { DisplayBlock } from "@idx-kit/client";
+import type { DisplayBlock, Listing } from "@idx-kit/client";
 import {
+  addressSchema,
   disclosureIds,
   disclosureSchema,
   normalize,
   sourceKeySchema,
   timestampSchema,
 } from "../domain/normalize.ts";
+import { addressProtection } from "../domain/withholding.ts";
 import type {
   FixtureRecord,
   ListingRecord,
@@ -37,6 +39,9 @@ export type ListingChange = {
 export interface ListingPageDisclosures {
   approvedFeedBlocks: DisplayBlock[];
   approvedListingBlocks: DisplayBlock[];
+  approvedPageBlocks: DisplayBlock[];
+  requiredListingBlockIds: string[];
+  requiredPageBlockIds: string[];
 }
 
 interface PageRow {
@@ -50,6 +55,7 @@ interface Stored {
   source_key: string;
   revision: string | null;
   withheld: WithheldField[] | null;
+  address: Listing["address"];
 }
 
 interface Candidate extends PageRow {
@@ -155,7 +161,7 @@ async function readExisting(
   fixture = false,
 ) {
   const result = await client.query<Stored>(
-    `SELECT m.source_key,
+    `SELECT m.source_key, l.address,
       to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS revision,
       CASE WHEN $3 OR l.entire_listing_display THEN l.withheld_fields END AS withheld
     FROM idx.source_mappings m LEFT JOIN idx.listings l ON l.id = m.listing_id
@@ -188,15 +194,23 @@ function validateNewKey(feedId: string, sourceKey: string, stored?: Stored) {
 function selectChange(
   rows: Candidate[],
   stored: Stored | undefined,
-  fixture = false,
+  receivedAt: string | null = null,
 ) {
+  const fixture = receivedAt === null;
   // Higher revisions win. Ties combine field restrictions, and a removal wins
-  // a tie or an unreadable revision. Keep the greatest revision the page knew.
-  const revision = rows.reduce((latest, row) => {
+  // a tie. An unreadable revision removes the listing and sets a floor at
+  // receipt time or the greatest stored or incoming revision, whichever is later.
+  let revision = rows.reduce((latest, row) => {
     return row.revision !== null && (latest === null || row.revision > latest)
       ? row.revision
       : latest;
   }, stored?.revision ?? null);
+  if (
+    receivedAt !== null &&
+    rows.some((row) => row.revision === null) &&
+    (revision === null || receivedAt > revision)
+  )
+    revision = receivedAt;
   const latest = rows.filter(
     (row) => row.revision === revision || (!fixture && row.revision === null),
   );
@@ -227,10 +241,6 @@ function selectChange(
     return difference || (a.text < b.text ? -1 : Number(a.text > b.text));
   });
   const { facts } = winner.listing;
-  if (!fixture && fields.has("address")) {
-    if (facts.images?.length) fields.add("images");
-    if (facts.status !== null) fields.add("status");
-  }
   for (const field of fields) facts[field] = null;
   facts.withheldFields = [...fields].sort();
   return winner.row;
@@ -274,11 +284,29 @@ export async function writeFixturePages(
       const stored = existing.get(key);
       if (!validateNewKey(feedId, key, stored))
         throw new Error("Invalid source key");
-      const selected = selectChange(changes, stored, true);
+      const selected = selectChange(changes, stored);
       if (selected) rows.push(selected);
     }
     await writePage(client, feedId, rows);
   }
+}
+
+function disclosureResolver(blocks: DisplayBlock[], required: string[]) {
+  const approved = new Map(
+    disclosureSchema.parse(blocks).map((block) => [block.id, block]),
+  );
+  if (required.some((id) => !approved.has(id)))
+    throw new Error("Required disclosure is not approved for this context");
+  return (blocks: DisplayBlock[]) => {
+    const ids = disclosureIds.parse(blocks).map(({ id }) => id);
+    if (required.some((id) => !ids.includes(id)))
+      throw new Error("Missing required disclosure");
+    return ids.map((id) => {
+      const block = approved.get(id);
+      if (!block) throw new Error("Unapproved disclosure");
+      return block;
+    });
+  };
 }
 
 export async function applyListingPage(
@@ -287,22 +315,22 @@ export async function applyListingPage(
   changes: readonly ListingChange[],
   disclosures: ListingPageDisclosures,
 ) {
+  const receivedAt = revisionKey(new Date().toISOString());
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
   const feedBlocks = disclosureSchema
     .min(1)
     .parse(disclosures.approvedFeedBlocks);
-  const approved = new Map(
-    disclosureSchema
-      .parse(disclosures.approvedListingBlocks)
-      .map((block) => [block.id, block]),
+  if (!disclosures.requiredListingBlockIds.length)
+    throw new Error("Required listing disclosures must be configured");
+  const listingBlocks = disclosureResolver(
+    disclosures.approvedListingBlocks,
+    disclosures.requiredListingBlockIds,
   );
-  const resolveBlocks = (blocks: DisplayBlock[]) =>
-    disclosureIds.parse(blocks).map(({ id }) => {
-      const block = approved.get(id);
-      if (!block) throw new Error("Unapproved disclosure");
-      return block;
-    });
+  const pageBlocks = disclosureResolver(
+    disclosures.approvedPageBlocks,
+    disclosures.requiredPageBlockIds,
+  );
 
   const rejected: { index: number; code: "invalid_key" | "invalid_change" }[] =
     [];
@@ -326,26 +354,32 @@ export async function applyListingPage(
           rejected.push({ index, code: "invalid_key" });
         continue;
       }
+      const addresses = [stored?.address ?? null];
       const candidates = group.map(({ change, index }) => {
         const revision = timestampSchema.safeParse(change.revision);
         let listing: NormalizedListing | null = null;
         try {
-          if (!revision.success) throw new Error("Invalid revision");
           if (change.kind === "upsert") {
             const source = change.listing.source;
+            const address = addressSchema.safeParse(source.Address);
+            if (address.success) addresses.push(address.data);
+            if (!revision.success) throw new Error("Invalid revision");
             if (!isRemoved(source, false)) {
               listing = normalize(
                 {
                   ...change.listing,
                   source: { ...source, ListingKey: key },
-                  blocks: resolveBlocks(change.listing.blocks),
-                  pageBlocks: resolveBlocks(change.listing.pageBlocks),
+                  blocks: listingBlocks(change.listing.blocks),
+                  pageBlocks: pageBlocks(change.listing.pageBlocks),
                 },
                 true,
               );
             }
-          } else if (change.kind !== "withdrawn" && change.kind !== "deleted") {
-            throw new Error("Invalid change kind");
+          } else if (
+            !revision.success ||
+            (change.kind !== "withdrawn" && change.kind !== "deleted")
+          ) {
+            throw new Error("Invalid removal");
           }
         } catch {
           rejected.push({ index, code: "invalid_change" });
@@ -358,8 +392,15 @@ export async function applyListingPage(
           listing,
         };
       });
-      const selected = selectChange(candidates, stored);
-      if (selected) rows.push(selected);
+      const selected = selectChange(candidates, stored, receivedAt);
+      if (!selected) continue;
+      if (selected.listing) {
+        const { facts } = selected.listing;
+        const protection = addressProtection(...addresses);
+        facts.images = protection.photos(facts.images, facts.withheldFields.includes("address"));
+        if (facts.status !== null) facts.status = protection.text(facts.status);
+      }
+      rows.push(selected);
     }
     await writePage(client, feedId, rows);
     await updateListingFreshness(client, [feedId], feedBlocks);

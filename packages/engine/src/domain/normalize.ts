@@ -10,15 +10,17 @@ const boundedText = text.refine((value) => Buffer.byteLength(value) <= 1024);
 export const timestampSchema = z.iso
   .datetime()
   .refine((value) => !value.startsWith("0000") && value.length <= 27);
-const imageSchema = z.object({
+const imageFields = z.object({
   alt: boundedText.min(1),
-  url: text.max(2048).refine((value) => {
-    if (/[\s\\]/.test(value) || /%(?![\da-f]{2})/i.test(value)) return false;
-    if (value.startsWith("/") && !value.startsWith("//")) return true;
-    const url = URL.parse(value);
-    return url?.protocol === "https:" && !url.username && !url.password;
-  }),
+  url: text.max(2048),
 });
+const mediaUrl = imageFields.shape.url.refine((value) => {
+  if (/[\s\\]/.test(value) || /%(?![\da-f]{2})/i.test(value)) return false;
+  if (value.startsWith("/") && !value.startsWith("//")) return true;
+  const url = URL.parse(value);
+  return url?.protocol === "https:" && !url.username && !url.password;
+});
+const imageSchema = imageFields.extend({ url: mediaUrl });
 const blockSchema = z.object({
   id: z
     .string()
@@ -29,7 +31,7 @@ const blockSchema = z.object({
   prominence: z.enum(["normal", "medianListingText", "largestListingText"]),
   image: imageSchema.optional(),
 });
-const addressSchema = z.object({
+export const addressSchema = z.object({
   line1: boundedText,
   city: boundedText,
   region: boundedText,
@@ -120,14 +122,13 @@ export function normalize(record: ListingRecord, feedPage = false) {
   const protection = addressProtection(
     hideAddress && !feedPage ? address : null,
   );
-  // Feed media and text cannot be checked for a street once it has been cleared.
-  const unverified = feedPage && (hideAddress || !address?.line1.trim());
   const images = feedPage
-    ? imagesSchema.parse(source.Images)
+    ? hideAddress
+      ? z.array(imageFields).max(128).nullable().parse(source.Images)
+          ?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null
+      : imagesSchema.parse(source.Images)
     : imagesSchema.parse(source.Images?.map(protection.image) ?? null);
   if (hideAddress) fields.add("address");
-  if (unverified && images?.length) fields.add("images");
-  if (unverified && source.StandardStatus !== null) fields.add("status");
   const facts: Pick<
     Listing,
     "synthetic" | "status" | "price" | "address" | "bedrooms" | "images"
@@ -143,10 +144,7 @@ export function normalize(record: ListingRecord, feedPage = false) {
         : { amount: source.ListPrice, currency: "USD" },
     address,
     bedrooms: source.BedroomsTotal,
-    images:
-      images?.map((image) => {
-        return feedPage ? { url: image.url, alt: "Property photo" } : image;
-      }) ?? null,
+    images,
     withheldFields: [...fields].sort(),
   };
   for (const field of fields ?? []) {

@@ -11,7 +11,9 @@ import {
   listingPageLimit,
 } from "@idx-kit/engine/src/db/listings.ts";
 import type { ListingChange } from "@idx-kit/engine/src/db/listings.ts";
+import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
+import { createApp } from "@idx-kit/engine/src/http/app.ts";
 import { contract, valid, validateResponse } from "./contract.ts";
 import { fixtureDisclosures } from "./listing-page.ts";
 import { keyCommand, preserveKeys, startEngine } from "./runtime.ts";
@@ -247,7 +249,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       const unsafe = upsert(sourceKey, 12);
       unsafe.listing.source.Address = null;
       unsafe.listing.source.InternetAddressDisplayYN = false;
-      unsafe.listing.source.Images![0].url = "/media/%ZZ.svg";
+      unsafe.listing.source.BedroomsTotal = -1;
       const result = await write([
         unsafe,
         { kind: "deleted", sourceKey: otherKey, revision: revision(12) },
@@ -328,6 +330,52 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
+        "address permission preserves status, safe references and verified captions",
+        async () => {
+          const key = "Synthetic writer photo permissions";
+          const open = upsert(key, 1);
+          open.listing.source.Address!.line1 = oldStreet;
+          const safe = { url: newPhoto, alt: "Front garden in bloom" };
+          open.listing.source.Images = [safe];
+          await write([open]);
+          const id = await identity(primary, key);
+          assert.deepEqual((await publicDetail(id)).body.data.images, [safe]);
+          assert.deepEqual((await searchItem(id)).images, [safe]);
+
+          const hidden = upsert(key, 2);
+          const street = "1000 Synthetic Writer Way";
+          hidden.listing.source.Address!.line1 = street;
+          hidden.listing.source.InternetAddressDisplayYN = false;
+          const generic = { url: oldPhoto, alt: "Property photo" };
+          hidden.listing.source.Images = [
+            safe,
+            { ...generic, alt: `Rear view of ${oldStreet} and ${street}` },
+            { url: `/media/${encodeURIComponent(street)}.svg`, alt: safe.alt },
+            { url: "/media/999-synthetic-writer-way.svg", alt: safe.alt },
+            { url: "/media/%ZZ.svg", alt: safe.alt },
+          ];
+          assert.deepEqual((await write([hidden])).rejected, []);
+          for (const item of [
+            (await publicDetail(id)).body.data,
+            await searchItem(id),
+          ]) {
+            assert.equal(item.status, "active");
+            assert.equal(item.address, null);
+            assert.deepEqual(item.withheldFields, ["address"]);
+            assert.deepEqual(item.images, [safe, generic]);
+          }
+
+          const unknownStreet = upsert(key, 3);
+          unknownStreet.listing.source.Address = null;
+          unknownStreet.listing.source.Images = [safe];
+          await write([unknownStreet]);
+          assert.deepEqual((await publicDetail(id)).body.data.images, [
+            { ...safe, alt: "Property photo" },
+          ]);
+        },
+      );
+
+      await t.test(
         "unverifiable text and media cannot restore a cleared address",
         async () => {
           const key = "Synthetic writer cleared street";
@@ -346,7 +394,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             const id = await identity(primary, key);
             const [row] = await stored(id);
             assert.equal(row.address, null);
-            assert.equal(row.images, null);
+            assert.deepEqual(row.images, []);
+            assert.equal(row.status, "active");
             for (const payload of [
               row,
               (await publicDetail(id)).body,
@@ -386,9 +435,18 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             JSON.stringify([...feed.approvedFeedBlocks, stale]),
           ]);
           const replacement = hiddenAddress(key, 2);
+          const notice = {
+            ...stale,
+            id: "synthetic_page_notice",
+            text: "Synthetic property information.",
+            image: undefined,
+          };
           replacement.listing.blocks = [stale];
-          replacement.listing.pageBlocks = [stale];
-          await write([replacement]);
+          replacement.listing.pageBlocks = [{ ...stale, id: notice.id }];
+          assert.deepEqual((await applyListingPage(writer, primary, [replacement], {
+            ...feed,
+            approvedPageBlocks: [notice],
+          })).rejected, []);
           const feedRow = await db.query(
             "SELECT display_blocks FROM idx.feeds WHERE id=$1",
             [primary],
@@ -410,12 +468,73 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
+        "search uses one snapshot when a writer replaces disclosures mid-request",
+        async (t) => {
+          const reader = new pg.Client({
+            connectionString: process.env.RUNTIME_DATABASE_URL,
+          });
+          await reader.connect();
+          t.after(() => reader.end());
+          const app = createApp(repository(reader), contract, "snapshot-test", () => {});
+          const query = reader.query.bind(reader);
+          let afterFeeds: (() => Promise<void>) | undefined;
+          t.mock.method(reader, "query", async (sql: string, values: unknown[]) => {
+            const result = await query(sql, values);
+            if (sql.includes("oldest_listing_ingested_at") && afterFeeds) {
+              const commit = afterFeeds;
+              afterFeeds = undefined;
+              await commit();
+            }
+            return result;
+          });
+          for (const empty of [false, true]) {
+            const key = `Synthetic writer search snapshot ${empty}`;
+            const open = upsert(key, 1);
+            open.listing.source.Address!.line1 = oldStreet;
+            await write([open]);
+            const id = await identity(primary, key);
+            const stale = { ...feed.approvedFeedBlocks[0], text: `${oldStreet} ${oldPhoto}` };
+            await db.query("UPDATE idx.feeds SET display_blocks=$2 WHERE id=$1", [
+              primary,
+              JSON.stringify([stale]),
+            ]);
+            afterFeeds = async () => {
+              const change = empty ? upsert(key, 2) : hiddenAddress(key, 2);
+              if (empty) change.listing.source.Address!.city = "Imaginary Snapshot City";
+              await write([change]);
+            };
+            const path = empty ? "/api/v1/listings?city=Imaginary%20Snapshot%20City" : "/api/v1/listings?limit=50";
+            const response = await app.request(path, {
+              headers: { Authorization: `Bearer ${secrets[0]}` },
+            });
+            assert.equal(response.status, 200);
+            const earlier = await response.json();
+            validateResponse("/api/v1/listings", response, earlier);
+            assert.equal(afterFeeds, undefined);
+            assert.ok(earlier.display.blocks.some((block: DisplayBlock) => block.text === stale.text));
+            const later = (await request(path)).body;
+            assert.ok(!JSON.stringify(later).includes(stale.text));
+            if (empty) {
+              assert.deepEqual(earlier.data, []);
+              assert.deepEqual(later.data.map((item: Listing) => item.id), [id]);
+            } else {
+              assert.equal(earlier.data.find((item: Listing) => item.id === id).address.line1, oldStreet);
+              assert.equal(later.data.find((item: Listing) => item.id === id).address, null);
+            }
+          }
+        },
+      );
+
+      await t.test(
         "a removal with an unreadable revision records the greatest known revision",
         async () => {
           const key = "Synthetic writer unreadable revision";
           await write([upsert(key, 1)]);
           const id = await identity(primary, key);
-          const newer = upsert(key, 2);
+          const newer = {
+            ...upsert(key, 2),
+            revision: new Date(Date.now() + 60_000).toISOString(),
+          };
           const bad = { ...remove(key, 0), revision: "unreadable" };
           assert.deepEqual((await write([newer, bad])).rejected, [
             { index: 1, code: "invalid_change", hidden: true },
@@ -427,6 +546,38 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             [id, newer.revision],
           );
           assert.equal(result.rows[0].retained, true);
+        },
+      );
+
+      await t.test(
+        "an unreadable removal for an unseen key blocks an older page from another writer",
+        async (t) => {
+          const peer = new pg.Client({
+            connectionString: process.env.LISTING_WRITER_DATABASE_URL,
+          });
+          await peer.connect();
+          t.after(() => peer.end());
+          const key = "Synthetic writer unseen removal";
+          const prior = new Date(Date.now() - 60_000).toISOString();
+          const removal = { ...remove(key, 0), revision: "unreadable" };
+          const beforeReceipt = Date.now();
+          assert.deepEqual((await write([removal])).rejected, [
+            { index: 0, code: "invalid_change", hidden: true },
+          ]);
+          const id = await identity(primary, key);
+          const { rows } = await db.query<{ source_revision: Date }>(
+            "SELECT source_revision FROM idx.source_mappings WHERE listing_id=$1",
+            [id],
+          );
+          const floor = rows[0].source_revision.getTime();
+          assert.ok(floor >= beforeReceipt);
+          const replay = { ...upsert(key, 1), revision: prior };
+          await applyListingPage(peer, primary, [replay], feed);
+          await absent(id);
+          const newer = { ...replay, revision: new Date(floor + 1).toISOString() };
+          await applyListingPage(peer, primary, [newer], feed);
+          assert.equal((await publicDetail(id)).body.data.id, id);
+          assert.equal((await searchItem(id)).id, id);
         },
       );
 
@@ -450,17 +601,36 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
-        "a listing without its required disclosure fails closed",
+        "missing or insufficient disclosures fail closed in each context",
         async () => {
-          const key = "Synthetic writer missing disclosure";
-          await write([upsert(key, 1)]);
-          const id = await identity(primary, key);
-          const bad = upsert(key, 2);
-          bad.listing.blocks = [];
-          assert.deepEqual((await write([bad])).rejected, [
-            { index: 0, code: "invalid_change", hidden: true },
-          ]);
-          await absent(id);
+          const sold = feed.approvedPageBlocks.find(({ id }) => id === "closed_information")!;
+          const requiredPage = { ...sold, id: "synthetic_page_notice", text: "Synthetic property information." };
+          const policy = {
+            ...feed,
+            approvedListingBlocks: [...feed.approvedListingBlocks, sold],
+            approvedPageBlocks: [...feed.approvedPageBlocks, requiredPage],
+            requiredPageBlockIds: [requiredPage.id],
+          };
+          const cases = [
+            { blocks: [], pageBlocks: [requiredPage] },
+            { blocks: [sold], pageBlocks: [requiredPage] },
+            { blocks: feed.approvedListingBlocks, pageBlocks: [sold] },
+            { blocks: feed.approvedListingBlocks, pageBlocks: [requiredPage, ...feed.approvedListingBlocks] },
+          ];
+          for (const [index, blocks] of cases.entries()) {
+            const key = `Synthetic writer insufficient disclosure ${index}`;
+            const live = upsert(key, 1);
+            live.listing.pageBlocks = [requiredPage];
+            assert.deepEqual((await applyListingPage(writer, primary, [live], policy)).rejected, []);
+            const id = await identity(primary, key);
+            await publicDetail(id);
+            const bad = upsert(key, 2);
+            Object.assign(bad.listing, blocks);
+            assert.deepEqual((await applyListingPage(writer, primary, [bad], policy)).rejected, [
+              { index: 0, code: "invalid_change", hidden: true },
+            ]);
+            await absent(id);
+          }
         },
       );
 

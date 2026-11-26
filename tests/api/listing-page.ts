@@ -6,14 +6,17 @@ export function fixtureDisclosures(
   id: string,
 ): ListingPageDisclosures {
   const feed = fixtures.feeds.find((feed) => feed.id === id)!;
-  const blocks = fixtures.listings.flatMap((record) => [
-    ...record.blocks,
-    ...record.pageBlocks,
-  ]);
+  const listing = fixtures.listings.flatMap((record) => record.blocks);
+  const page = fixtures.listings.flatMap((record) => record.pageBlocks);
   return {
     approvedFeedBlocks: feed.blocks,
     approvedListingBlocks: [
-      ...new Map(blocks.map((block) => [block.id, block])).values(),
+      ...new Map(listing.map((block) => [block.id, block])).values(),
     ],
+    approvedPageBlocks: [
+      ...new Map(page.map((block) => [block.id, block])).values(),
+    ],
+    requiredListingBlockIds: ["synthetic_broker"],
+    requiredPageBlockIds: [],
   };
 }

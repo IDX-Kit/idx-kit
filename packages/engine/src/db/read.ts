@@ -36,6 +36,16 @@ export interface ListingRow {
   expires_at: Date;
   rules_version: string;
 }
+
+function unavailable(cause: unknown, operation: string) {
+  return new HttpProblem(
+    503,
+    "service_unavailable",
+    "The service is temporarily unavailable.",
+    { cause, operation },
+  );
+}
+
 export async function readQuery<T extends pg.QueryResultRow>(
   pool: Database,
   sql: string,
@@ -45,12 +55,7 @@ export async function readQuery<T extends pg.QueryResultRow>(
   try {
     return (await pool.query<T>(sql, values)).rows;
   } catch (cause) {
-    throw new HttpProblem(
-      503,
-      "service_unavailable",
-      "The service is temporarily unavailable.",
-      { cause, operation },
-    );
+    throw unavailable(cause, operation);
   }
 }
 export const listingSelect = `SELECT l.id, l.synthetic, l.status, l.price::text, l.currency,
@@ -64,7 +69,7 @@ export const licensedListing = `${listingSelect}
   JOIN idx.source_mappings m ON m.listing_id = l.id
   JOIN idx.feeds f ON f.id = m.feed_id
   JOIN idx.data_licenses d ON d.feed_id = m.feed_id AND d.site_id = $1`;
-export function repository(pool: Database) {
+export function repository(pool: Database, connectSearch?: () => Promise<pg.PoolClient>) {
   const query = <T extends pg.QueryResultRow>(
     sql: string,
     values: unknown[],
@@ -72,7 +77,28 @@ export function repository(pool: Database) {
   ) => readQuery<T>(pool, sql, values, operation);
   return {
     ...inquiryQueries(pool),
-    search: (query: SearchQuery) => searchListings(pool, query),
+    async search(query: SearchQuery) {
+      const client = await connectSearch?.().catch((cause: unknown) => {
+        throw unavailable(cause, "search.connect");
+      });
+      const db = client ?? pool;
+      let discard = false;
+      try {
+        await readQuery(db, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", [], "search.begin");
+        const result = await searchListings(db, query);
+        await readQuery(db, "COMMIT", [], "search.commit");
+        return result;
+      } catch (error) {
+        try {
+          await db.query("ROLLBACK", []);
+        } catch {
+          discard = true;
+        }
+        throw error;
+      } finally {
+        client?.release(discard);
+      }
+    },
     async key(hash: string): Promise<SiteKey | undefined> {
       return (
         await query<SiteKey>(
