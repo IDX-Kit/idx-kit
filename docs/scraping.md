@@ -10,9 +10,10 @@ website's edge.
 
 ## Limit visitors at your edge
 
-In your website's Cloudflare dashboard, open **Security rules** and select
-**Create rule** > **Rate limiting rules**. Name the rule `Limit listing pages`
-and use **Edit expression** to match the demo site's search and property paths.
+To create a rate limiting rule in your website's zone, follow
+[Cloudflare's guide](https://developers.cloudflare.com/waf/rate-limiting-rules/create-zone-dashboard/).
+Name the rule `Limit listing pages` and enter this expression to match the
+demo site's search and property paths.
 The rule leaves out crawlers Cloudflare has verified.
 
 ```text
@@ -31,7 +32,6 @@ in 10 seconds. Choose **Block** for **Then take action** and set **Duration** to
 Use these numbers as a starting point and tune them using traffic you observe.
 Use the equivalent path, crawler and per-address settings if you run another
 edge service.
-[Create a rate limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/create-zone-dashboard/) ·
 [Rate limiting options](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability) ·
 [Verified crawlers](https://developers.cloudflare.com/ruleset-engine/rules-language/fields/reference/cf.client.bot/) ·
 [URI path](https://developers.cloudflare.com/ruleset-engine/rules-language/fields/reference/http.request.uri.path/) ·
@@ -74,8 +74,9 @@ when you report a count from retained logs.
 [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/) ·
 [Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/)
 
-If you need to reduce traffic, tighten your edge rule or set a lower ceiling
-for the key using the [SQL in the API rules](api-rules.md#listing-request-limit).
+To reduce traffic, tighten your edge rule or lower the key's ceiling. To lower
+it, use the [SQL in the API rules](api-rules.md#listing-request-limit) and
+replace `120` with a positive whole number below the key's current ceiling.
 If you suspect a key was exposed, use the [key commands](../README.md#engine-and-secret-keys)
 to revoke it or rotate it and update the website's server configuration.
 
