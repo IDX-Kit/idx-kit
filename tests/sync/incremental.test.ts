@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
@@ -327,6 +328,29 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     },
   );
 
+  await t.test(
+    "older pages keep both marks from moving backward",
+    async (t) => {
+      const state = await setup(t, "older_pages");
+      const feed = await standIn(t, (_url, number) => {
+        if (number === 1) return page([third]);
+        if (number === 2) return page([first], "?cursor=older");
+        if (number === 3) return { status: 503 };
+        return page([second]);
+      });
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      const { position } = await state.checkpoint();
+      assert.equal(position.completedMark, thirdMark);
+      assert.equal(position.pendingMark, thirdMark);
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.checkpoint(), {
+        version: 3n,
+        position: complete(thirdMark),
+      });
+    },
+  );
+
   for (const status of [400, 410]) {
     await t.test(
       `${status} on a continuation clears only in-progress state and stops`,
@@ -485,6 +509,64 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal((await state.checkpoint()).version, 0n);
       assert.deepEqual(await state.listings(), []);
       assert.deepEqual(await state.freshness(), freshness);
+    },
+  );
+
+  await t.test(
+    "remote HTTP is refused before fetch and loopback HTTP works",
+    async (t) => {
+      const feed = await standIn(t, () => page([]));
+      const remote = new ResoConnector(
+        "http://feed.example.invalid/Property",
+        "synthetic-feed-token",
+      );
+      const fetch = t.mock.method(
+        globalThis,
+        "fetch",
+        async () => new Response(),
+      );
+      try {
+        assert.deepEqual(await remote.readPage(null, null), {
+          code: "invalid_link",
+        });
+        assert.equal(fetch.mock.callCount(), 0);
+      } finally {
+        fetch.mock.restore();
+      }
+      assert.deepEqual(await feed.connector.readPage(null, null), {
+        code: "page",
+        records: [],
+        nextLink: null,
+      });
+      assert.deepEqual(feed.calls, [
+        { path: propertyPath, query: "", authorized: true },
+      ]);
+    },
+  );
+
+  await t.test(
+    "blank and self-referencing links keep the saved page untouched",
+    async (t) => {
+      const state = await setup(t, "malformed_links");
+      const cursor = "?cursor=pending";
+      const feed = await standIn(t, (_url, number) => {
+        if (number === 1) return page([first], cursor);
+        if (number === 2) return { status: 503 };
+        if (number === 3) return page([second], " \t ");
+        if (number === 4) return page([second], cursor);
+        return page([second]);
+      });
+      assert.deepEqual(await state.run(feed), { code: "http_error" });
+      const checkpoint = await state.checkpoint();
+      const listings = await state.listings();
+      const freshness = await state.freshness();
+      for (const requestCount of [3, 4]) {
+        assert.deepEqual(await state.run(feed), { code: "invalid_page" });
+        assert.equal(feed.calls.length, requestCount);
+        assert.deepEqual(await state.checkpoint(), checkpoint);
+        assert.deepEqual(await state.listings(), listings);
+        assert.deepEqual(await state.freshness(), freshness);
+      }
     },
   );
 

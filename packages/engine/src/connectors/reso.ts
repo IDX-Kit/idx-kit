@@ -4,7 +4,7 @@ import type { ListingChange } from "../db/listings.ts";
 
 const pageSchema = z.object({
   value: z.array(z.unknown()).max(listingPageLimit),
-  "@odata.nextLink": z.string().min(1).nullish(),
+  "@odata.nextLink": z.string().refine((link) => link.trim() !== "").nullish(),
 });
 
 const recordSchema = z.object({
@@ -58,9 +58,10 @@ type PageResult =
   | { code: FetchFailure };
 
 function safeAddress(url: URL) {
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   // Reject encoded path separators and nested escapes before comparing paths.
   return (
-    (url.protocol === "https:" || url.protocol === "http:") &&
+    (url.protocol === "https:" || (url.protocol === "http:" && loopback)) &&
     !url.username &&
     !url.password &&
     !url.hash &&
@@ -131,6 +132,9 @@ export class ResoConnector {
       const link = page.data["@odata.nextLink"];
       const target = link ? continuation(this.base, link, url) : null;
       if (link && !target) return { code: "invalid_link" };
+      if (target?.pathname === url.pathname && target.search === url.search) {
+        return { code: "invalid_page" };
+      }
       return {
         code: "page",
         records: page.data.value,

@@ -56,7 +56,14 @@ export async function syncIncrementally(
       const changes = page.records.map((record) =>
         mapResoRecord(record, metadata),
       );
-      let pendingMark = position.pendingMark;
+      const savedMark = position.pendingMark;
+      let pendingMark = position.completedMark;
+      if (
+        savedMark !== null &&
+        (pendingMark === null || savedMark > pendingMark)
+      ) {
+        pendingMark = savedMark;
+      }
       for (const { revision } of changes) {
         const timestamp = timestampSchema.safeParse(revision);
         if (!timestamp.success) continue;
@@ -68,9 +75,7 @@ export async function syncIncrementally(
 
       const complete = page.nextLink === null;
       position = {
-        completedMark: complete
-          ? (pendingMark ?? position.completedMark)
-          : position.completedMark,
+        completedMark: complete ? pendingMark : position.completedMark,
         nextLink: page.nextLink,
         pendingMark: complete ? null : pendingMark,
       };
