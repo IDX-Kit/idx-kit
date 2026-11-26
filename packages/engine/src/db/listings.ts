@@ -519,6 +519,8 @@ export async function applyListingPage(
             scanCheckpoint.recordsSeen > 0 ? scan.maxRemovals : null,
           )
         : undefined;
+    // Sync pages use database ingest times. Writers that supply their own
+    // ingest times recompute freshness before they finish.
     if (!incrementalContinues && !scanCheckpoint?.active)
       await updateListingFreshness(
         client,

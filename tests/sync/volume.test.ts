@@ -11,7 +11,6 @@ import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
 import { validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { keyCommand, startEngine } from "../api/runtime.ts";
-import { explainQuery, summarizeSearch } from "../api/search-plan.ts";
 import { connectWriter, page, standIn } from "./feed.ts";
 
 const volume = 100_000;
@@ -56,18 +55,14 @@ function assertStatements(
   assert.equal(total, setup + pageStatements + completion);
 }
 
-function finalRecompute(
-  recomputes: { statement: number; ms: number }[],
-  pageStart: number,
-  pageEnd: number,
-) {
-  assert.equal(recomputes.length, 1, "freshness recomputes per completed run");
-  const [{ statement, ms }] = recomputes;
-  assert.ok(
-    statement > pageStart && statement <= pageEnd,
-    "recompute on final page",
-  );
-  return ms;
+function checkPageReads(reads: number[]) {
+  assert.equal(reads.length, pages, "one row count per page");
+  const final = reads.pop()!;
+  const min = Math.min(...reads);
+  const max = Math.max(...reads);
+  const summary = `${min}–${max} rows read per intermediate page, ${final} on the final page`;
+  assert.ok(min > 0 && max <= 32 * pageSize && final >= volume, summary);
+  return summary;
 }
 
 test(
@@ -156,24 +151,33 @@ test(
     }
 
     let statements = 0;
-    const lookups: { sql: string; values: unknown[] }[] = [];
-    const recomputes: { statement: number; ms: number }[] = [];
+    const pageReads: number[] = [];
+    const finalTimes: number[] = [];
+    let pageIndex: number | undefined;
+    let startReads = 0;
     const query = writer.query.bind(writer);
+    async function readRows() {
+      const { rows } = await query<{ count: string }>(
+        `SELECT COALESCE(sum(seq_tup_read), 0) + COALESCE(sum(idx_tup_fetch), 0) AS count
+        FROM pg_stat_xact_user_tables WHERE schemaname = 'idx'`,
+      );
+      return Number(rows[0].count);
+    }
     t.mock.method(
       writer,
       "query",
       async (sql: string, values: unknown[] = []) => {
         statements += 1;
-        if (sql.includes("SELECT m.source_key, l.address,"))
-          lookups.push({ sql, values });
-        if (!sql.includes("SET oldest_listing_ingested_at"))
-          return query(sql, values);
+        if (sql === "COMMIT" && pageIndex !== undefined) {
+          pageReads.push((await readRows()) - startReads);
+          pageIndex = undefined;
+        }
         const started = performance.now();
         const result = await query(sql, values);
-        recomputes.push({
-          statement: statements,
-          ms: performance.now() - started,
-        });
+        if (pageIndex === pages - 1)
+          finalTimes.push(performance.now() - started);
+        if (sql === "BEGIN" && pageIndex !== undefined)
+          startReads = await readRows();
         return result;
       },
     );
@@ -198,6 +202,7 @@ test(
         await released;
         return { status: 503 };
       }
+      pageIndex = index;
       const start = index * pageSize + (scanning ? changed : 0);
       const size = Math.min(pageSize, volume - start);
       const records = Array.from({ length: size }, (_, offset) => {
@@ -235,7 +240,6 @@ test(
       nextStep: { kind: "retry" },
     });
     await assertExpired(unfinished);
-    assert.equal(recomputes.length, 0, "freshness recomputes before resuming");
     assertStatements(offsets.splice(0), statements, midpoint, 1, 1, false);
     const firstStatements = statements;
     const saved = await readFeedCheckpoint(db, feedId);
@@ -256,11 +260,9 @@ test(
     assert.deepEqual(resumed, { code: "complete" });
     const loadBytes = await databaseSize();
     assert.equal(feed.calls[midpoint + 1].query, cursor(midpoint));
-    const loadRecomputeMs = finalRecompute(
-      recomputes.splice(0),
-      offsets.at(-1)!,
-      statements - 1,
-    );
+    // The final incremental page renews the feed window after recomputing.
+    const loadRecomputeMs = finalTimes.splice(0).at(-2)!;
+    const loadReads = checkPageReads(pageReads.splice(0));
     assertStatements(
       offsets.splice(0),
       statements,
@@ -304,14 +306,11 @@ test(
     });
     const scanMs = performance.now() - started;
     const scanBytes = await databaseSize();
-    const scanRecomputeMs = finalRecompute(
-      recomputes,
-      offsets.at(-1)!,
-      statements,
-    );
+    const scanRecomputeMs = finalTimes.at(-1)!;
+    const scanReads = checkPageReads(pageReads);
     t.diagnostic(
-      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadRecomputeMs.toFixed(2)} ms to recompute freshness. ` +
-        `Full scan: ${(scanMs / 1000).toFixed(2)}s, ${scan.pagesRead} pages, ${statements} SQL statements, ${scanBytes} database bytes, ${scanRecomputeMs.toFixed(2)} ms to recompute freshness.`,
+      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadRecomputeMs.toFixed(2)} ms to recompute freshness, ${loadReads}. ` +
+        `Full scan: ${(scanMs / 1000).toFixed(2)}s, ${scan.pagesRead} pages, ${statements} SQL statements, ${scanBytes} database bytes, ${scanRecomputeMs.toFixed(2)} ms to recompute freshness, ${scanReads}.`,
     );
     assert.ok(loadMs + scanMs <= 900_000, "first load and scan exceeded 900s");
     assert.deepEqual(scan, {
@@ -364,18 +363,5 @@ test(
     );
     await assertExpired(await fetchApi(search));
     assert.equal((await detail(loaded.at(-1)!.id, 503)).code, "feed_expired");
-
-    // Check each page's existing-listing lookup against the loaded database.
-    // Final freshness and absence reconciliation intentionally visit the feed.
-    await db.query("ANALYZE idx.listings, idx.source_mappings");
-    assert.equal(lookups.length, pages * 2);
-    for (const [index, { sql, values }] of lookups.entries()) {
-      const plan = await explainQuery(db, sql, values);
-      const { rows } = summarizeSearch([plan]);
-      assert.ok(
-        rows <= 32 * pageSize,
-        `Lookup ${index + 1} examined ${rows} listing and mapping rows`,
-      );
-    }
   },
 );

@@ -109,6 +109,11 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
             }),
       checkpoint: () => readScanCheckpoint(db, feedId),
       oldestIngest: () => readOldestIngest(db, feedId),
+      clearOldestIngest: () =>
+        db.query(
+          "UPDATE idx.feeds SET oldest_listing_ingested_at = NULL WHERE id = $1",
+          [feedId],
+        ),
       async incrementalState() {
         const { rows: feed } = await db.query(
           `SELECT id, refreshed_at, expires_at, display_blocks, rules_version
@@ -390,6 +395,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       });
     }
     assert.equal(feed.calls.length, 0);
+    await state.clearOldestIngest();
     assert.deepEqual(await state.scan(feed, 1), {
       code: "removal_limit_exceeded",
       nextStep: { kind: "stop" },
@@ -400,6 +406,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       maxRemovals: 1,
     });
     assert.equal((await state.checkpoint()).active, false);
+    const { stored, actual } = await state.oldestIngest();
+    assert.ok(actual);
+    assert.equal(stored, actual);
     assert.deepEqual(
       (await state.listings()).map(({ facts }) => facts),
       before.map(({ facts }) => facts),
@@ -413,6 +422,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const before = await state.listings();
       const feed = await standIn(t, () => page([]));
       for (const maxRemovals of [0, 1]) {
+        await state.clearOldestIngest();
         assert.deepEqual(await state.scan(feed, maxRemovals), {
           code: "empty_scan",
           nextStep: { kind: "stop" },
@@ -423,6 +433,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
           maxRemovals,
         });
         assert.equal((await state.checkpoint()).active, false);
+        const { stored, actual } = await state.oldestIngest();
+        assert.ok(actual);
+        assert.equal(stored, actual);
         assert.deepEqual(await state.listings(), before);
       }
       assert.deepEqual(
@@ -443,6 +456,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
           record("second", 2, "225.00"),
         ]),
       );
+      await state.clearOldestIngest();
       assert.deepEqual(await state.scan(feed, 1), {
         code: "unreadable_keys",
         nextStep: { kind: "stop" },
@@ -452,6 +466,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         unreadableRecords: 1,
       });
       assert.equal((await state.checkpoint()).active, false);
+      const { stored, actual } = await state.oldestIngest();
+      assert.ok(actual);
+      assert.equal(stored, actual);
       const [kept, repaired] = await state.listings();
       assert.deepEqual(kept, before);
       assert.equal(repaired.facts?.price, 225);

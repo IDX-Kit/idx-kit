@@ -20,28 +20,20 @@ export const flatten = (plan: Plan): Plan[] => [
   ...(plan.Plans ?? []).flatMap(flatten),
 ];
 
-export async function explainQuery(
-  db: pg.Client,
-  sql: string,
-  values: unknown[],
-) {
-  const result = await db.query(
-    "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) " + sql,
-    values,
-  );
-  const explain = result.rows[0]["QUERY PLAN"][0];
-  return {
-    sql,
-    plan: explain.Plan as Plan,
-    ms: Number(explain["Planning Time"]) + Number(explain["Execution Time"]),
-  };
-}
-
 export function explainSearch(db: pg.Client) {
   const queries: { sql: string; plan: Plan; ms: number }[] = [];
   const database: Database = {
     async query<T extends pg.QueryResultRow>(sql: string, values: unknown[]) {
-      queries.push(await explainQuery(db, sql, values));
+      const result = await db.query(
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) " + sql,
+        values,
+      );
+      const explain = result.rows[0]["QUERY PLAN"][0];
+      queries.push({
+        sql,
+        plan: explain.Plan,
+        ms: explain["Planning Time"] + explain["Execution Time"],
+      });
       return db.query<T>(sql, values);
     },
   };
