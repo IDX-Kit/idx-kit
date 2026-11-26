@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      8,
+      9,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -161,6 +161,40 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     },
   );
   await t.test(
+    "the scan migration preserves listings, mappings, positions and outcomes",
+    async () => {
+      await db.query("DROP TABLE idx.feed_scan_positions, idx.listing_scan_stamps");
+      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+        "009_feed_scan.sql",
+      ]);
+      await db.query(
+        `INSERT INTO idx.feed_sync_outcomes
+          (feed_id, position_version, code, http_status, next_step, retry_after_seconds, saved_at)
+        SELECT feed_id, version, 'http_error', 503, 'retry', 60, statement_timestamp()
+        FROM idx.feed_sync_positions`,
+      );
+      const stored = async () => {
+        const listings = await snapshot();
+        const mappings = await db.query(
+          "SELECT * FROM idx.source_mappings ORDER BY feed_id, source_key",
+        );
+        const positions = await db.query(
+          "SELECT * FROM idx.feed_sync_positions ORDER BY feed_id",
+        );
+        const outcomes = await db.query(
+          "SELECT * FROM idx.feed_sync_outcomes ORDER BY feed_id",
+        );
+        return [listings, mappings.rows, positions.rows, outcomes.rows];
+      };
+      const before = await stored();
+      assert.ok(before.every((rows) => rows.length > 0));
+      await migrate(db);
+      assert.deepEqual(await stored(), before);
+      assert.equal((await db.query("SELECT * FROM idx.feed_scan_positions")).rowCount, 0);
+      assert.equal((await db.query("SELECT * FROM idx.listing_scan_stamps")).rowCount, 0);
+    },
+  );
+  await t.test(
     "runtime reads listings but cannot change schema, sites or accepted inquiries",
     async () => {
       await runtime.query("SELECT * FROM idx.listings");
@@ -183,6 +217,14 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         "INSERT INTO idx.feed_sync_outcomes (feed_id, position_version, code, saved_at) VALUES ('feed_demo_primary', 0, 'complete', now())",
         "UPDATE idx.feed_sync_outcomes SET code='complete'",
         "DELETE FROM idx.feed_sync_outcomes",
+        "SELECT * FROM idx.feed_scan_positions",
+        "INSERT INTO idx.feed_scan_positions VALUES ('feed_demo_primary', 1, 1, true, NULL)",
+        "UPDATE idx.feed_scan_positions SET active=false",
+        "DELETE FROM idx.feed_scan_positions",
+        "SELECT * FROM idx.listing_scan_stamps",
+        "INSERT INTO idx.listing_scan_stamps VALUES ('lst_demo_0001', 1)",
+        "UPDATE idx.listing_scan_stamps SET scan_number=2",
+        "DELETE FROM idx.listing_scan_stamps",
         "SELECT idx.renew_feed_freshness('feed_demo_primary')",
         "INSERT INTO idx.sites VALUES ('forbidden')",
         "UPDATE idx.inquiries SET message='forbidden'",

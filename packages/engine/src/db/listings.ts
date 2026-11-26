@@ -19,6 +19,8 @@ import type {
 } from "../domain/normalize.ts";
 import { saveFeedCheckpoint } from "./feed-sync-positions.ts";
 import type { FeedCheckpoint } from "./feed-sync-positions.ts";
+import { saveScanCheckpoint, stampScanKeys } from "./feed-scan-positions.ts";
+import type { ScanCheckpoint } from "./feed-scan-positions.ts";
 
 export const listingPageLimit = 200;
 // PostgreSQL stores this sentinel in the existing timestamp column. Source
@@ -118,6 +120,9 @@ export async function updateListingFreshness(
   );
 }
 
+const deleteListings = `DELETE FROM idx.listings l USING changes c
+  WHERE l.id = c.listing_id AND c.listing IS NULL`;
+
 async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
   // Claim identities before touching facts. The feed lock holds the selected state.
   await client.query(
@@ -135,8 +140,7 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
       SELECT accepted.listing_id, incoming.listing
       FROM accepted JOIN incoming USING (source_key)
     ), removed AS (
-      DELETE FROM idx.listings l USING changes c
-      WHERE l.id = c.listing_id AND c.listing IS NULL
+      ${deleteListings}
     ), stored AS (
       INSERT INTO idx.listings
         (id, synthetic, status, price, currency, address, bedrooms, images,
@@ -162,6 +166,40 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
     SELECT count(*) FROM accepted`,
     [feedId, JSON.stringify(rows)],
   );
+}
+
+async function removeMissingListings(
+  client: pg.Client,
+  feedId: string,
+  scanNumber: bigint,
+  maxRemovals: number,
+) {
+  // Absence withdraws at the stored revision. Keep the mapping and revision
+  // as the tombstone, just as for an explicit withdrawal at that revision.
+  const { rows } = await client.query<{ missing: string; removed: string }>(
+    `WITH missing AS MATERIALIZED (
+      SELECT m.listing_id FROM idx.source_mappings m
+      JOIN idx.listings l ON l.id = m.listing_id
+      LEFT JOIN idx.listing_scan_stamps s ON s.listing_id = m.listing_id
+      WHERE m.feed_id = $1 AND l.entire_listing_display
+        AND s.scan_number IS DISTINCT FROM $2::bigint
+    ), total AS (
+      SELECT count(*) AS count FROM missing
+    ), changes AS (
+      SELECT listing_id, NULL::jsonb AS listing FROM missing, total
+      WHERE total.count <= $3::bigint
+    ), removed AS (
+      ${deleteListings}
+      RETURNING 1
+    )
+    SELECT total.count AS missing, (SELECT count(*) FROM removed) AS removed
+    FROM total`,
+    [feedId, scanNumber.toString(), maxRemovals],
+  );
+  return {
+    wouldRemove: Number(rows[0].missing),
+    listingsRemoved: Number(rows[0].removed),
+  };
 }
 
 export function revisionKey(value: string | null) {
@@ -324,15 +362,20 @@ function disclosureResolver(blocks: DisplayBlock[], required: string[]) {
   };
 }
 
+type PageOptions = { authoritativeSnapshot?: boolean } & (
+  | { checkpoint?: FeedCheckpoint; scan?: never }
+  | {
+      checkpoint?: never;
+      scan: { checkpoint: ScanCheckpoint; maxRemovals?: number };
+    }
+);
+
 export async function applyListingPage(
   client: pg.Client,
   feedId: string,
   changes: readonly ListingChange[],
   disclosures: ListingPageDisclosures,
-  {
-    authoritativeSnapshot = false,
-    checkpoint,
-  }: { authoritativeSnapshot?: boolean; checkpoint?: FeedCheckpoint } = {},
+  { authoritativeSnapshot = false, checkpoint, scan }: PageOptions = {},
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
@@ -356,6 +399,7 @@ export async function applyListingPage(
   const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
   return listingFeedTransaction(client, feedId, async () => {
     if (checkpoint) await saveFeedCheckpoint(client, feedId, checkpoint);
+    if (scan) await saveScanCheckpoint(client, feedId, scan.checkpoint);
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
@@ -432,12 +476,23 @@ export async function applyListingPage(
       rows.push(selected);
     }
     await writePage(client, feedId, rows);
-    await updateListingFreshness(client, [feedId], feedBlocks);
+    await stampScanKeys(client, feedId, keys, scan !== undefined);
+    const removal =
+      scan && !scan.checkpoint.active && scan.maxRemovals !== undefined
+        ? await removeMissingListings(
+            client,
+            feedId,
+            scan.checkpoint.scanNumber,
+            scan.maxRemovals,
+          )
+        : undefined;
+    if (!scan) await updateListingFreshness(client, [feedId], feedBlocks);
     if (checkpoint?.position.nextLink === null) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }
     const applied = new Set(rows.map((row) => row.index));
     return {
+      ...(removal && { removal }),
       rejected: rejected
         .sort((a, b) => a.index - b.index)
         .map((record) => ({

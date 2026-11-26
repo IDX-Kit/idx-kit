@@ -10,7 +10,7 @@ import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { listenOnLoopback } from "../api/loopback-server.ts";
-import { page, propertyPath, standIn } from "./feed.ts";
+import { connectWriter, page, propertyPath, standIn } from "./feed.ts";
 
 const firstMark = "2026-11-03T00:00:00.000001Z";
 const secondMark = "2026-11-03T00:00:00.000002Z";
@@ -25,16 +25,6 @@ const writeFailed = { code: "write_failed", nextStep: retry };
 
 const filter = (mark: string) =>
   `?${new URLSearchParams({ $filter: `ModificationTimestamp ge ${mark}` })}`;
-
-async function connectWriter(t: TestContext) {
-  assert.ok(process.env.LISTING_WRITER_DATABASE_URL);
-  const client = new pg.Client({
-    connectionString: process.env.LISTING_WRITER_DATABASE_URL,
-  });
-  await client.connect();
-  t.after(() => client.end());
-  return client;
-}
 
 test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   assert.ok(process.env.DATABASE_URL);

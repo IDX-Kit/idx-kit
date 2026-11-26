@@ -1,4 +1,6 @@
+import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
+import pg from "pg";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
 import { listenOnLoopback } from "../api/loopback-server.ts";
 
@@ -15,6 +17,16 @@ type Reply =
   | "stall";
 
 export const propertyPath = "/feed/Property";
+
+export async function connectWriter(t: TestContext) {
+  assert.ok(process.env.LISTING_WRITER_DATABASE_URL);
+  const client = new pg.Client({
+    connectionString: process.env.LISTING_WRITER_DATABASE_URL,
+  });
+  await client.connect();
+  t.after(() => client.end());
+  return client;
+}
 
 export function page(records: unknown[], nextLink?: string): Page {
   return { value: records, "@odata.nextLink": nextLink };
