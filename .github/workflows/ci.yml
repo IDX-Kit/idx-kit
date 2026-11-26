@@ -303,6 +303,7 @@ jobs:
       - *create-cluster
       - name: Prepare the empty listings database
         run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE ROLE idx_runtime LOGIN'
           npm run demo:db:migrate
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
       - name: Measure first load and repair at 100,000 listings
