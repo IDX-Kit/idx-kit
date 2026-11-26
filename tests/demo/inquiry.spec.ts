@@ -27,6 +27,7 @@ let engine: Awaited<ReturnType<typeof startEngine>>;
 let site: Awaited<ReturnType<typeof startSite>>;
 let faultSite: Awaited<ReturnType<typeof startSite>>;
 let fault: number | "network" | "timeout" | "lost" = 500;
+let receiptLookupTimesOut = false;
 let code = "invalid_input";
 let posts = 0;
 let upstreamId: string | null = null;
@@ -35,6 +36,9 @@ const faultOrigin = "http://127.0.0.1:4322";
 const stub = createServer(async (req, res) => {
   if (req.method !== "POST") {
     const path = req.url === "/" ? "/api" : req.url;
+    if (receiptLookupTimesOut && path?.startsWith("/api/v1/inquiries/")) {
+      return;
+    }
     const upstream = await fetch(`http://127.0.0.1:8787${path}`, {
       headers: { Authorization: `Bearer ${secret}` },
     });
@@ -168,6 +172,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     posts = 0;
     code = "invalid_input";
     lostReceipt = undefined;
+    receiptLookupTimesOut = false;
   });
   test.afterAll(async () => {
     await faultSite?.stop();
@@ -315,6 +320,40 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       expected?.receivedAt,
     );
     expect(posts).toBe(2);
+    expect(await rows()).toEqual(stored);
+  });
+
+  test("a receipt lookup timeout recovers without another send", async ({
+    page,
+  }) => {
+    fault = 201;
+    receiptLookupTimesOut = true;
+    await page.goto(faultOrigin + property);
+    await fill(page);
+    const failedLookup = page.waitForResponse(
+      (r) => r.request().method() === "GET" && r.url().includes("?receipt="),
+    );
+    expect((await send(page)).status()).toBe(303);
+    const failure = await failedLookup;
+    expect(failure.status()).toBe(503);
+    await headers(failure);
+    await expect(page.getByRole("alert")).toHaveText(
+      "We couldn't load the inquiry receipt. Try loading it again without sending another inquiry.",
+    );
+    const stored = await rows();
+    expect(stored).toHaveLength(1);
+    const receiptId = new URL(failure.url()).searchParams.get("receipt");
+    expect(receiptId).toBe(stored[0].id);
+
+    receiptLookupTimesOut = false;
+    await page.getByRole("link", { name: "Retry receipt lookup" }).click();
+    await expect(page.getByRole("heading", { name: received })).toBeVisible();
+    await expect(page).toHaveURL(failure.url());
+    await expect(page.locator("time")).toHaveAttribute(
+      "datetime",
+      stored[0].received_at.toISOString(),
+    );
+    expect(posts).toBe(1);
     expect(await rows()).toEqual(stored);
   });
 

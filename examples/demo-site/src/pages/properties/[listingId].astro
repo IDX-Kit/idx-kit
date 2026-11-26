@@ -76,8 +76,14 @@ const message =
     Astro.request.method !== "POST" ? (
     <section>
       <h1>Inquiry receipt</h1>
-      <p role="alert">{form.message}</p>
-      {form.retry && <a href={Astro.url.pathname + Astro.url.search}>Retry</a>}
+      <p role="alert">
+        {form.retry && status !== 409 && status !== 429
+          ? "We couldn't load the inquiry receipt. Try loading it again without sending another inquiry."
+          : form.message}
+      </p>
+      {form.retry && (
+        <a href={Astro.url.pathname + Astro.url.search}>Retry receipt lookup</a>
+      )}
       {form.missing && <a href="/search">Back to search</a>}
     </section>
   ) : (

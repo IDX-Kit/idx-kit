@@ -48,19 +48,19 @@ regenerate it with `npm run contract:generate`.
 The checks also start the engine and validate real HTTP responses and required
 headers against the checked-in contract, with negative controls. They cover key
 creation, revocation and rotation, display metadata, withholding, version and input
-errors, search and paging, redacted logs and a stopped database. They do not cover
-inquiries, real feeds or deployment. CI also builds the demo site and checks property
-HTML, search filters, complete Next traversal, exact decimal prices and no-JavaScript
-browsing with a real engine and database. All execution checks run in CI.
+errors, search and paging, inquiry creation and receipts, redacted logs and a stopped
+database. CI also builds the demo site and checks property HTML, search filters,
+complete Next traversal, exact decimal prices and no-JavaScript browsing and
+inquiries with a real engine and database. All execution checks run in CI.
 
 ## Demo pages
 
 The `examples/demo-site` workspace uses Astro with its Node adapter. After building
 with `npm run demo:site:build`, set `IDX_ENGINE_URL` to the engine origin and
-`IDX_SECRET_KEY` to a Site-bound key with `listings:read`. Keep both in server
-configuration. Run `npm run demo:site` with `HOST=127.0.0.1` and `PORT=4321` for
-loopback use. Startup checks `/api` for v1 and `listingDetail` before serving.
-Do not expose the synthetic demo publicly.
+`IDX_SECRET_KEY` to a Site-bound key with `listings:read`, `inquiries:write` and
+`inquiries:read`. Keep both in server configuration. Run `npm run demo:site` with
+`HOST=127.0.0.1` and `PORT=4321` for loopback use. Startup checks `/api` for v1 and
+`listingDetail` before serving. Do not expose the synthetic demo publicly.
 
 `/properties/lst_demo_0001` renders facts, illustrations, listing and page disclosures,
 and feed freshness without browser JavaScript. Unknown display instructions suppress
@@ -74,20 +74,22 @@ history. The shared renderer includes listing disclosures on each result, and pa
 disclosures appear even with no matches. Invalid filters show field guidance, while
 an invalid cursor links to the first page with the same filters. Prices are formatted
 directly from decimal strings. The key stays on the server; all engine requests use
-`@idx-kit/client`, a five-second timeout, no-store and refused redirects. No inquiry
-form or deployment is included. `npm run test:demo` runs the runner-only browser
-checks after building, migrating, seeding and installing the pinned Chromium browser.
+`@idx-kit/client`, a five-second timeout, no-store and refused redirects. The property
+page saves synthetic inquiries and shows a receipt. The demo sends no email.
+`npm run test:demo` runs the runner-only browser checks after building, migrating,
+seeding and installing the pinned Chromium browser.
 
 ## Engine and secret keys
 
 After migrating and seeding a dedicated database, use the migration connection
 in `DATABASE_URL` to manage keys. Each command requires explicit scopes; the
 supported scopes are `listings:read`, `inquiries:write` and `inquiries:read`.
-Inquiry scopes reserve permissions for later endpoints. There is no key API.
+The demo uses all three to show listings, submit inquiries and read receipts.
+There is no key API.
 
 ```sh
-npm run demo:key -- create site_demo_primary listings:read /absolute/private/listing.secret
-npm run demo:key -- rotate KEY_ID listings:read /absolute/private/replacement.secret
+npm run demo:key -- create site_demo_primary listings:read,inquiries:write,inquiries:read /absolute/private/demo.secret
+npm run demo:key -- rotate KEY_ID listings:read,inquiries:write,inquiries:read /absolute/private/replacement.secret
 npm run demo:key -- revoke KEY_ID
 ```
 
