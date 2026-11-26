@@ -64,7 +64,7 @@ export function logFailure(
       upstream?.requestId ??
       null,
     path,
-    message: path?.startsWith("/api/v1/inquiries")
+    message: path?.startsWith(OPERATIONS.createInquiry.path)
       ? undefined
       : cause instanceof Error
         ? cause.message
@@ -100,6 +100,7 @@ export function engineClient() {
   let retryAfter: string | null = null;
   const client = createClient<Ops>(OPERATIONS, {
     serverUrl: base.origin,
+    auth: { bearer: secret },
     timeout: 5000,
     retry: { retries: 0 },
     fetch: binding?.fetch.bind(binding),
@@ -110,7 +111,6 @@ export function engineClient() {
     },
   });
   const options: RequestOptions = {
-    headers: { Authorization: `Bearer ${secret}` },
     cache: "no-store",
     redirect,
   };
@@ -143,7 +143,7 @@ export function engineClient() {
   return {
     context: () => ({ status: upstreamStatus, requestId, path, retryAfter }),
     async createInquiry(body: CreateInquiryBody, key: string) {
-      return request("/api/v1/inquiries", () =>
+      return request(OPERATIONS.createInquiry.path, () =>
         client.createInquiry(
           { body, headers: { "Idempotency-Key": JSON.stringify(key) } },
           options,
@@ -153,13 +153,13 @@ export function engineClient() {
     async receipt(id: string) {
       if (!/^[A-Za-z0-9_-]+$/.test(id))
         throw new PageFailure(404, "invalid_receipt_id");
-      return request("/api/v1/inquiries/{inquiryId}", () =>
+      return request(OPERATIONS.getInquiryReceipt.path, () =>
         client.getInquiryReceipt({ path: { inquiryId: id } }, options),
       );
     },
     async discover() {
-      const body = await request("/api", () =>
-        client.discoverServer({}, { cache: "no-store", redirect }),
+      const body = await request(OPERATIONS.discoverServer.path, () =>
+        client.discoverServer({}, options),
       );
       if (
         !body.data.supportedVersions.some(
@@ -170,19 +170,19 @@ export function engineClient() {
       ) {
         throw new PageFailure(502, "unsupported_engine", {
           requestId,
-          path: "/api",
+          path: OPERATIONS.discoverServer.path,
         });
       }
     },
     async listing(id: string) {
       if (!/^[A-Za-z0-9_-]+$/.test(id))
         throw new PageFailure(404, "invalid_listing_id");
-      return request("/api/v1/listings/{listingId}", () =>
+      return request(OPERATIONS.getListing.path, () =>
         client.getListing({ path: { listingId: id } }, options),
       );
     },
     async search(query: SearchListingsQuery) {
-      return request("/api/v1/listings", () =>
+      return request(OPERATIONS.searchListings.path, () =>
         client.searchListings({ query }, options),
       );
     },
