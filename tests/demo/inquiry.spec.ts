@@ -37,7 +37,11 @@ const stub = createServer(async (req, res) => {
     const upstream = await fetch(`http://127.0.0.1:8787${path}`, {
       headers: { Authorization: `Bearer ${secret}` },
     });
-    res.writeHead(upstream.status, Object.fromEntries(upstream.headers));
+    // fetch decodes the body; do not forward its wire encoding or length.
+    res.writeHead(upstream.status, {
+      "Content-Type": "application/json",
+      "Request-Id": upstream.headers.get("Request-Id") ?? "",
+    });
     res.end(await upstream.text());
     return;
   }
