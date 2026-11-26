@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import pg from "pg";
-import ts from "typescript";
+import { configs, readConfig } from "../../scripts/check-worker-config.mjs";
 import { keyCommand, preserveKeys } from "../api/runtime.ts";
 import { validateResponse } from "../api/contract.ts";
 import { postInquiry } from "../api/inquiry-request.ts";
@@ -44,11 +44,7 @@ test("Hyperdrive uses idx_runtime and logs the correlated database denial", asyn
   const stub = await startEmailStub();
   const turnstile = await startTurnstileStub(privateValues);
   let engine: Awaited<ReturnType<typeof startWorker>> | undefined;
-  const { config, error } = ts.readConfigFile(
-    "packages/engine/wrangler.jsonc",
-    ts.sys.readFile,
-  );
-  assert.ok(!error);
+  const { config } = await readConfig(configs.engine);
   async function start(vars: Record<string, unknown>) {
     const path = `${directory}/wrangler.json`;
     await writeFile(
