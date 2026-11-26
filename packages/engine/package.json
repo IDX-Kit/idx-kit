@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@idx-kit/client": "0.0.0",
+    "@idx-kit/client": "0.1.0",
     "pg": "8.16.3",
     "hono": "4.13.22",
     "@hono/node-server": "2.1.6",

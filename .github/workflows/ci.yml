@@ -24,6 +24,8 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      client_tag: ${{ steps.client-package.outputs.tag }}
     defaults:
       run:
         shell: bash
@@ -151,6 +153,37 @@ jobs:
           npm test 2>&1 | tee "$IDX_TEST_LOG_DIR/unit.log"
           npm run demo:db:migrate
           npm run demo:seed
+      - name: Pack client and print release notes
+        id: client-package
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          version=$(node -p 'require("./packages/client/package.json").version')
+          base_version=$(git show "$BASE_SHA:packages/client/package.json" |
+            node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')
+          tag="client-v$version"
+          release_dir="$RUNNER_TEMP/client-release"
+          mkdir -p "$release_dir"
+          npm pack --workspace @idx-kit/client --pack-destination "$release_dir"
+          tarball="$release_dir/idx-kit-client-$version.tgz"
+          cp "docs/releases/$tag.md" "$release_dir/notes.md"
+          cat "$release_dir/notes.md"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          if [[ "$version" != "$base_version" ]]; then
+            echo "Client version changed from $base_version to $version."
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install the packed client outside the workspace and call the engine
+        env:
+          IDX_CLIENT_TARBALL: ${{ steps.client-package.outputs.tarball }}
+        run: node --test tests/api/client-install.test.ts
+      - name: Save the tested tarball and release notes for publication
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.client-package.outputs.tag != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: client-release
+          path: ${{ runner.temp }}/client-release/
+          if-no-files-found: error
       - name: Build server-rendered demo and install its pinned browser
         run: |
           npm run demo:site:build
@@ -244,3 +277,34 @@ jobs:
           if [ -f "$RUNNER_TEMP/idx11-pg/postmaster.pid" ]; then
             /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
           fi
+  release-client:
+    needs: [check, clean-demo]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit' && needs.check.outputs.client_tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency: ${{ needs.check.outputs.client_tag }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: client-release
+          path: ${{ runner.temp }}/client-release
+      - name: Publish the client pre-release if missing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.client_tag }}
+        run: |
+          if lookup=$(gh release view "$TAG" --repo IDX-Kit/idx-kit --json tagName 2>&1); then
+            echo "Release $TAG already exists."
+            exit 0
+          fi
+          if [[ "$lookup" != 'release not found' ]]; then
+            printf '%s\n' "$lookup" >&2
+            exit 1
+          fi
+          release_dir="$RUNNER_TEMP/client-release"
+          gh release create "$TAG" "$release_dir/idx-kit-client-${TAG#client-v}.tgz" \
+            --repo IDX-Kit/idx-kit --target "$GITHUB_SHA" --title "$TAG" \
+            --prerelease --notes-file "$release_dir/notes.md"

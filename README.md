@@ -19,6 +19,20 @@ uses only the public API.
 Follow the [demo quick start](docs/demo-setup.md) from a fresh checkout.
 See the [repository instructions](AGENTS.md) and the [API rules](docs/api-rules.md).
 
+## Install the client in your website
+
+Install the early test version of `@idx-kit/client` from its GitHub release:
+
+```sh
+npm install --save-exact https://github.com/IDX-Kit/idx-kit/releases/download/client-v0.1.0/idx-kit-client-0.1.0.tgz
+```
+
+The dependency URL pins the version. To upgrade or roll back, replace that URL in
+`package.json` with the tarball URL for the desired version from the
+[GitHub releases](https://github.com/IDX-Kit/idx-kit/releases), run `npm install`,
+and commit `package.json` and the updated lockfile. Import `@idx-kit/client` from
+your server code and keep your engine key in server configuration.
+
 ## Database development
 
 Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 18. The npm workspace lockfile
