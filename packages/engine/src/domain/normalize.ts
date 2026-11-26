@@ -22,30 +22,60 @@ const mediaUrl = imageFields.shape.url.refine((value) => {
 });
 const imageSchema = imageFields.extend({ url: mediaUrl });
 export const genericPhotoAlt = "Property photo";
-const photoInput = imageFields.extend({
+const photoInput = imageSchema.extend({
   alt: z
     .string()
     .nullish()
     .transform((value) => (value?.trim() ? value : genericPhotoAlt))
     .pipe(boundedText),
 });
-const hiddenPhotoInput = imageFields
+const hiddenPhotoInput = imageSchema
   .pick({ url: true })
   .transform(({ url }) => ({ url, alt: genericPhotoAlt }));
-// RESO StandardStatus lookup values in the lowercase form used by fixtures.
-const standardStatuses = new Set([
+const shownStatuses = new Set([
   "active",
   "active under contract",
+  "coming soon",
+  "pending",
+]);
+const removalStatuses = new Set([
   "canceled",
   "closed",
-  "coming soon",
   "delete",
+  "deleted",
   "expired",
   "hold",
   "incomplete",
-  "pending",
+  "sold",
   "withdrawn",
 ]);
+
+export function listingStatus(value: Listing["status"], fixture: boolean) {
+  const status = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (fixture) {
+    return {
+      status: value,
+      removed:
+        status === "withdrawn" || status === "delete" || status === "deleted",
+    };
+  }
+  return {
+    status: shownStatuses.has(status) ? status : null,
+    removed: removalStatuses.has(status),
+  };
+}
+
+const photoLimit = 128;
+
+function feedPhotos(value: unknown, hideAddress: boolean): Listing["images"] {
+  if (!Array.isArray(value)) return null;
+  const schema = hideAddress ? hiddenPhotoInput : photoInput;
+  return value.slice(0, photoLimit).flatMap((photo) => {
+    const result = schema.safeParse(photo);
+    return result.success ? [result.data] : [];
+  });
+}
+
 const blockSchema = z.object({
   id: z
     .string()
@@ -67,7 +97,8 @@ export const disclosureSchema = z.array(blockSchema).max(32);
 export const disclosureIds = z
   .array(z.object({ id: blockSchema.shape.id }))
   .max(32);
-const imagesSchema = z.array(imageSchema).max(128).nullable();
+const fixturePhotoInput = z.array(imageFields).max(photoLimit).nullable();
+const imagesSchema = z.array(imageSchema).max(photoLimit).nullable();
 const fieldsSchema = z
   .array(z.enum(["status", "price", "address", "bedrooms", "images"]))
   .max(5);
@@ -105,7 +136,7 @@ export function normalize(record: ListingRecord, feedPage = false) {
     "ListPrice",
     "BedroomsTotal",
     "Address",
-    "Images",
+    ...(feedPage ? [] : ["Images"]),
     "InternetAddressDisplayYN",
     "InternetEntireListingDisplayYN",
   ]) {
@@ -150,30 +181,18 @@ export function normalize(record: ListingRecord, feedPage = false) {
   );
   const blocks = (values: DisplayBlock[]) =>
     feedPage ? values : protection.blocks(values);
-  const photoSchema = feedPage
-    ? hideAddress
-      ? hiddenPhotoInput
-      : photoInput
-    : imageFields;
-  const photos = z.array(photoSchema).max(128).nullable().parse(source.Images);
-  const images =
-    feedPage && hideAddress
-      ? (photos?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null)
-      : imagesSchema.parse(
-          feedPage ? photos : (photos?.map(protection.image) ?? null),
-        );
+  const images = feedPage
+    ? feedPhotos(source.Images, hideAddress)
+    : imagesSchema.parse(
+        fixturePhotoInput.parse(source.Images)?.map(protection.image) ?? null,
+      );
   if (hideAddress) fields.add("address");
-  let status = source.StandardStatus;
-  if (feedPage) {
-    status = typeof status === "string" ? status.trim().toLowerCase() : null;
-    if (status !== null && !standardStatuses.has(status)) status = null;
-  }
   const facts: Pick<
     Listing,
     "synthetic" | "status" | "price" | "address" | "bedrooms" | "images"
   > & { withheldFields: WithheldField[] } = {
     synthetic: record.synthetic,
-    status,
+    status: listingStatus(source.StandardStatus, !feedPage).status,
     price:
       source.ListPrice === null
         ? null

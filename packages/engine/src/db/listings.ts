@@ -6,6 +6,7 @@ import {
   disclosureIds,
   disclosureSchema,
   genericPhotoAlt,
+  listingStatus,
   normalize,
   sourceKeySchema,
   timestampSchema,
@@ -67,15 +68,9 @@ interface Candidate extends PageRow {
 }
 
 function isRemoved(source: ListingChangeSource, fixture: boolean) {
-  const status =
-    typeof source.StandardStatus === "string"
-      ? source.StandardStatus.trim().toLowerCase()
-      : null;
   return (
     source.InternetEntireListingDisplayYN === false ||
-    status === "withdrawn" ||
-    status === "deleted" ||
-    (!fixture && (status === "closed" || status === "sold"))
+    listingStatus(source.StandardStatus, fixture).removed
   );
 }
 

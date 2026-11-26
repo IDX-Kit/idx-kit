@@ -298,6 +298,96 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       };
 
       await t.test(
+        "each feed removal status hides the listing and a newer active revision restores Hold",
+        async () => {
+          const key = "Synthetic writer removal statuses";
+          const statuses = [
+            "Canceled",
+            "Closed",
+            "Delete",
+            "Expired",
+            "Incomplete",
+            "Withdrawn",
+            "Deleted",
+            "Sold",
+            "Hold",
+          ];
+          for (const [index, status] of statuses.entries()) {
+            const live = upsert(key, index * 2 + 1);
+            const removed = upsert(key, index * 2 + 2);
+            removed.listing.source.StandardStatus = status;
+            await write([live]);
+            const id = await identity(primary, key);
+            assert.equal((await publicDetail(id)).body.data.status, "active");
+            assert.deepEqual((await write([removed])).rejected, []);
+            await absent(id);
+            if (status === "Hold") {
+              await write([live]);
+              await absent(id);
+              await write([upsert(key, index * 2 + 3)]);
+              const restored = (await publicDetail(id)).body.data;
+              assert.equal(restored.id, id);
+              assert.equal(restored.status, "active");
+            }
+          }
+        },
+      );
+
+      await t.test("fixtures show Closed and remove Delete", async () => {
+        const record = structuredClone(fixtures.listings[0]);
+        record.publicId = "lst_writer_fixture_delete";
+        record.source.ListingKey = "Synthetic writer fixture delete";
+        record.source.StandardStatus = "closed";
+        const batch = { feeds: [], sites: [], listings: [record] };
+        await seed(db, batch);
+        assert.equal(
+          (await publicDetail(record.publicId)).body.data.status,
+          "closed",
+        );
+        record.source.StandardStatus = "Delete";
+        await seed(db, batch);
+        await absent(record.publicId);
+      });
+
+      await t.test(
+        "feed photos are checked individually within the first 128 entries",
+        async () => {
+          const key = "Synthetic writer photo validation";
+          const hidden = upsert(key, 1);
+          hidden.listing.source.InternetAddressDisplayYN = false;
+          hidden.listing.source.Address!.line1 = oldStreet;
+          Object.assign(hidden.listing.source, {
+            Images: [
+              { url: newPhoto, alt: oldStreet },
+              {
+                url: `/media/${encodeURIComponent(oldStreet)}${"x".repeat(2048)}.svg`,
+              },
+              null,
+            ],
+          });
+          assert.deepEqual((await write([hidden])).rejected, []);
+          const id = await identity(primary, key);
+          assert.deepEqual((await publicDetail(id)).body.data.images, [
+            { url: newPhoto, alt: "Property photo" },
+          ]);
+
+          const many = upsert(key, 2);
+          const photos = Array.from({ length: 130 }, (_, index) => ({
+            url: `/media/synthetic-${index}.svg`,
+            alt: `Property photo ${index}`,
+          }));
+          many.listing.source.Images = photos;
+          assert.deepEqual((await write([many])).rejected, []);
+          assert.deepEqual((await searchItem(id)).images, photos.slice(0, 128));
+
+          const malformed = upsert(key, 3);
+          Object.assign(malformed.listing.source, { Images: { url: newPhoto } });
+          assert.deepEqual((await write([malformed])).rejected, []);
+          assert.equal((await publicDetail(id)).body.data.images, null);
+        },
+      );
+
+      await t.test(
         "equal revisions keep the most restrictive address permission in either order",
         async () => {
           for (const [index, [reverse, samePage]] of [
