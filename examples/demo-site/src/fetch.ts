@@ -2,7 +2,7 @@ import { astro, FetchState } from "astro/fetch";
 import { writeLog } from "./server/log.ts";
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  fetch: async (request: Request): Promise<Response> => {
     const response = await astro(new FetchState(request));
     // Astro's origin check can reject a POST before middleware sets no-store.
     if (
