@@ -381,7 +381,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           assert.deepEqual((await searchItem(id)).images, photos.slice(0, 128));
 
           const malformed = upsert(key, 3);
-          Object.assign(malformed.listing.source, { Images: { url: newPhoto } });
+          Object.assign(malformed.listing.source, {
+            Images: { url: newPhoto },
+          });
           assert.deepEqual((await write([malformed])).rejected, []);
           assert.equal((await publicDetail(id)).body.data.images, null);
         },
