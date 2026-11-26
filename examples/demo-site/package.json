@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "npm --prefix ../.. run build --workspace @idx-kit/client",
     "build": "astro build",
     "start": "node start.mjs"
   },
   "dependencies": {
     "@astrojs/node": "11.1.12",
     "astro": "7.4.7",
-    "@idx-kit/client": "0.0.0",
+    "@idx-kit/client": "0.1.0",
     "@astrojs/cloudflare": "14.4.6"
   }
 }

@@ -19,6 +19,36 @@ uses only the public API.
 Follow the [demo quick start](docs/demo-setup.md) from a fresh checkout.
 See the [repository instructions](AGENTS.md) and the [API rules](docs/api-rules.md).
 
+## Install the client in your website
+
+Install the early test version of `@idx-kit/client` from its GitHub release:
+
+```sh
+npm install --save-exact https://github.com/IDX-Kit/idx-kit/releases/download/client-v0.1.0/idx-kit-client-0.1.0.tgz
+```
+
+The dependency URL pins the version. To upgrade or roll back, replace that URL in
+`package.json` with the tarball URL for the desired version from the
+[GitHub releases](https://github.com/IDX-Kit/idx-kit/releases), run `npm install`,
+and commit `package.json` and the updated lockfile. Import `@idx-kit/client` from
+your server code and keep your engine key in server configuration.
+
+## Client release recovery
+
+1. **Missing tarball.** Find the release tag's commit in GitHub Releases. In
+   Actions, download and unzip the `client-release-*` artifact from the `CI` run
+   for the push to `main` at that commit. Remove any empty
+   `idx-kit-client-<version>.tgz` upload from the release, attach that file from
+   the artifact, then rerun the `release-client` job that reported the missing file.
+2. **Tag conflict.** Set a new version in `packages/client/package.json` and in
+   the `@idx-kit/client` pins in `packages/engine/package.json` and
+   `examples/demo-site/package.json`. Refresh the root `package-lock.json` with
+   `npm install --package-lock-only --ignore-scripts`. Add
+   `docs/releases/client-v<version>.md` using the
+   [first release notes](docs/releases/client-v0.1.0.md) as a template. Update the
+   tag (`client-v<version>`) and filename (`idx-kit-client-<version>.tgz`) in the
+   install URLs in the notes and above, then merge to `main`.
+
 ## Database development
 
 Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 18. The npm workspace lockfile

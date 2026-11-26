@@ -1,7 +1,23 @@
 {
   "name": "@idx-kit/client",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "TypeScript client for the IDX Kit listings API.",
+  "license": "FSL-1.1-ALv2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IDX-Kit/idx-kit.git",
+    "directory": "packages/client"
+  },
   "type": "module",
-  "exports": "./src/generated.ts"
+  "files": ["dist/generated.js", "dist/generated.d.ts"],
+  "exports": {
+    ".": {
+      "types": "./dist/generated.d.ts",
+      "default": "./dist/generated.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build && node -e \"require('node:fs').copyFileSync('../../LICENSE.md', 'LICENSE.md')\""
+  }
 }

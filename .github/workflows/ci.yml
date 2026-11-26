@@ -24,6 +24,9 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      client_tag: ${{ steps.client-package.outputs.tag }}
+      client_artifact: ${{ steps.client-release-artifact.outputs.artifact-id }}
     defaults:
       run:
         shell: bash
@@ -154,6 +157,31 @@ jobs:
           npm run demo:db:migrate
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
           npm run demo:seed
+      - name: Pack client and print release notes
+        id: client-package
+        run: |
+          version=$(node -p 'require("./packages/client/package.json").version')
+          tag="client-v$version"
+          release_dir="$RUNNER_TEMP/client-release"
+          mkdir -p "$release_dir"
+          npm pack --workspace @idx-kit/client --pack-destination "$release_dir"
+          tarball="$release_dir/idx-kit-client-$version.tgz"
+          cp "docs/releases/$tag.md" "$release_dir/notes.md"
+          cat "$release_dir/notes.md"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Install the packed client outside the workspace and call the engine
+        env:
+          IDX_CLIENT_TARBALL: ${{ steps.client-package.outputs.tarball }}
+        run: node --test tests/api/client-install.test.ts
+      - name: Save the tested tarball and release notes for publication
+        id: client-release-artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: client-release-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/client-release/
+          if-no-files-found: error
       - name: Build server-rendered demo and install its pinned browser
         run: |
           npm run demo:site:build
@@ -247,3 +275,66 @@ jobs:
           if [ -f "$RUNNER_TEMP/idx11-pg/postmaster.pid" ]; then
             /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop
           fi
+  release-client:
+    needs: [check, clean-demo]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'IDX-Kit/idx-kit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: ${{ needs.check.outputs.client_tag }}
+      queue: max
+    steps:
+      - name: Check whether the client release is published with its tarball
+        id: lookup
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.client_tag }}
+        run: |
+          asset="idx-kit-client-${TAG#client-v}.tgz"
+          if lookup=$(gh release view "$TAG" --repo IDX-Kit/idx-kit --json isDraft,assets 2>&1); then
+            if jq -e '.isDraft' <<< "$lookup" > /dev/null; then
+              echo "Release $TAG is a draft. This run tested $GITHUB_SHA. Delete the draft release, then rerun this job." >&2
+              exit 1
+            fi
+            if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .state == "uploaded" and .size > 0)' <<< "$lookup" > /dev/null; then
+              echo "Release $TAG is missing $asset. This run tested $GITHUB_SHA. Restore the tarball using README.md#client-release-recovery." >&2
+              exit 1
+            fi
+            echo "Release $TAG is published with $asset. This run tested $GITHUB_SHA."
+            exit 0
+          fi
+          if [[ "$lookup" != 'release not found' ]]; then
+            printf 'Could not check release %s. This run tested %s. Resolve the error below, then rerun this job.\n%s\n' "$TAG" "$GITHUB_SHA" "$lookup" >&2
+            exit 1
+          fi
+          echo 'missing=true' >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: steps.lookup.outputs.missing == 'true'
+        with:
+          artifact-ids: ${{ needs.check.outputs.client_artifact }}
+          path: ${{ runner.temp }}/client-release
+      - name: Publish the client pre-release
+        if: steps.lookup.outputs.missing == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.client_tag }}
+        run: |
+          ref="refs/tags/$TAG"
+          tag_commit=$(git ls-remote --tags "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$ref" "$ref^{}" |
+            awk -v ref="$ref" '
+              $2 == ref { tag = $1 }
+              $2 == ref "^{}" { commit = $1 }
+              END { print (commit ? commit : tag) }
+            ')
+          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Tag $TAG points to $tag_commit. This run tested $GITHUB_SHA. Publish a new client version using README.md#client-release-recovery." >&2
+            exit 1
+          fi
+          release_dir="$RUNNER_TEMP/client-release"
+          gh release create "$TAG" "$release_dir/idx-kit-client-${TAG#client-v}.tgz" \
+            --repo IDX-Kit/idx-kit --target "$GITHUB_SHA" --title "$TAG" \
+            --prerelease --notes-file "$release_dir/notes.md"
