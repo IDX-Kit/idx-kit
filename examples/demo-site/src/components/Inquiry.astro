@@ -6,6 +6,8 @@ interface Props {
 }
 const { form, path } = Astro.props;
 const labels = { name: "Name", email: "Email", message: "Message" };
+// HTML discards the first newline after a textarea's opening tag.
+const textareaText = `\n${form.values.message}`;
 const wait = form.retryAfter
   ? /^\d+$/.test(form.retryAfter)
     ? `Retry after ${form.retryAfter} seconds.`
@@ -15,6 +17,7 @@ const wait = form.retryAfter
 
 <section aria-labelledby="inquiry-heading">
   <h2 id="inquiry-heading">Send an inquiry</h2>
+  <p>Example Springs Demo Brokerage (fictional)</p>
   <p>Synthetic inquiries only. The demo sends no email.</p>
   {form.message && <p role="alert">{form.message}</p>}
   {form.missing && (
@@ -42,7 +45,7 @@ const wait = form.retryAfter
             aria-describedby={
               form.errors[field] ? `inquiry-${field}-error` : undefined
             }
-          >{form.values[field]}</textarea>
+          >{textareaText}</textarea>
         ) : (
           <input
             id={`inquiry-${field}`}

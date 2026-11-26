@@ -78,6 +78,8 @@ export async function sendInquiry(request: Request, listingId: string) {
       const value = body.get(field);
       form.values[field] = typeof value === "string" ? value : "";
     }
+    // Form encoding sends CRLF, while the textarea counts each newline as LF.
+    form.values.message = form.values.message.replace(/\r\n?/g, "\n");
     const key = body.get("idempotencyKey");
     form.key = typeof key === "string" ? key : "";
     if (body.get("website")) {

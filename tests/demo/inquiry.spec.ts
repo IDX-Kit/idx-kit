@@ -194,9 +194,14 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     expect(second).toMatch(uuid);
     expect(second).not.toBe(first);
     expect(await rows()).toHaveLength(0);
-    expect(
-      await page.locator("form").evaluate((n) => n.closest("article")),
-    ).toBeNull();
+    const inquiry = page.getByRole("region", { name: "Send an inquiry" });
+    await expect(inquiry.locator("form")).toBeVisible();
+    await expect(
+      inquiry.getByText("Example Springs Demo Brokerage (fictional)", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(await inquiry.evaluate((n) => n.closest("article"))).toBeNull();
     await fill(page);
     expect((await send(page)).status()).toBe(303);
     await expect(page.getByRole("heading", { name: received })).toBeVisible();
@@ -225,6 +230,19 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     expect(await rows()).toHaveLength(2);
     for (const value of [secret, ...Object.values(visitor)])
       expect(requests.join("")).not.toContain(value);
+  });
+
+  test("a 4,000-character multiline message reaches the real engine", async ({
+    page,
+  }) => {
+    const message = `${"a".repeat(1999)}\n${"b".repeat(2000)}`;
+    await page.goto(property);
+    await fill(page, message);
+    expect((await send(page)).status()).toBe(303);
+    await expect(page.getByRole("heading", { name: received })).toBeVisible();
+    const stored = await rows();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].message).toBe(message);
   });
 
   test("Back to a sent form replays unchanged and requires a fresh Send after a mismatch", async ({
@@ -273,17 +291,20 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
   test("lost response after commit retries the same key to the original receipt", async ({
     page,
   }) => {
+    const message = `\n${visitor.message}\n\nSynthetic second paragraph\n`;
     fault = "lost";
     await page.goto(faultOrigin + property);
     const originalKey = await key(page);
-    await fill(page);
+    await fill(page, message);
     await send(page);
     await expect(page.getByRole("alert")).toHaveText(
       "We can't confirm this was received.",
     );
-    await retained(page, originalKey);
+    await retained(page, originalKey, message);
     expect(posts).toBe(1);
-    expect(await rows()).toHaveLength(1);
+    const stored = await rows();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].message).toBe(message);
     const expected = lostReceipt;
     // Pass the retry through to the real engine, returning its retained receipt.
     fault = 201;
@@ -294,7 +315,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       expected?.receivedAt,
     );
     expect(posts).toBe(2);
-    expect(await rows()).toHaveLength(1);
+    expect(await rows()).toEqual(stored);
   });
 
   for (const failure of [
