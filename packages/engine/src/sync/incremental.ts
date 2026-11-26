@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { saveFeedOutcome } from "../db/feed-sync-outcomes.ts";
+import type { FeedNextStep } from "../db/feed-sync-outcomes.ts";
 import {
   FeedPositionChanged,
   readFeedCheckpoint,
@@ -16,7 +17,17 @@ import { listingChangesFor, nextStepFor, readFeedPages } from "./pages.ts";
 import type { SyncFeed } from "./pages.ts";
 
 // Each run uses its own connected writer client.
-export async function syncIncrementally(client: pg.Client, feed: SyncFeed) {
+export async function syncIncrementally(
+  client: pg.Client,
+  feed: SyncFeed,
+  pageLimit?: number,
+) {
+  if (
+    pageLimit !== undefined &&
+    (!Number.isInteger(pageLimit) || pageLimit < 1)
+  ) {
+    throw new RangeError("Page limit must be a whole number of one or more");
+  }
   const { feedId, disclosures, connector } = feed;
   let checkpoint: FeedCheckpoint | undefined;
   let outcome: Awaited<ReturnType<typeof readFeedPages>>;
@@ -70,12 +81,17 @@ export async function syncIncrementally(client: pg.Client, feed: SyncFeed) {
         );
         current.version += 1n;
       },
+      pageLimit,
     );
   } catch (error) {
     if (error instanceof FeedPositionChanged) {
       return { code: "position_changed", nextStep: { kind: "none" } } as const;
     }
     outcome = { code: "write_failed" };
+  }
+  if (outcome.code === "page_limit") {
+    const nextStep: FeedNextStep = { kind: "retry" };
+    return { code: "page_limit", nextStep } as const;
   }
   const result =
     outcome.code === "complete"

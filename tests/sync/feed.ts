@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
 import pg from "pg";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
+import { listingPageLimit } from "@idx-kit/engine/src/db/listings.ts";
 import { listenOnLoopback } from "../api/loopback-server.ts";
 
 interface Page {
@@ -11,6 +12,7 @@ interface Page {
 
 type Reply =
   | Page
+  | unknown[]
   | { status: number; location?: string; retryAfter?: string; body?: string }
   | "disconnect"
   | "invalid_json"
@@ -67,6 +69,7 @@ export async function standIn(
   timeoutMs?: number,
 ) {
   const calls: { path: string; query: string; authorized: boolean }[] = [];
+  const preferences: (string | undefined)[] = [];
   const server = await listenOnLoopback((request, response) => {
     const url = new URL(request.url!, "http://127.0.0.1");
     calls.push({
@@ -74,6 +77,9 @@ export async function standIn(
       query: url.search,
       authorized: request.headers.authorization === `Bearer ${feedToken}`,
     });
+    const prefer = request.headers.prefer;
+    preferences.push(prefer);
+    const size = prefer?.match(/^odata\.maxpagesize=(\d+)$/)?.[1];
     async function reply() {
       const result = await respond(url, calls.length);
       if (result === "disconnect") {
@@ -98,7 +104,14 @@ export async function standIn(
         return;
       }
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify(result));
+      if (Array.isArray(result)) {
+        const start = Number(url.searchParams.get("cursor"));
+        const end = start + (size ? Number(size) : listingPageLimit);
+        const nextLink = end < result.length ? `?cursor=${end}` : undefined;
+        response.end(JSON.stringify(page(result.slice(start, end), nextLink)));
+      } else {
+        response.end(JSON.stringify(result));
+      }
     }
     void reply().catch(() => response.destroy());
   });
@@ -108,5 +121,6 @@ export async function standIn(
     connector: new ResoConnector(propertyUrl, feedToken, timeoutMs),
     propertyUrl,
     calls,
+    preferences,
   };
 }

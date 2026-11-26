@@ -41,13 +41,32 @@ export function listingChangesFor({ synthetic, disclosures }: SyncFeed) {
   };
 }
 
-export async function readFeedPages(
+type PageReadArgs = [
   connector: SyncFeed["connector"],
   completedMark: string | null,
   nextLink: string | null,
   applyPage: (page: Page) => Promise<void>,
   rejectContinuation: () => Promise<void>,
-): Promise<StoppedRun | { code: "complete"; status?: number }> {
+];
+type FeedRun = StoppedRun | { code: "complete"; status?: number };
+
+export function readFeedPages(...args: PageReadArgs): Promise<FeedRun>;
+export function readFeedPages(
+  ...args: [...PageReadArgs, pageLimit: number | undefined]
+): Promise<FeedRun | { code: "page_limit" }>;
+export async function readFeedPages(
+  ...args: [...PageReadArgs, pageLimit?: number]
+): Promise<FeedRun | { code: "page_limit" }> {
+  const [
+    connector,
+    completedMark,
+    firstLink,
+    applyPage,
+    rejectContinuation,
+    pageLimit,
+  ] = args;
+  let nextLink = firstLink;
+  let applied = 0;
   while (true) {
     const page = await connector.readPage(completedMark, nextLink);
     if (page.code === "continuation_rejected" && nextLink !== null) {
@@ -57,5 +76,7 @@ export async function readFeedPages(
     await applyPage(page);
     nextLink = page.nextLink;
     if (nextLink === null) return { code: "complete" };
+    applied += 1;
+    if (applied === pageLimit) return { code: "page_limit" };
   }
 }

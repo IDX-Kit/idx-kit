@@ -68,7 +68,7 @@ async function run() {
     );
   }
   const { feed, feedToken } = settings;
-  const { feedId, propertyUrl, synthetic, disclosures } = feed;
+  const { feedId, propertyUrl, pageSize, synthetic, disclosures } = feed;
   // Connection loss also rejects pending queries. Keep event text out of diagnostics.
   client.on("error", () => {});
   try {
@@ -97,7 +97,12 @@ async function run() {
       feedId,
       synthetic,
       disclosures,
-      connector: new ResoConnector(propertyUrl.href, feedToken!),
+      connector: new ResoConnector(
+        propertyUrl.href,
+        feedToken!,
+        undefined,
+        pageSize,
+      ),
     };
     const result =
       args.command === "incremental"

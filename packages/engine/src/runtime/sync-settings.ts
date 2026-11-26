@@ -30,6 +30,7 @@ const feedSettings = z
   .strictObject({
     feedId: sourceKeySchema.refine((id) => id.trim().length > 0),
     propertyUrl: z.url().transform((value) => new URL(value)),
+    pageSize: z.int().min(1).max(200).optional(),
     synthetic: z.boolean(),
     disclosures,
   })

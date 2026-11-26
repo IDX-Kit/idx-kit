@@ -6,8 +6,12 @@ import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import type { FeedNextStep } from "@idx-kit/engine/src/db/feed-sync-outcomes.ts";
+import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
+import { hashSecret } from "@idx-kit/engine/src/domain/keys.ts";
+import { createApp } from "@idx-kit/engine/src/http/app.ts";
 import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
+import { contract, validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { listenOnLoopback } from "../api/loopback-server.ts";
 import {
@@ -29,6 +33,7 @@ const stop = { kind: "stop" } as const;
 const retryHttpError = { code: "http_error", nextStep: retry };
 const stopHttpError = { code: "http_error", nextStep: stop };
 const writeFailed = { code: "write_failed", nextStep: retry };
+const pageLimitReached = { code: "page_limit", nextStep: retry };
 
 const filter = (mark: string) =>
   `?${new URLSearchParams({ $filter: `ModificationTimestamp ge ${mark}` })}`;
@@ -53,7 +58,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   const third = record("third", thirdMark, "300.00");
   type StandIn = Awaited<ReturnType<typeof standIn>>;
 
-  async function setup(t: TestContext, name: string) {
+  async function setup(t: TestContext, name: string, siteId?: string) {
     const feedId = `feed_sync_${name}`;
     const setOldFreshness = () =>
       db.query(
@@ -70,9 +75,18 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         },
       ],
       listings: [],
-      sites: [],
+      sites: siteId ? [{ id: siteId, feedIds: [feedId] }] : [],
     });
     t.after(async () => {
+      if (siteId) {
+        await db.query("DELETE FROM idx.site_secret_keys WHERE site_id=$1", [
+          siteId,
+        ]);
+        await db.query("DELETE FROM idx.data_licenses WHERE site_id=$1", [
+          siteId,
+        ]);
+        await db.query("DELETE FROM idx.sites WHERE id=$1", [siteId]);
+      }
       await db.query(
         `DELETE FROM idx.listings l USING idx.source_mappings m
         WHERE l.id=m.listing_id AND m.feed_id=$1`,
@@ -123,13 +137,16 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       return rows[0];
     };
     return {
-      run: ({ connector }: Pick<StandIn, "connector">, client = writer) =>
-        syncIncrementally(client, {
-          feedId,
-          synthetic: true,
-          connector,
-          disclosures,
-        }),
+      run: (
+        { connector }: Pick<StandIn, "connector">,
+        client = writer,
+        pageLimit?: number,
+      ) =>
+        syncIncrementally(
+          client,
+          { feedId, synthetic: true, connector, disclosures },
+          pageLimit,
+        ),
       checkpoint: () => readFeedCheckpoint(db, feedId),
       oldestIngest: () => readOldestIngest(db, feedId),
       outcome,
@@ -167,6 +184,142 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     nextLink: null,
     pendingMark: null,
   });
+
+  await t.test(
+    "bounded runs match the unlimited load and renew freshness only on completion",
+    async (t) => {
+      const runtime = new pg.Client({
+        connectionString: process.env.RUNTIME_DATABASE_URL,
+      });
+      await runtime.connect();
+      t.after(() => runtime.end());
+      const siteId = "site_sync_limit";
+      const secret = "synthetic-sync-limit-key";
+      const app = createApp(repository(runtime), contract, "test", () => {});
+      const search = "/api/v1/listings";
+      const records = [
+        third,
+        first,
+        second,
+        record("fourth", firstMark),
+        record("fifth", secondMark),
+      ];
+      const cursors = ["", "?cursor=1", "?cursor=2", "?cursor=3", "?cursor=4"];
+      // Replay the same generated IDs from an empty feed for each run.
+      const ids = records.map(() => crypto.randomUUID());
+      let expected: unknown;
+      for (const limit of [undefined, 2, 1]) {
+        await t.test(`pages per call: ${limit ?? "unlimited"}`, async (t) => {
+          const state = await setup(t, "limit", siteId);
+          await db.query(
+            `INSERT INTO idx.site_secret_keys (id, site_id, secret_hash, scopes)
+            VALUES ('key_sync_limit', $1, $2, ARRAY['listings:read'])`,
+            [siteId, await hashSecret(secret)],
+          );
+          let id = 0;
+          const feed = await standIn(t, (url) => {
+            const index = Number(url.searchParams.get("cursor"));
+            return page([records[index]], cursors[index + 1]);
+          });
+          const statements = countWriterStatements(t, writer);
+          const initialFreshness = await state.freshness();
+          const batch = limit ?? records.length;
+          for (let start = 0; start < records.length; start += batch) {
+            const end = Math.min(start + batch, records.length);
+            const final = end === records.length;
+            const before = statements();
+            const generator = t.mock.method(crypto, "randomUUID", () => ids[id++]);
+            let result;
+            try {
+              result = await state.run(feed, writer, limit);
+            } finally {
+              generator.mock.restore();
+            }
+            assert.deepEqual(
+              result,
+              final ? { code: "complete" } : pageLimitReached,
+            );
+            assert.equal(
+              statements() - before,
+              1 + (end - start) * 7 + (final ? 3 : 0),
+            );
+            assert.deepEqual(
+              feed.calls.map(({ query }) => query),
+              cursors.slice(0, end),
+            );
+            assert.equal((await state.listings()).length, end);
+            const response = await app.request(search, {
+              headers: { Authorization: `Bearer ${secret}` },
+            });
+            const body = await response.json();
+            validateResponse(search, response, body);
+            assert.equal(response.status, final ? 200 : 503);
+            if (final) {
+              assert.deepEqual(
+                body.data.map(({ id }: { id: string }) => id).sort(),
+                ids.map((id) => `lst_${id}`).sort(),
+              );
+            } else {
+              assert.equal(body.code, "feed_expired");
+              assert.deepEqual(await state.freshness(), initialFreshness);
+            }
+          }
+          assert.deepEqual(await state.checkpoint(), {
+            version: 5n,
+            position: complete(thirdMark),
+          });
+          await assertFresh(state);
+          await assertOutcome(state, {
+            code: "complete",
+            status: null,
+            step: null,
+            version: 5,
+          });
+          const listings = await state.listings();
+          if (limit === undefined) expected = listings;
+          else assert.deepEqual(listings, expected);
+        });
+      }
+    },
+  );
+
+  await t.test(
+    "pausing preserves a saved failure and a later failure inside the limit is saved",
+    async (t) => {
+      const state = await setup(t, "limit_outcome");
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) return { status: 401 };
+        if (n === 2) return page([first], "?cursor=2");
+        if (n === 3) return page([second], "?cursor=3");
+        return { status: 503 };
+      });
+      assert.deepEqual(await state.run(feed), stopHttpError);
+      const outcome = await state.outcome();
+      assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      assert.deepEqual(await state.outcome(), outcome);
+      assert.deepEqual(await state.run(feed, writer, 2), retryHttpError);
+      await assertOutcome(state, {
+        code: "http_error",
+        status: 503,
+        step: "retry",
+        version: 2,
+      });
+    },
+  );
+
+  await t.test(
+    "invalid page limits are refused before reading the checkpoint or fetching",
+    async (t) => {
+      const state = await setup(t, "invalid_limit");
+      const feed = await standIn(t, () => page([]));
+      const statements = countWriterStatements(t, writer);
+      for (const limit of [0, -1, 1.5, NaN, Infinity]) {
+        await assert.rejects(state.run(feed, writer, limit), RangeError);
+      }
+      assert.equal(statements(), 0);
+      assert.equal(feed.calls.length, 0);
+    },
+  );
 
   await t.test(
     "finishes unordered pages and preserves the greatest source time",

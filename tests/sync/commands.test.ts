@@ -169,6 +169,7 @@ test(
         });
         assert.equal(feed.calls.length, 3);
         assert.ok(feed.calls.every(({ authorized }) => authorized));
+        assert.deepEqual(feed.preferences, [undefined, undefined, undefined]);
         assert.equal((await api()).length, 3);
         const after = await run(["status"]);
         assert.ok(
@@ -324,12 +325,39 @@ test(
     );
 
     await t.test(
+      "incremental and scan send the page size on every request and accept larger pages",
+      async () => {
+        await writeFile(feedFile, stringify({ ...config, pageSize: 2 }));
+        const records = [edited, second, third];
+        respond = () => records;
+        const offset = feed.calls.length;
+        assert.equal((await run(["incremental"])).code, "complete");
+        const scan = await run(["scan"]);
+        assert.equal(scan.code, "complete");
+        assert.equal(scan.pagesRead, 2);
+        assert.equal(scan.recordsSeen, 3);
+        assert.equal(feed.calls[offset + 1].query, "?cursor=2");
+        assert.equal(feed.calls[offset + 3].query, "?cursor=2");
+        respond = () => page(records);
+        const ignored = await run(["scan"]);
+        assert.equal(ignored.code, "complete");
+        assert.equal(ignored.pagesRead, 1);
+        assert.equal(ignored.recordsSeen, 3);
+        assert.deepEqual(
+          feed.preferences.slice(offset),
+          Array(5).fill("odata.maxpagesize=2"),
+        );
+      },
+    );
+
+    await t.test(
       "usage and invalid settings fail without stdout or feed requests",
       async () => {
         const offset = feed.calls.length;
         await run(["scan", "--remove-missing"], 2);
         await run(["scan", "--max-removals", "0"], 2);
         await run(["scan", "--remove-missing", "--max-removals", "1.5"], 2);
+        await run(["incremental", "--page-limit", "1"], 2);
         await run(["status", "--unknown"], 2);
         await run(["incremental"], 1, { IDX_SYNC_FEED_TOKEN: "" });
         await run(["status"], 1, {
@@ -345,6 +373,10 @@ test(
         );
         await writeFile(feedFile, stringify({ ...config, synthetic: "true" }));
         await run(["status"], 1);
+        for (const pageSize of [0, 201, 1.5, "2"]) {
+          await writeFile(feedFile, stringify({ ...config, pageSize }));
+          await run(["incremental"], 1);
+        }
         config.feedId = "feed_absent";
         await writeFile(feedFile, stringify(config));
         await run(["incremental"], 1, undefined, "missing_feed");

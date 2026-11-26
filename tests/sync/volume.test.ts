@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { syncFullScan } from "@idx-kit/engine/src/sync/full-scan.ts";
@@ -11,7 +12,7 @@ import { syncIncrementally } from "@idx-kit/engine/src/sync/incremental.ts";
 import { validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { keyCommand, startEngine } from "../api/runtime.ts";
-import { connectWriter, page, standIn } from "./feed.ts";
+import { connectWriter, feedToken, page, standIn } from "./feed.ts";
 
 const volume = 100_000;
 const pageSize = 200;
@@ -369,5 +370,63 @@ test(
     );
     await assertExpired(await fetchApi(search));
     assert.equal((await detail(loaded.at(-1)!.id, 503)).code, "feed_expired");
+  },
+);
+
+test(
+  "measure incremental page cost with heavy synthetic records",
+  { timeout: 60_000 },
+  async (t) => {
+    const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await db.connect();
+    t.after(() => db.end());
+    const writer = await connectWriter(t);
+    const fixtures = await new FixtureConnector().read();
+    const [fixtureFeed] = fixtures.feeds;
+    const disclosures = fixtureDisclosures(fixtures, fixtureFeed.id);
+    const heavySource = {
+      ...fixtures.listings[0].source,
+      PublicRemarks: "Invented property remarks for the page cost measurement. ".repeat(80),
+      Images: Array.from({ length: 40 }, (_, index) => ({
+        alt: `Invented property photo ${index + 1}`,
+        url: `https://images.example.test/property/${index + 1}.jpg`,
+      })),
+    };
+    for (const size of [200, 100, 50, 25]) {
+      const feedId = `feed_sync_cost_${size}`;
+      await seed(db, {
+        feeds: [{ ...fixtureFeed, id: feedId }],
+        listings: [],
+        sites: [],
+      });
+      const records = Array.from({ length: size * 20 }, (_, index) => ({
+        ...heavySource,
+        ListingKey: sourceKey(index + 1),
+        ModificationTimestamp: initialRevision,
+      }));
+      const feed = await standIn(t, () => records);
+      const connector = new ResoConnector(
+        feed.propertyUrl,
+        feedToken,
+        undefined,
+        size,
+      );
+      const start = performance.now();
+      const cpuStart = process.cpuUsage();
+      const result = await syncIncrementally(writer, {
+        feedId,
+        synthetic: true,
+        connector,
+        disclosures,
+      });
+      const { user, system } = process.cpuUsage(cpuStart);
+      const elapsed = performance.now() - start;
+      assert.equal(result.code, "complete");
+      const count = feed.calls.length;
+      const cpuPerPage = (user + system) / 1000 / count;
+      t.diagnostic(
+        `Page size ${size}, ${count} pages: ${cpuPerPage.toFixed(2)} ms CPU/page, ${(elapsed / count).toFixed(2)} ms elapsed/page`,
+      );
+    }
   },
 );

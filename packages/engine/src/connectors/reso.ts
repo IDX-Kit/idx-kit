@@ -98,12 +98,20 @@ function continuation(base: URL, link: string, from: URL) {
 
 export class ResoConnector {
   private readonly base: URL | null;
-  private readonly token: string;
+  private readonly headers: Record<string, string>;
   private readonly timeoutMs: number;
 
-  constructor(baseAddress: string, token: string, timeoutMs = 30_000) {
+  constructor(
+    baseAddress: string,
+    token: string,
+    timeoutMs = 30_000,
+    pageSize?: number,
+  ) {
     this.base = URL.parse(baseAddress);
-    this.token = token;
+    this.headers = { Authorization: `Bearer ${token}` };
+    if (pageSize !== undefined) {
+      this.headers.Prefer = `odata.maxpagesize=${pageSize}`;
+    }
     this.timeoutMs = timeoutMs;
   }
 
@@ -129,7 +137,7 @@ export class ResoConnector {
     let status: number | undefined;
     try {
       const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${this.token}` },
+        headers: this.headers,
         redirect: "manual",
         signal,
       });

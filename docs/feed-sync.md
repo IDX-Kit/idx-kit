@@ -55,6 +55,7 @@ for creating a site key. Use your site ID and the scopes your site needs.
 - `IDX_SYNC_FEED_FILE` is the path to a YAML file with the feed ID, the RESO
   Property resource URL, an explicit `synthetic` boolean, and the approved
   disclosures. Use HTTPS. Synthetic feeds can also use HTTP on loopback.
+  Optionally set `pageSize` to an integer from 1 to 200 to request smaller pages for both incremental sync and scans. The feed may ignore it.
 - `IDX_SYNC_FEED_TOKEN` is the feed's bearer token. Only `incremental` and `scan` require it.
 
 Keep the YAML and credentials in protected operator configuration. For example:
