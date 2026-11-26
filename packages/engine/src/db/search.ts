@@ -30,10 +30,9 @@ export async function searchListings(
   const rows: ListingRow[] = [];
   // Separate equality, strict price and null ranges keep each continuation seekable.
   const combined = process.env.IDX_TEST_SEARCH_VOLUME === "1";
-  const ranges =
-    combined
-      ? ["combined"]
-      : last?.price === null
+  const ranges = combined
+    ? ["combined"]
+    : last?.price === null
       ? ["null"]
       : last
         ? ["tie", "price", "null"]
@@ -82,7 +81,9 @@ export async function searchListings(
     let direction = "ASC NULLS LAST";
     if (c.sort === "-price") {
       direction =
-        c.minBedrooms !== null && range !== "null" && !combined ? "DESC" : "DESC NULLS LAST";
+        c.minBedrooms !== null && range !== "null" && !combined
+          ? "DESC"
+          : "DESC NULLS LAST";
     }
     rows.push(
       ...(await readQuery<ListingRow>(

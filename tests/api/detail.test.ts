@@ -354,15 +354,28 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             "999 SYNtHETic wRIteR WaY",
             "1000SyntheticWriterWay",
           ];
-          const captions = spellings.map((alt, index) => ({ url: `/media/photo-${index}.svg`, alt }));
-          const abbreviation = { url: oldPhoto, alt: "Front view of 999 Synthetic Writer Wy." };
-          const missingCaptions = [{ url: "/media/blank.svg", alt: "" }, { url: "/media/spaces.svg", alt: "   " }, { url: "/media/missing.svg" }];
+          const captions = spellings.map((alt, index) => ({
+            url: `/media/photo-${index}.svg`,
+            alt,
+          }));
+          const abbreviation = {
+            url: oldPhoto,
+            alt: "Front view of 999 Synthetic Writer Wy.",
+          };
+          const missingCaptions = [
+            { url: "/media/blank.svg", alt: "" },
+            { url: "/media/spaces.svg", alt: "   " },
+            { url: "/media/missing.svg" },
+          ];
           hidden.listing.source.Images = [
             safe,
             abbreviation,
             ...captions,
             ...missingCaptions,
-            ...spellings.map((spelling) => ({ url: `/media/${encodeURIComponent(spelling)}.svg`, alt: safe.alt })),
+            ...spellings.map((spelling) => ({
+              url: `/media/${encodeURIComponent(spelling)}.svg`,
+              alt: safe.alt,
+            })),
             { url: "/media/%ZZ.svg", alt: safe.alt },
           ];
           assert.deepEqual((await write([hidden])).rejected, []);
@@ -373,7 +386,14 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             assert.equal(item.status, "active");
             assert.equal(item.address, null);
             assert.deepEqual(item.withheldFields, ["address"]);
-            assert.deepEqual(item.images, [safe, abbreviation, ...[...captions, ...missingCaptions].map(({ url }) => ({ url, alt: "Property photo" }))]);
+            assert.deepEqual(item.images, [
+              safe,
+              abbreviation,
+              ...[...captions, ...missingCaptions].map(({ url }) => ({
+                url,
+                alt: "Property photo",
+              })),
+            ]);
           }
 
           const carryingStreet = structuredClone(hidden);
@@ -605,7 +625,10 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
               }
               await new Promise((resolve) => setTimeout(resolve, 10));
             }
-            assert.ok(terminated, "The active search connection was terminated");
+            assert.ok(
+              terminated,
+              "The active search connection was terminated",
+            );
             assert.equal((await pending).body.code, "service_unavailable");
           } finally {
             await db.query("ROLLBACK");
@@ -652,14 +675,29 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const older = { ...upsert(key, 1), revision: "2001-01-01T00:00:00Z" };
           const newer = { ...upsert(key, 2), revision: "9999-01-01T00:00:00Z" };
           const snapshot = { authoritativeSnapshot: true };
-          await applyListingPage(peer, primary, [remove(key, 3)], feed, snapshot);
+          await applyListingPage(
+            peer,
+            primary,
+            [remove(key, 3)],
+            feed,
+            snapshot,
+          );
           for (const replay of [older, newer]) {
             await applyListingPage(peer, primary, [replay], feed);
             await absent(id);
           }
-          assert.deepEqual((await applyListingPage(peer, primary, [{ ...older, revision: "unreadable" }], feed, snapshot)).rejected, [
-            { index: 0, code: "invalid_change", hidden: true },
-          ]);
+          assert.deepEqual(
+            (
+              await applyListingPage(
+                peer,
+                primary,
+                [{ ...older, revision: "unreadable" }],
+                feed,
+                snapshot,
+              )
+            ).rejected,
+            [{ index: 0, code: "invalid_change", hidden: true }],
+          );
           await absent(id);
           await applyListingPage(peer, primary, [older], feed, snapshot);
           assert.equal((await publicDetail(id)).body.data.id, id);

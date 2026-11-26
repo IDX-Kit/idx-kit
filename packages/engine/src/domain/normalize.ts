@@ -22,7 +22,9 @@ const mediaUrl = imageFields.shape.url.refine((value) => {
 });
 const imageSchema = imageFields.extend({ url: mediaUrl });
 const photoInput = imageFields.extend({
-  alt: boundedText.nullish().transform((value) => value?.trim() ? value : genericPhotoAlt),
+  alt: boundedText
+    .nullish()
+    .transform((value) => (value?.trim() ? value : genericPhotoAlt)),
 });
 const blockSchema = z.object({
   id: z
@@ -126,9 +128,12 @@ export function normalize(record: ListingRecord, feedPage = false) {
     hideAddress && !feedPage ? address : null,
   );
   const photos = z.array(photoInput).max(128).nullable().parse(source.Images);
-  const images = feedPage && hideAddress
-    ? photos?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null
-    : imagesSchema.parse(feedPage ? photos : photos?.map(protection.image) ?? null);
+  const images =
+    feedPage && hideAddress
+      ? (photos?.filter(({ url }) => mediaUrl.safeParse(url).success) ?? null)
+      : imagesSchema.parse(
+          feedPage ? photos : (photos?.map(protection.image) ?? null),
+        );
   if (hideAddress) fields.add("address");
   const facts: Pick<
     Listing,

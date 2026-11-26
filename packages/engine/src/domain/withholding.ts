@@ -5,7 +5,11 @@ const plain = (value: string) =>
   value.toLowerCase().replace(/[^\p{L}\p{Nd}]/gu, "");
 
 export function addressProtection(...addresses: Listing["address"][]) {
-  const streets = [...new Set(addresses.map((address) => plain(address?.line1 ?? "")).filter(Boolean))];
+  const streets = [
+    ...new Set(
+      addresses.map((address) => plain(address?.line1 ?? "")).filter(Boolean),
+    ),
+  ];
   const containsStreet = (value: string) => {
     if (!streets.length) return;
     const matches = (value: string) => {
@@ -31,10 +35,13 @@ export function addressProtection(...addresses: Listing["address"][]) {
     values?.flatMap((value) => {
       const unsafe = containsStreet(value.url);
       if (unsafe || (hideAddress && unsafe === undefined)) return [];
-      return [{
-        url: value.url,
-        alt: containsStreet(value.alt) === false ? value.alt : genericPhotoAlt,
-      }];
+      return [
+        {
+          url: value.url,
+          alt:
+            containsStreet(value.alt) === false ? value.alt : genericPhotoAlt,
+        },
+      ];
     }) ?? null;
   const blocks = (values: DisplayBlock[]): DisplayBlock[] =>
     values.map((value) => {

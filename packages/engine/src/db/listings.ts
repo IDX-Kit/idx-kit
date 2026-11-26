@@ -112,7 +112,7 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
       FROM jsonb_to_recordset($2::jsonb)
         AS (source_key text, revision timestamptz, candidate text, listing jsonb)
     ), accepted AS (
-      INSERT INTO idx.source_mappings AS m (feed_id, source_key, listing_id, source_revision)
+      INSERT INTO idx.source_mappings (feed_id, source_key, listing_id, source_revision)
       SELECT $1, source_key, candidate, revision FROM incoming
       ON CONFLICT (feed_id, source_key) DO UPDATE
       SET source_revision = EXCLUDED.source_revision
@@ -388,7 +388,9 @@ export async function applyListingPage(
         return {
           index,
           source_key: key,
-          revision: revision.success ? revisionKey(revision.data) : orderUnknown,
+          revision: revision.success
+            ? revisionKey(revision.data)
+            : orderUnknown,
           candidate: `lst_${randomUUID()}`,
           listing,
         };
@@ -396,7 +398,7 @@ export async function applyListingPage(
       const selected = selectChange(
         candidates,
         stored,
-        authoritativeSnapshot ? "snapshot" : "stream",
+        authoritativeSnapshot === true ? "snapshot" : "stream",
       );
       if (!selected) continue;
       if (selected.listing) {
