@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import pg from "pg";
+import type { SearchResponse } from "@idx-kit/client";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { createApp } from "@idx-kit/engine/src/http/app.ts";
 import { startWorker, workerRuntime } from "../workers/runtime.ts";
@@ -116,11 +117,9 @@ test("listing request budgets through HTTP", { timeout: 90_000 }, async (t) => {
 
   const firstPage = search + "?limit=1";
   const first = await request(firstPage, 200);
-  assert.ok(first.body.meta.nextCursor);
-  await request(
-    firstPage + "&after=" + encodeURIComponent(first.body.meta.nextCursor),
-    200,
-  );
+  const cursor = (first.body as SearchResponse).meta.page.nextCursor;
+  assert.ok(cursor);
+  await request(`${firstPage}&after=${encodeURIComponent(cursor)}`, 200);
   const admitted = await request(detail, 200);
   const spent = await windowFor();
   assert.equal(spent.request_count, 3);
