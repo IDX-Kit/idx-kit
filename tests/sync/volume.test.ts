@@ -152,8 +152,14 @@ test(
     });
 
     const offsets: number[] = [];
-    const waiting = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    let arrive!: () => void;
+    let release!: () => void;
+    const arrived = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let interrupt = true;
     let scanning = false;
     const source = fixtures.listings[0].source;
@@ -161,8 +167,8 @@ test(
       const index = Number(url.searchParams.get("cursor"));
       offsets.push(statements);
       if (interrupt && index === midpoint) {
-        waiting.resolve();
-        await release.promise;
+        arrive();
+        await released;
         return { status: 503 };
       }
       const start = index * pageSize + (scanning ? changed : 0);
@@ -190,10 +196,10 @@ test(
     const firstRun = syncIncrementally(writer, options);
     let unfinished: Response;
     try {
-      await Promise.race([waiting.promise, firstRun]);
+      await Promise.race([arrived, firstRun]);
       unfinished = await fetchApi(search);
     } finally {
-      release.resolve();
+      release();
     }
     const stopped = await firstRun;
     const firstMs = performance.now() - started;
