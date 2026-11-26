@@ -6,23 +6,25 @@ export class HttpProblem extends Error {
   readonly code: string;
   readonly detail: string;
   readonly operation?: string;
+  readonly allowedMethod?: string;
   errors?: Problem["errors"];
   constructor(
     status: number,
     code: string,
     detail: string,
-    options?: { cause: unknown; operation: string },
+    options?: { cause?: unknown; operation?: string; allowedMethod?: string },
   ) {
     super(code, options);
     this.name = "HttpProblem";
     this.operation = options?.operation;
+    this.allowedMethod = options?.allowedMethod;
     this.status = status;
     this.code = code;
     this.detail = detail;
   }
 }
 export function problemResponse(error: unknown, requestId: string) {
-  const { status, code, detail } =
+  const { status, code, detail, allowedMethod } =
     error instanceof HttpProblem
       ? error
       : new HttpProblem(
@@ -47,6 +49,6 @@ export function problemResponse(error: unknown, requestId: string) {
     "Cache-Control": "no-store",
   });
   if (status === 401) headers.set("WWW-Authenticate", "Bearer");
-  if (status === 405) headers.set("Allow", "GET");
+  if (allowedMethod) headers.set("Allow", allowedMethod);
   return Response.json(body, { status, headers });
 }

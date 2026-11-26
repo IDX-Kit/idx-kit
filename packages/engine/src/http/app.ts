@@ -123,10 +123,7 @@ export function createApp(
                 : { stack: error.stack }),
             }),
     });
-    const response = problemResponse(problem, c.get("requestId"));
-    if (response.status === 405 && c.get("route") === "/api/v1/inquiries")
-      response.headers.set("Allow", "POST");
-    return response;
+    return problemResponse(problem, c.get("requestId"));
   });
   for (const path of [
     "/api",
@@ -167,6 +164,7 @@ export function createApp(
           405,
           "method_not_allowed",
           `Use ${allowed} on this resource.`,
+          { allowedMethod: allowed },
         );
       const url = new URL(c.req.url);
       // Preserve raw encoding while Node parses each parameter's name.
