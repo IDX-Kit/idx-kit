@@ -242,7 +242,7 @@ export type AttributionToken = string;
 
 export type ReceiptResponse = {
     /**
-     * Confirms durable acceptance. Delivery is separate. The receipt omits visitor details and the message.
+     * Confirms durable acceptance only. The receipt omits visitor details and the message.
      */
     data: {
         id: OpaqueId;
@@ -309,7 +309,7 @@ export type SearchListingsResult = SearchResponse;
 
 export type SearchListingsQuery = {
     /**
-     * Exact city name match after trimming whitespace and ignoring case.
+     * The engine trims the query value and looks for an exact city name match, ignoring case.
      * @minLength 1
      * @maxLength 100
      */

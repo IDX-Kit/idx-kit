@@ -84,8 +84,8 @@ paths:
       tags: [Listings]
       summary: Search display-permitted listings
       description: Requires listings:read. AND combines filters; unknown/duplicate parameters, malformed values
-        and minPrice greater than maxPrice return 400. City is trimmed case-insensitive exact match. Numeric price
-        filters compare USD prices in major units and exclude listings with null prices or other currencies.
+        and minPrice greater than maxPrice return 400. City is trimmed case-insensitive exact match. Either price
+        filter restricts results to listings with a USD price. The API compares the stored price in major units.
         Effective limit is min(requested, 50). ID ascending breaks price ties; null prices sort last in either
         direction. Live keyset continuation uses the last price/ID tuple and normalized search/site
         context. Results can shift between pages as records change; this is not a snapshot or exhaustive download.
@@ -101,7 +101,7 @@ paths:
       parameters:
       - name: city
         in: query
-        description: Exact city name match after trimming whitespace and ignoring case.
+        description: The engine trims the query value and looks for an exact city name match, ignoring case.
         schema: {type: string, minLength: 1, maxLength: 100}
         example: Example Springs
       - name: minPrice
@@ -290,7 +290,7 @@ paths:
       tags: [Inquiries]
       summary: Read a durable receipt without personal data
       description: Requires inquiries:read for the inquiry's site. A different site or missing ID returns generic
-        404. The receipt contains id and receivedAt and confirms durable acceptance. Delivery is separate.
+        404. The receipt contains only id and receivedAt. It confirms that the engine saved the inquiry.
       x-required-scopes: ['inquiries:read']
       parameters:
       - name: inquiryId
@@ -321,7 +321,9 @@ components:
   securitySchemes:
     secretKey: {type: http, scheme: bearer, bearerFormat: Opaque site-scoped server secret, description: 'Use a secret
         key from server code with the required listings:read, inquiries:write or inquiries:read scope. Keep keys out
-        of URLs and browser code. The API rejects requests that carry both a bearer credential and an Origin header.'}
+        of URLs and browser code. Every operation, including discovery and the OpenAPI document, returns 403 if a
+        request has an Origin header and its Authorization header starts with Bearer followed by whitespace. The
+        Bearer prefix check is case-insensitive and runs before key validation.'}
   parameters:
     ListingId:
       name: listingId
@@ -341,7 +343,7 @@ components:
       required: true
       schema: {type: string, const: no-store}
     ListingCache:
-      description: Listing responses are private. Do not store them. Version 1 does not support conditional requests.
+      description: The private, no-store directives forbid HTTP caches from storing the response.
       required: true
       schema: {type: string, const: 'private, no-store'}
     RetryAfter:
@@ -668,7 +670,7 @@ components:
           properties:
             id: {$ref: '#/components/schemas/OpaqueId'}
             receivedAt: {$ref: '#/components/schemas/UtcTimestamp'}
-          description: Confirms durable acceptance. Delivery is separate. The receipt omits visitor details and the message.
+          description: Confirms durable acceptance only. The receipt omits visitor details and the message.
         meta: {$ref: '#/components/schemas/EmptyMeta'}
     Problem:
       type: object
