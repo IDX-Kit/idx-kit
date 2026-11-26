@@ -74,6 +74,8 @@ test(
     await db.connect();
     t.after(() => db.end());
     const writer = await connectWriter(t);
+    // The page counters only see reads made by this connection's own process.
+    await writer.query("SET max_parallel_workers_per_gather = 0");
     const fixtures = await new FixtureConnector().read();
     const [fixtureFeed] = fixtures.feeds;
     await seed(db, {
