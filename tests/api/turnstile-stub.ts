@@ -1,7 +1,6 @@
-import assert from "node:assert/strict";
-import { once } from "node:events";
-import { createServer } from "node:http";
+import { text } from "node:stream/consumers";
 import { registerSecret } from "../logs.ts";
+import { listenOnLoopback } from "./loopback-server.ts";
 
 // These settings and tokens are invented and only used on loopback.
 export const turnstileSettings = {
@@ -22,11 +21,9 @@ export async function startTurnstileStub(privateValues: string[]) {
     body: Record<string, string>;
   }[] = [];
   const accepted = new Set<string>();
-  const server = createServer(async (request, response) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) chunks.push(chunk);
+  const server = await listenOnLoopback(async (request, response) => {
     const body = Object.fromEntries(
-      new URLSearchParams(Buffer.concat(chunks).toString()),
+      new URLSearchParams(await text(request)),
     );
     checks.push({ method: request.method, path: request.url, body });
     const token = body.response;
@@ -55,20 +52,6 @@ export async function startTurnstileStub(privateValues: string[]) {
       }),
     );
   });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
   privateValues.forEach(registerSecret);
-  return {
-    checks,
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    async close() {
-      if (!server.listening) return;
-      const closed = once(server, "close");
-      server.close();
-      server.closeAllConnections();
-      await closed;
-    },
-  };
+  return { checks, ...server };
 }

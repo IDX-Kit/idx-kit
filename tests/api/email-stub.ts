@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
-import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+import { json } from "node:stream/consumers";
 import { setTimeout } from "node:timers/promises";
 import { registerSecret } from "../logs.ts";
+import { listenOnLoopback } from "./loopback-server.ts";
 
 // These addresses and the API key are synthetic and used only on loopback.
 export const emailSettings = {
@@ -20,10 +21,8 @@ export async function startEmailStub() {
   }[] = [];
   let gate: Promise<void> | undefined;
   let status = 200;
-  const server = createServer(async (request, response) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString());
+  const server = await listenOnLoopback(async (request, response) => {
+    const body = (await json(request)) as Record<string, unknown>;
     sent.push({
       method: request.method,
       path: request.url,
@@ -49,14 +48,10 @@ export async function startEmailStub() {
       ),
     );
   });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
   Object.values(emailSettings).forEach(registerSecret);
   return {
     sent,
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    ...server,
     hold() {
       let release!: () => void;
       gate = new Promise<void>((resolve) => {
@@ -71,12 +66,6 @@ export async function startEmailStub() {
       for (let attempt = 0; attempt < 100 && sent.length < count; attempt++)
         await setTimeout(50);
       assert.equal(sent.length, count);
-    },
-    async close() {
-      const closed = once(server, "close");
-      server.close();
-      server.closeAllConnections();
-      await closed;
     },
   };
 }
