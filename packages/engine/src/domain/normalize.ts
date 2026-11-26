@@ -29,9 +29,9 @@ const photoInput = imageFields.extend({
     .transform((value) => (value?.trim() ? value : genericPhotoAlt))
     .pipe(boundedText),
 });
-const hiddenPhotoInput = photoInput.extend({
-  alt: z.unknown().optional().transform(() => genericPhotoAlt),
-});
+const hiddenPhotoInput = imageFields
+  .pick({ url: true })
+  .transform(({ url }) => ({ url, alt: genericPhotoAlt }));
 // RESO StandardStatus lookup values in the lowercase form used by fixtures.
 const standardStatuses = new Set([
   "active",
@@ -148,7 +148,13 @@ export function normalize(record: ListingRecord, feedPage = false) {
   const protection = addressProtection(
     hideAddress && !feedPage ? address : null,
   );
-  const photoSchema = feedPage ? (hideAddress ? hiddenPhotoInput : photoInput) : imageFields;
+  const blocks = (values: DisplayBlock[]) =>
+    feedPage ? values : protection.blocks(values);
+  const photoSchema = feedPage
+    ? hideAddress
+      ? hiddenPhotoInput
+      : photoInput
+    : imageFields;
   const photos = z.array(photoSchema).max(128).nullable().parse(source.Images);
   const images =
     feedPage && hideAddress
@@ -182,8 +188,8 @@ export function normalize(record: ListingRecord, feedPage = false) {
   }
   return {
     facts,
-    blocks: disclosureSchema.min(1).parse(feedPage ? record.blocks : protection.blocks(record.blocks)),
-    pageBlocks: disclosureSchema.parse(feedPage ? record.pageBlocks : protection.blocks(record.pageBlocks)),
+    blocks: disclosureSchema.min(1).parse(blocks(record.blocks)),
+    pageBlocks: disclosureSchema.parse(blocks(record.pageBlocks)),
     sourceUpdatedAt: record.sourceUpdatedAt,
     ingestedAt: record.ingestedAt,
   };

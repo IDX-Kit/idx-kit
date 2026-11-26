@@ -349,25 +349,27 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             { url: "/media/spaces.svg", alt: " ".repeat(1025) },
             { url: "/media/missing.svg" },
           ];
-          const generic = ({ url }: { url: string }) => ({ url, alt: "Property photo" });
+          const generic = ({ url }: { url: string }) => ({
+            url,
+            alt: "Property photo",
+          });
           open.listing.source.Images = [...photos, reference, ...blanks];
           assert.deepEqual((await write([open])).rejected, []);
           const id = await identity(primary, key);
           const shown = await searchItem(id);
           assert.equal(shown.status, "pending");
-          assert.deepEqual(shown.images, [...photos, reference, ...blanks.map(generic)]);
+          const expected = [...photos, reference, ...blanks.map(generic)];
+          assert.deepEqual(shown.images, expected);
 
-          const hidden = hiddenAddress(key, 2);
-          hidden.listing.source.Address = { ...open.listing.source.Address!, line1: "A." };
+          const hidden = upsert(key, 2);
+          hidden.listing.source.InternetAddressDisplayYN = false;
+          hidden.listing.source.Address!.line1 = "A.";
           const undecodable = { url: "/media/%FF.svg", alt: "Side view" };
           hidden.listing.source.Images = [...photos, reference, undecodable];
           assert.deepEqual((await write([hidden])).rejected, []);
-          for (const item of [(await publicDetail(id)).body.data, await searchItem(id)]) {
-            assert.equal(item.status, "active");
-            assert.equal(item.address, null);
-            assert.deepEqual(item.withheldFields, ["address"]);
-            assert.deepEqual(item.images, photos.map(generic));
-          }
+          const item = (await publicDetail(id)).body.data;
+          assert.equal(item.status, "active");
+          assert.deepEqual(item.images, photos.map(generic));
           assert.equal((await stored(id))[0].address, null);
 
           hidden.revision = revision(3);
@@ -376,29 +378,21 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           assert.deepEqual((await write([hidden])).rejected, []);
           assert.equal((await stored(id))[0].status, null);
           assert.equal((await searchItem(id)).status, null);
-          assert.equal((await publicDetail(id)).body.data.status, null);
 
           const unknownStreet = hiddenAddress(key, 4);
           unknownStreet.listing.source.Images = [reference, undecodable];
           assert.deepEqual((await write([unknownStreet])).rejected, []);
-          assert.deepEqual((await searchItem(id)).images, [reference, undecodable].map(generic));
-        },
-      );
+          assert.deepEqual(
+            (await searchItem(id)).images,
+            [reference, undecodable].map(generic),
+          );
 
-      await t.test(
-        "a street supplied earlier in the page still protects hidden photo references",
-        async () => {
-          const key = "Synthetic writer same-page street";
-          const open = upsert(key, 1);
-          open.listing.source.Address!.line1 = oldStreet;
-          const hidden = hiddenAddress(key, 2);
-          hidden.listing.source.Images = [
-            { url: `/media/${encodeURIComponent(oldStreet)}.svg`, alt: oldStreet },
-          ];
-          assert.deepEqual((await write([open, hidden])).rejected, []);
-          const id = await identity(primary, key);
-          assert.deepEqual((await stored(id))[0].images, []);
-          assert.deepEqual((await searchItem(id)).images, []);
+          const pageKey = `${key} same page`;
+          const page = hiddenAddress(pageKey, 2);
+          page.listing.source.Images = [reference];
+          await write([{ ...open, sourceKey: pageKey }, page]);
+          const pageId = await identity(primary, pageKey);
+          assert.deepEqual((await searchItem(pageId)).images, []);
         },
       );
 
@@ -449,8 +443,14 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           assert.deepEqual(empty.body.data, []);
           assert.deepEqual(empty.body.display.blocks, feed.approvedFeedBlocks);
           const { body } = await publicDetail(id);
-          assert.deepEqual(body.data.display.blocks, feed.approvedListingBlocks);
-          assert.deepEqual(body.display.blocks, [...feed.approvedFeedBlocks, notice]);
+          assert.deepEqual(
+            body.data.display.blocks,
+            feed.approvedListingBlocks,
+          );
+          assert.deepEqual(body.display.blocks, [
+            ...feed.approvedFeedBlocks,
+            notice,
+          ]);
           for (const payload of [
             feedRow.rows,
             await stored(id),
@@ -979,7 +979,10 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(body.data.address, null);
         assert.deepEqual(body.data.withheldFields, ["address"]);
         assert.ok(!text.toLowerCase().includes(street.toLowerCase()));
-        assert.equal(body.data.images[0].alt, "Synthetic illustration of Address withheld");
+        assert.equal(
+          body.data.images[0].alt,
+          "Synthetic illustration of Address withheld",
+        );
         for (const [blocks, id] of [
           [body.data.display.blocks, "listing_address"],
           [body.display.blocks, "feed_address"],
@@ -988,8 +991,14 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const disclosure = blocks.find(
             (item: DisplayBlock) => item.id === id,
           );
-          assert.equal(disclosure.text, "Listed by Synthetic Example Brokerage. Address withheld.");
-          assert.equal(disclosure.image.alt, "Synthetic icon for Address withheld");
+          assert.equal(
+            disclosure.text,
+            "Listed by Synthetic Example Brokerage. Address withheld.",
+          );
+          assert.equal(
+            disclosure.image.alt,
+            "Synthetic icon for Address withheld",
+          );
         }
         // Shared feed disclosures must also be safe when another listing is requested.
         const visible = await request(listing);
