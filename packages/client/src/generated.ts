@@ -309,7 +309,7 @@ export type SearchListingsResult = SearchResponse;
 
 export type SearchListingsQuery = {
     /**
-     * The engine trims the query value and looks for an exact city name match, ignoring case.
+     * The engine matches the trimmed, lowercased city query exactly against the stored city name lowercased under the database's default locale.
      * @minLength 1
      * @maxLength 100
      */

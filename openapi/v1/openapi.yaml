@@ -31,6 +31,7 @@ paths:
       summary: Discover implemented API versions and capabilities
       description: Returns the engine release and the supported major versions, with the contract version and
         available capabilities for each. Check the major version and capabilities your integration uses.
+        Discovery omits site permissions and customer or feed inventory.
       security: []
       responses:
         '200':
@@ -59,6 +60,7 @@ paths:
       tags: [Discovery]
       summary: Read the installed release's exact v1 contract
       description: Returns the installed engine's v1 OpenAPI contract as raw JSON, without the success envelope.
+        The document contains no credentials, customer data, or runtime secrets.
       security: []
       responses:
         '200':
@@ -84,24 +86,27 @@ paths:
       tags: [Listings]
       summary: Search display-permitted listings
       description: Requires listings:read. AND combines filters; unknown/duplicate parameters, malformed values
-        and minPrice greater than maxPrice return 400. City is trimmed case-insensitive exact match. Either price
-        filter restricts results to listings with a USD price. The API compares the stored price in major units.
+        and minPrice greater than maxPrice return 400. The engine matches the trimmed, lowercased city query exactly
+        against the stored city name lowercased under the database's default locale. Either price filter restricts
+        results to listings with a USD price. The API compares the stored price in major units.
         Effective limit is min(requested, 50). ID ascending breaks price ties; null prices sort last in either
         direction. Live keyset continuation uses the last price/ID tuple and normalized search/site
         context. Results can shift between pages as records change; this is not a snapshot or exhaustive download.
         Each page rechecks visibility. In version 1, the cursor has no dataset revision, expiration time, signature
-        or traversal count. Treat the cursor as opaque. If the API returns 400 cursor_invalid, restart at the
-        first page. Every page uses the same per-key request budget as listing detail. Raw search terms, excluding the after
-        pair and its separating ampersand, have a maximum of 2,048 bytes on every page; exceeding this limit returns
-        400 invalid_query. The after cursor has a maximum of 4,096 bytes. Its raw pair, including after= and any
-        extra percent encoding, has a maximum of 4,102 bytes; an oversized cursor or pair returns 400 cursor_invalid.
+        or traversal count. Treat the cursor as opaque. Every page uses the same per-key request budget as listing
+        detail. Raw search terms, excluding the after pair and its separating ampersand, have a maximum of 2,048
+        bytes on every page; exceeding this limit returns 400 invalid_query. The after cursor has a maximum of
+        4,096 bytes. Its raw pair, including after= and any extra percent encoding, has a maximum of 4,102 bytes.
+        The API returns 400 cursor_invalid for a malformed cursor, a cursor from a different search context,
+        or an oversized cursor or query pair, so restart at the first page.
         Thus the complete raw query string after the question mark is at most 6,151 bytes (2,048 + 7 + 4,096).
         Each page repeats the same filters, sort and effective page size and passes the returned nextCursor unchanged.
       x-required-scopes: ['listings:read']
       parameters:
       - name: city
         in: query
-        description: The engine trims the query value and looks for an exact city name match, ignoring case.
+        description: The engine matches the trimmed, lowercased city query exactly against the stored city name
+          lowercased under the database's default locale.
         schema: {type: string, minLength: 1, maxLength: 100}
         example: Example Springs
       - name: minPrice
@@ -393,7 +398,7 @@ components:
         Request-Id: {$ref: '#/components/headers/RequestId'}
         Cache-Control: {$ref: '#/components/headers/NoStore'}
         Allow:
-          description: Comma-separated methods supported on this path; checked against the resource in API tests.
+          description: Lists the HTTP methods supported on this path, separated by commas.
           required: true
           schema: {type: string, minLength: 1}
       content:
