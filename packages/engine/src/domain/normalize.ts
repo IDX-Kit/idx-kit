@@ -22,9 +22,11 @@ const mediaUrl = imageFields.shape.url.refine((value) => {
 });
 const imageSchema = imageFields.extend({ url: mediaUrl });
 const photoInput = imageFields.extend({
-  alt: boundedText
+  alt: z
+    .string()
     .nullish()
-    .transform((value) => (value?.trim() ? value : genericPhotoAlt)),
+    .transform((value) => (value?.trim() ? value : genericPhotoAlt))
+    .pipe(boundedText),
 });
 const blockSchema = z.object({
   id: z

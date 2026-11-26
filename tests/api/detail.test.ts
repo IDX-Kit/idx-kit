@@ -364,7 +364,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           };
           const missingCaptions = [
             { url: "/media/blank.svg", alt: "" },
-            { url: "/media/spaces.svg", alt: "   " },
+            { url: "/media/spaces.svg", alt: " ".repeat(1025) },
             { url: "/media/missing.svg" },
           ];
           hidden.listing.source.Images = [
