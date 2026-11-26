@@ -12,8 +12,7 @@ export interface FeedCheckpoint {
 }
 
 export type FeedNextStep =
-  | { kind: "retry"; afterSeconds?: number }
-  | { kind: "stop" };
+  { kind: "retry"; afterSeconds?: number } | { kind: "stop" };
 
 export class FeedPositionChanged extends Error {}
 

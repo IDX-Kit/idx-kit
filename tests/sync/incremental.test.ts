@@ -515,26 +515,29 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     },
   );
 
-  await t.test("a stale failed fetch leaves the newer outcome intact", async (t) => {
-    const state = await setup(t, "stale_outcome");
-    const peer = await connectWriter(t);
-    const winner = await standIn(t, () => page([first]));
-    let winningOutcome;
-    const stale = await standIn(t, async () => {
-      assert.deepEqual(await state.run(winner, peer), { code: "complete" });
-      winningOutcome = await state.outcome();
-      return { status: 503 };
-    });
-    assert.deepEqual(await state.run(stale), {
-      code: "http_error",
-      nextStep: retry,
-    });
-    assert.deepEqual(await state.outcome(), winningOutcome);
-    assert.deepEqual(await state.checkpoint(), {
-      version: 1n,
-      position: complete(firstMark),
-    });
-  });
+  await t.test(
+    "a stale failed fetch leaves the newer outcome intact",
+    async (t) => {
+      const state = await setup(t, "stale_outcome");
+      const peer = await connectWriter(t);
+      const winner = await standIn(t, () => page([first]));
+      let winningOutcome;
+      const stale = await standIn(t, async () => {
+        assert.deepEqual(await state.run(winner, peer), { code: "complete" });
+        winningOutcome = await state.outcome();
+        return { status: 503 };
+      });
+      assert.deepEqual(await state.run(stale), {
+        code: "http_error",
+        nextStep: retry,
+      });
+      assert.deepEqual(await state.outcome(), winningOutcome);
+      assert.deepEqual(await state.checkpoint(), {
+        version: 1n,
+        position: complete(firstMark),
+      });
+    },
+  );
 
   await t.test(
     "a complete empty poll renews freshness and keeps the completed mark",
@@ -691,7 +694,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const cases = [
         { status: 429, retryAfter: "120", nextStep: retryIn120 },
         { status: 503, retryAfter: "120", nextStep: retryIn120 },
-        { status: 429, retryAfter: "0", nextStep: { ...retry, afterSeconds: 1 } },
+        {
+          status: 429,
+          retryAfter: "0",
+          nextStep: { ...retry, afterSeconds: 1 },
+        },
         {
           status: 503,
           retryAfter: "9".repeat(400),
@@ -748,7 +755,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       });
       assert.equal((await state.checkpoint()).version, 1n);
       await assertFresh(state);
-      assert.deepEqual(logs.map(({ mock }) => mock.calls), [[], [], []]);
+      assert.deepEqual(
+        logs.map(({ mock }) => mock.calls),
+        [[], [], []],
+      );
     },
   );
 
