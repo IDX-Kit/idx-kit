@@ -195,4 +195,19 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
     command("demo:check", [], env, false).includes("seeded synthetic listings"),
   );
   command("demo:prepare");
+
+  await t.test("preparation reports a spent listing budget", async () => {
+    const exhausted = await db.query(`
+      UPDATE idx.listing_request_windows AS w
+      SET window_start = clock_timestamp(), request_count = k.listing_request_limit
+      FROM idx.site_secret_keys AS k
+      WHERE w.key_id = k.id AND k.site_id = 'site_demo_primary' AND k.revoked_at IS NULL
+    `);
+    assert.equal(exhausted.rowCount, 1);
+    assert.ok(
+      command("demo:prepare", [], env, false).includes(
+        "The site key's listing budget is spent. Run the deployment again in a minute.",
+      ),
+    );
+  });
 });

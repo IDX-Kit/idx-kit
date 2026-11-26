@@ -49,6 +49,11 @@ async function check(response: Response, path: string) {
 }
 
 test("listing request budgets through HTTP", { timeout: 90_000 }, async (t) => {
+  for (const path of [search, detailSchema])
+    assert.ok(
+      Object.hasOwn(contract.paths[path].get.responses, "429"),
+      `GET ${path} must declare a 429 response`,
+    );
   const directory = await mkdtemp(`${tmpdir()}/idx-listing-limit-`);
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await db.connect();
@@ -132,12 +137,26 @@ test("listing request budgets through HTTP", { timeout: 90_000 }, async (t) => {
   await request(detail, 200, peer.secret);
   assert.equal((await windowFor(peer.id)).request_count, 1);
 
-  await db.query(
-    "UPDATE idx.listing_request_windows SET window_start = clock_timestamp() - interval '35 seconds' WHERE key_id = $1",
-    [key.id],
-  );
-  const partialWindow = await request(detail, 429);
-  assert.ok(Number(partialWindow.response.headers.get("Retry-After")) <= 25);
+  for (const elapsed of [20, 40]) {
+    const seeded = await db.query<{ window_end: Date }>(
+      `UPDATE idx.listing_request_windows
+      SET window_start = clock_timestamp() - $2::integer * interval '1 second'
+      WHERE key_id = $1
+      RETURNING window_start + interval '60 seconds' AS window_end`,
+      [key.id, elapsed],
+    );
+    const { response } = await request(detail, 429);
+    const remaining = await db.query<{ seconds_left: number }>(
+      "SELECT CEIL(EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp())))::integer AS seconds_left",
+      [seeded.rows[0].window_end],
+    );
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    const secondsLeft = remaining.rows[0].seconds_left;
+    assert.ok(
+      Math.abs(retryAfter - secondsLeft) <= 2,
+      `Expected Retry-After within two seconds of ${secondsLeft}, got ${retryAfter}`,
+    );
+  }
   await db.query(
     "UPDATE idx.listing_request_windows SET window_start = clock_timestamp() - interval '61 seconds' WHERE key_id = $1",
     [key.id],

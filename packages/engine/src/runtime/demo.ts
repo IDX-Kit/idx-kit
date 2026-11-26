@@ -53,6 +53,10 @@ export async function checkListings(connectionString: string, secret: string) {
         headers: { Authorization: `Bearer ${secret}` },
       },
     );
+    if (response.status === 429)
+      throw new DemoError(
+        "The site key's listing budget is spent. Run the deployment again in a minute.",
+      );
     const body = await response.json();
     const expected = (await new FixtureConnector().read()).listings.filter(
       (record) =>
