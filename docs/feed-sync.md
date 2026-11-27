@@ -160,6 +160,12 @@ again to resume after the last saved page. If the feed rejects its continuation,
 the runner clears it. Run the command again to continue from the last completed
 incremental mark or to start a new scan.
 
+Feed responses are limited to 8 MiB per page. If a run reports
+`page_too_large`, request a smaller `pageSize` or ask the feed provider to
+reduce the response size before retrying. Node incremental sync and scans
+read up to 1,000 pages per invocation, so run the same command again after
+`page_limit` to resume from the saved position.
+
 ## Keep a feed current on Workers
 
 The optional sync Worker runs incremental sync on a schedule. Use the

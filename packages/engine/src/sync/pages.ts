@@ -13,10 +13,13 @@ export interface SyncFeed {
 type PageResult = Awaited<ReturnType<ResoConnector["readPage"]>>;
 type Page = Extract<PageResult, { code: "page" }>;
 export type StoppedRun =
-  Exclude<PageResult, Page> | { code: "write_failed"; status?: number };
+  | Exclude<PageResult, Page>
+  | { code: "write_failed"; status?: number }
+  | { code: "page_limit" };
 
 export function nextStepFor(outcome: StoppedRun): FeedNextStep {
-  if (outcome.code === "invalid_link") return { kind: "stop" };
+  if (outcome.code === "invalid_link" || outcome.code === "page_too_large")
+    return { kind: "stop" };
   if (outcome.code === "http_error" && outcome.status !== undefined) {
     const { status, afterSeconds } = outcome;
     if (afterSeconds !== undefined) return { kind: "retry", afterSeconds };
@@ -41,30 +44,16 @@ export function listingChangesFor({ synthetic, disclosures }: SyncFeed) {
   };
 }
 
-type PageReadArgs = [
-  connector: SyncFeed["connector"],
-  completedMark: string | null,
-  nextLink: string | null,
-  applyPage: (page: Page) => Promise<void>,
-  rejectContinuation: () => Promise<void>,
-];
 type FeedRun = StoppedRun | { code: "complete"; status?: number };
 
-export function readFeedPages(...args: PageReadArgs): Promise<FeedRun>;
-export function readFeedPages(
-  ...args: [...PageReadArgs, pageLimit: number | undefined]
-): Promise<FeedRun | { code: "page_limit" }>;
 export async function readFeedPages(
-  ...args: [...PageReadArgs, pageLimit?: number]
-): Promise<FeedRun | { code: "page_limit" }> {
-  const [
-    connector,
-    completedMark,
-    firstLink,
-    applyPage,
-    rejectContinuation,
-    pageLimit,
-  ] = args;
+  connector: SyncFeed["connector"],
+  completedMark: string | null,
+  firstLink: string | null,
+  applyPage: (page: Page) => Promise<void>,
+  rejectContinuation: () => Promise<void>,
+  pageLimit = 1_000,
+): Promise<FeedRun> {
   let nextLink = firstLink;
   let applied = 0;
   while (true) {

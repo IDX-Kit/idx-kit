@@ -377,6 +377,46 @@ test(
     );
 
     await t.test(
+      "incremental and scan stop a feed with endless pages and resume the saved position",
+      async () => {
+        for (const command of ["incremental", "scan"]) {
+          const before = await run(["status"]);
+          const offset = feed.calls.length;
+          respond = (url) => {
+            const cursor = url.searchParams.get("endless");
+            const next = Number(cursor) + 1;
+            return page(cursor === null ? [third] : [], `?endless=${next}`);
+          };
+          const accepted = { accepted: 1, rejected: 0, rejectedByCode: {} };
+          const limited = await run([command], 3);
+          assert.equal(limited.code, "page_limit");
+          assert.deepEqual(limited.nextStep, { kind: "retry" });
+          assert.deepEqual(limited.counts, accepted);
+          assert.equal(feed.calls.length - offset, 1_000);
+          const pending = await run(["status"]);
+          assert.equal(pending.refreshedAt, before.refreshedAt);
+          assert.deepEqual(pending.lastRun, before.lastRun);
+          if (command === "scan") {
+            assert.equal(limited.pagesRead, 1_000);
+            assert.equal(limited.listingsRemoved, 0);
+            assert.equal(pending.scanInProgress, true);
+          } else {
+            assert.equal(pending.incrementalInProgress, true);
+          }
+
+          respond = () => page([]);
+          const resumed = await run([command]);
+          assert.equal(resumed.code, "complete");
+          assert.deepEqual(resumed.counts, accepted);
+          assert.deepEqual(
+            feed.calls.slice(offset + 1_000).map(({ query }) => query),
+            ["?endless=1000"],
+          );
+        }
+      },
+    );
+
+    await t.test(
       "usage and invalid settings fail without stdout or feed requests",
       async () => {
         const offset = feed.calls.length;

@@ -2,6 +2,8 @@ import { z } from "zod";
 import { listingPageLimit } from "../db/listings.ts";
 import type { ListingChange } from "../db/listings.ts";
 
+const maxResponseBytes = 8 * 1024 * 1024;
+
 const pageSchema = z.object({
   value: z.array(z.unknown()).max(listingPageLimit),
   "@odata.nextLink": z
@@ -54,6 +56,7 @@ type FetchFailure =
   | "fetch_timeout"
   | "http_error"
   | "invalid_page"
+  | "page_too_large"
   | "continuation_rejected";
 
 type PageResult =
@@ -65,6 +68,44 @@ function retryAfterSeconds(response: Response) {
   const header = response.headers.get("Retry-After");
   if (header !== null && /^\d+$/.test(header)) {
     return Math.min(86_400, Math.max(1, Number(header)));
+  }
+}
+
+async function readPageText(response: Response) {
+  const length = response.headers.get("Content-Length");
+  if (
+    length !== null &&
+    /^\d+$/.test(length) &&
+    Number(length) > maxResponseBytes
+  ) {
+    void response.body?.cancel().catch(() => {});
+    return;
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  let buffer = new Uint8Array(0);
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return new TextDecoder().decode(buffer.subarray(0, size));
+      const nextSize = size + value.byteLength;
+      if (nextSize > maxResponseBytes) {
+        void reader.cancel().catch(() => {});
+        return;
+      }
+      if (nextSize > buffer.byteLength) {
+        const capacity = Math.max(nextSize, buffer.byteLength * 2);
+        const expanded = new Uint8Array(Math.min(capacity, maxResponseBytes));
+        expanded.set(buffer);
+        buffer = expanded;
+      }
+      buffer.set(value, size);
+      size = nextSize;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -153,7 +194,9 @@ export class ResoConnector {
           afterSeconds: retryAfterSeconds(response),
         };
       }
-      const page = pageSchema.safeParse(await response.json());
+      const body = await readPageText(response);
+      if (body === undefined) return { code: "page_too_large", status };
+      const page = pageSchema.safeParse(JSON.parse(body));
       if (!page.success) return { code: "invalid_page", status };
       const link = page.data["@odata.nextLink"];
       const target = link ? continuation(this.base, link, url) : null;

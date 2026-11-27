@@ -19,6 +19,7 @@ import { listenOnLoopback } from "../api/loopback-server.ts";
 import {
   connectWriter,
   countWriterStatements,
+  feedToken,
   page,
   propertyPath,
   readOldestIngest,
@@ -1496,6 +1497,59 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         logs.map(({ mock }) => mock.calls),
         [[], [], []],
       );
+    },
+  );
+
+  await t.test(
+    "oversized pages stop at the header or the first chunk over the limit",
+    async (t) => {
+      const state = await setup(t, "oversized");
+      const checkpoint = await state.checkpoint();
+      const freshness = await state.freshness();
+      const connector = new ResoConnector(
+        "https://feed.example.invalid/Property",
+        feedToken,
+      );
+      const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+      let response: Response;
+      t.mock.method(globalThis, "fetch", async () => response);
+      for (const declaredChunks of [12, null, 1]) {
+        let reads = 0;
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              reads++;
+              // Leave invalid JSON at EOF if the connector reads this far.
+              if (reads <= 12) controller.enqueue(chunk);
+              else controller.close();
+            },
+            cancel() {
+              cancelled = true;
+            },
+          },
+          { highWaterMark: 0 },
+        );
+        const headers = new Headers();
+        if (declaredChunks !== null)
+          headers.set("Content-Length", String(declaredChunks * chunk.length));
+        response = new Response(body, { headers });
+
+        assertRun(await state.run({ connector }), {
+          code: "page_too_large",
+          nextStep: stop,
+        });
+        assert.equal(reads, declaredChunks === 12 ? 0 : 9);
+        assert.ok(cancelled);
+        await assertOutcome(state, {
+          code: "page_too_large",
+          status: 200,
+          step: "stop",
+          version: 0,
+        });
+        assert.deepEqual(await state.checkpoint(), checkpoint);
+        assert.deepEqual(await state.freshness(), freshness);
+      }
     },
   );
 
