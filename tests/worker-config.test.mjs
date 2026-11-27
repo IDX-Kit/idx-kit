@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { parse } from "yaml";
 import {
   checkConfig,
   configs,
@@ -49,6 +53,7 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
         : []),
       ...(kind === "sync"
         ? [
+            { compatibility_flags: ["nodejs_compat"] },
             { routes: [] },
             { main: "src/runtime/worker.ts" },
             { workflows: [] },
@@ -79,6 +84,110 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
         JSON.stringify(patch),
       );
   }
+});
+
+test("hosted sync deploy checks settings and removes its temporary config", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "sync-deploy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const guide = await readFile(
+    new URL("../docs/feed-sync.md", import.meta.url),
+    "utf8",
+  );
+  const json = JSON.stringify(parse(guide.match(/```yaml\n([\s\S]+?)```/)[1]));
+  const id = "1234567890abcdef1234567890abcdef";
+  const secrets = [
+    "IDX_SYNC_FEED_TOKEN",
+    "LISTING_WRITER_DATABASE_PASSWORD",
+    "MIGRATION_DATABASE_URL",
+  ];
+  const marker = "synthetic_sync_deploy_credential";
+  const env = {
+    ...process.env,
+    SYNC_HYPERDRIVE_ID: id,
+    IDX_SYNC_FEED_JSON: json,
+  };
+  for (const name of secrets) env[name] = marker;
+  await writeFile(
+    join(directory, "npx"),
+    `#!/usr/bin/env node
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const [tool, action, flag, file] = process.argv.slice(2);
+assert.deepEqual([tool, action, flag], ["wrangler", "deploy", "--config"]);
+for (const name of ${JSON.stringify(secrets)}) assert.equal(process.env[name], undefined);
+console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf8")) }));
+`,
+    { mode: 0o700 },
+  );
+  function run(settings, intercept = true) {
+    const result = spawnSync(
+      "npm",
+      [
+        "run",
+        "--silent",
+        "sync:deploy",
+        "--",
+        "--dry-run",
+        "--outdir",
+        directory,
+      ],
+      {
+        env: {
+          ...env,
+          ...settings,
+          PATH: intercept ? `${directory}:${env.PATH}` : env.PATH,
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.ok(!(result.stdout + result.stderr).includes(marker));
+    return result;
+  }
+  function generated(settings = {}) {
+    const result = run(settings);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+  const schedule = "10 7 * * mon-fri";
+  const overrides = {
+    IDX_SYNC_PAGES_PER_RUN: "2",
+    IDX_SYNC_SCHEDULE: schedule,
+    IDX_SYNC_CPU_MS: "10",
+  };
+  const { file, config } = generated(overrides);
+  await assert.rejects(readFile(file), { code: "ENOENT" });
+  assert.deepEqual(config.hyperdrive, [
+    { binding: "LISTING_WRITER_HYPERDRIVE", id },
+  ]);
+  assert.deepEqual(config.vars, {
+    IDX_SYNC_FEED_JSON: json,
+    IDX_SYNC_PAGES_PER_RUN: "2",
+  });
+  assert.deepEqual(config.triggers, { crons: [schedule] });
+  assert.deepEqual(config.limits, { cpu_ms: 10 });
+  assert.deepEqual(generated().config.triggers, { crons: ["*/30 * * * *"] });
+  assert.deepEqual(generated({ IDX_SYNC_SCHEDULE: "off" }).config.triggers, {
+    crons: [],
+  });
+  for (const [name, value] of [
+    ["SYNC_HYPERDRIVE_ID", ""],
+    ["SYNC_HYPERDRIVE_ID", "0".repeat(32)],
+    ["IDX_SYNC_FEED_JSON", ""],
+    ["IDX_SYNC_FEED_JSON", "{"],
+    ["IDX_SYNC_PAGES_PER_RUN", "21"],
+    ["IDX_SYNC_SCHEDULE", "0 25 * * *"],
+    ["IDX_SYNC_SCHEDULE", "* * * * *\n* * * * *"],
+    ["IDX_SYNC_CPU_MS", "9"],
+    ["IDX_SYNC_CPU_MS", "300001"],
+    ["IDX_SYNC_CPU_MS", "10.5"],
+  ]) {
+    const result = run({ [name]: value });
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.ok(result.stderr.includes(name));
+  }
+  const dryRun = run(overrides, false);
+  assert.equal(dryRun.status, 0, dryRun.stdout + dryRun.stderr);
 });
 
 test("the self-hosting guide stores all Worker email settings as secrets", async () => {

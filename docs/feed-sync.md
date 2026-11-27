@@ -142,6 +142,8 @@ Run repair scans with the Node command.
    reads the latest saved position and outcome. Replace the placeholder ID for
    `LISTING_WRITER_HYPERDRIVE` in your copy of
    [the sync config](../packages/engine/wrangler.sync.jsonc).
+   The `global_fetch_strictly_public` flag lets sync reach a feed served at a
+   public URL by another Worker on the same account.
    [Hyperdrive setup](https://developers.cloudflare.com/hyperdrive/get-started/#manage-caching)
 2. Add `IDX_SYNC_FEED_JSON` under `vars` in your protected Wrangler config.
    Set it to a string containing the JSON equivalent of the YAML above,
@@ -155,6 +157,36 @@ Run repair scans with the Node command.
    npx wrangler deploy --config packages/engine/wrangler.sync.jsonc \
      --secrets-file /path/to/protected/worker-secrets.json
    ```
+
+### Prepare and deploy from Workers Builds
+
+Connect `idx-kit-sync` to the repository. Use the repository root, the pinned
+Node version and the default dependency installation. Set the production branch
+to `main` and turn off non-production branch builds before adding secrets.
+Set the build command to `npm run sync:prepare` and the deploy command to
+`npm run sync:deploy`.
+
+| Setting | Where it belongs | Value |
+| --- | --- | --- |
+| `MIGRATION_DATABASE_URL` | Build secret | Direct PostgreSQL connection for the schema owner, with the required TLS settings. The owner must be able to create roles and manage `idx_listing_writer`. |
+| `LISTING_WRITER_DATABASE_PASSWORD` | Build secret | Random password of at least 32 characters. Use the same password in Hyperdrive. |
+| `IDX_SYNC_FEED_JSON` | Build variable | JSON equivalent of the YAML above. Use a feed URL without credentials. |
+| `SYNC_HYPERDRIVE_ID` | Build variable | ID of the writer's Hyperdrive configuration. |
+| `IDX_SYNC_PAGES_PER_RUN` | Optional build variable | Whole number from 1 to 20. Defaults to 10. |
+| `IDX_SYNC_SCHEDULE` | Optional build variable | One [Cron Trigger expression](https://developers.cloudflare.com/workers/configuration/cron-triggers/#supported-cron-expressions) in UTC, or `off`. Defaults to `*/30 * * * *`. |
+| `IDX_SYNC_CPU_MS` | Optional build variable | Whole number from 10 to 300000. Use a limit supported by your plan. |
+| `IDX_SYNC_FEED_TOKEN` | Worker runtime secret | Feed bearer token. Add it as a **Secret** under the Worker's Variables and Secrets settings, outside the build. |
+
+For the first build, leave `SYNC_HYPERDRIVE_ID` unset. Preparation migrates the
+database, sets up the writer login and registers a new feed expired with a
+one-hour freshness window. A repeat build preserves saved feed state. The
+deploy step stops at the missing ID. Use the printed host, port and database,
+the direct connection's TLS settings, the user `idx_listing_writer` and its
+password to create the writer's pooled connection in Hyperdrive. Turn query
+caching off. Set `SYNC_HYPERDRIVE_ID`, add the Worker runtime secret, and retry
+the build. Authorize each site that can display the feed as described above.
+
+### Monitor and pause sync
 
 Open `idx-kit-listing-sync` in the Cloudflare Workflows dashboard to see
 instances, step attempts and the run's result. Each successful run returns a code,

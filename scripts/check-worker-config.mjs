@@ -26,6 +26,7 @@ export function checkConfig(
   source = true,
   hyperdriveId = "00000000000000000000000000000000",
 ) {
+  const hostedSync = kind === "sync" && !source;
   const allowed = [
     "name",
     "compatibility_date",
@@ -37,11 +38,12 @@ export function checkConfig(
     ...(["engine", "sync"].includes(kind) ? ["hyperdrive"] : []),
     ...(kind === "engine" ? ["placement"] : []),
     ...(kind === "sync" ? ["triggers", "workflows"] : []),
+    ...(hostedSync ? ["vars", "limits"] : []),
   ];
-  if (source)
+  if (source || hostedSync)
     assert.ok(
       Object.keys(config).every((key) => allowed.includes(key)),
-      "Only approved config fields; no account, secrets, vars or overrides",
+      "Only approved config fields",
     );
   assert.equal(
     config.name,
@@ -50,18 +52,33 @@ export function checkConfig(
       : `idx-kit-demo-${kind}`,
   );
   assert.equal(config.compatibility_date, "2026-11-06");
-  assert.deepEqual(config.compatibility_flags, ["nodejs_compat"]);
+  assert.deepEqual(config.compatibility_flags, [
+    "nodejs_compat",
+    ...(kind === "sync" ? ["global_fetch_strictly_public"] : []),
+  ]);
   assert.equal(config.workers_dev, false);
   assert.equal(config.preview_urls, false);
   assert.ok(!("account_id" in config));
   assert.ok(!("route" in config));
-  assert.ok(!config.vars || Object.keys(config.vars).length === 0);
+  if (hostedSync) {
+    assert.ok(
+      typeof config.vars?.IDX_SYNC_FEED_JSON === "string" &&
+        Object.keys(config.vars).every((name) =>
+          ["IDX_SYNC_FEED_JSON", "IDX_SYNC_PAGES_PER_RUN"].includes(name),
+        ),
+      "Only approved sync vars",
+    );
+    if (config.limits)
+      assert.deepEqual(Object.keys(config.limits), ["cpu_ms"]);
+  } else {
+    assert.ok(!config.vars || Object.keys(config.vars).length === 0);
+  }
   assert.ok(!config.env || Object.keys(config.env).length === 0);
   const observability = kind !== "stand-in-feed";
   assert.equal(config.observability?.enabled, observability);
   if (observability)
     assert.notEqual(config.observability?.logs?.enabled, false);
-  if (source)
+  if (source || hostedSync)
     assert.deepEqual(config.observability, { enabled: observability });
   if (kind === "engine") {
     assert.ok(!("routes" in config));
@@ -71,8 +88,19 @@ export function checkConfig(
     assert.deepEqual(config.placement, { region: "aws:us-east-1" });
   } else if (kind === "sync") {
     assert.ok(!("routes" in config));
-    assert.equal(config.main, "src/runtime/sync-worker.ts");
-    assert.deepEqual(config.triggers, { crons: ["*/30 * * * *"] });
+    const main = "src/runtime/sync-worker.ts";
+    assert.equal(
+      config.main,
+      hostedSync ? resolve("packages/engine", main) : main,
+    );
+    if (hostedSync) {
+      assert.deepEqual(Object.keys(config.triggers), ["crons"]);
+      const crons = config.triggers.crons;
+      assert.ok(Array.isArray(crons) && crons.length <= 1);
+      assert.ok(crons.every((cron) => typeof cron === "string"));
+    } else {
+      assert.deepEqual(config.triggers, { crons: ["*/30 * * * *"] });
+    }
     assert.deepEqual(config.workflows, [
       {
         binding: "LISTING_SYNC",
