@@ -416,6 +416,32 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   });
 
   await t.test(
+    "status withdrawals apply even when absence withdrawals exceed the limit",
+    async (t) => {
+      const state = await setup(t, "status");
+      const feed = await standIn(t, () =>
+        page([
+          { ...record("first", 2), StandardStatus: "Withdrawn" },
+          { ...record("second", 2), StandardStatus: "Unrecognized" },
+        ]),
+      );
+      assert.deepEqual(await state.scan(feed, 0), {
+        code: "removal_limit_exceeded",
+        nextStep: { kind: "stop" },
+        pagesRead: 1,
+        recordsSeen: 2,
+        listingsRemoved: 0,
+        wouldRemove: 1,
+        maxRemovals: 0,
+      });
+      assert.deepEqual(
+        (await state.listings()).map(({ facts }) => facts?.price ?? null),
+        [null, null, 100],
+      );
+    },
+  );
+
+  await t.test(
     "an empty scan keeps listings even when the limit permits removing them all",
     async (t) => {
       const state = await setup(t, "empty", [first]);

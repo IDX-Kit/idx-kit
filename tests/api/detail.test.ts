@@ -304,7 +304,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       };
 
       await t.test(
-        "each feed removal status hides the listing and a newer active revision restores Hold",
+        "off-market, empty, and missing feed statuses hide listings",
         async () => {
           const key = "Synthetic writer removal statuses";
           const statuses = [
@@ -317,14 +317,22 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             "Deleted",
             "Sold",
             "Hold",
+            "",
+            null,
+            undefined,
           ];
           for (const [index, status] of statuses.entries()) {
             const live = upsert(key, index * 2 + 1);
             const removed = upsert(key, index * 2 + 2);
-            removed.listing.source.StandardStatus = status;
+            if (status === undefined) {
+              Reflect.deleteProperty(removed.listing.source, "StandardStatus");
+            } else {
+              removed.listing.source.StandardStatus = status;
+            }
             await write([live]);
             const id = await identity(primary, key);
             assert.equal((await publicDetail(id)).body.data.status, "active");
+            assert.equal((await searchItem(id)).status, "active");
             assert.deepEqual((await write([removed])).rejected, []);
             await absent(id);
             if (status === "Hold") {
@@ -339,7 +347,26 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         },
       );
 
-      await t.test("fixtures show Closed and remove Delete", async () => {
+      await t.test("all four on-market statuses stay visible", async () => {
+        const key = "Synthetic writer on-market statuses";
+        const statuses = [
+          "Active",
+          "Active Under Contract",
+          "Coming Soon",
+          "Pending",
+        ];
+        for (const [index, status] of statuses.entries()) {
+          const change = upsert(key, index + 1);
+          change.listing.source.StandardStatus = status;
+          assert.deepEqual((await write([change])).rejected, []);
+          const id = await identity(primary, key);
+          const expected = status.toLowerCase();
+          assert.equal((await publicDetail(id)).body.data.status, expected);
+          assert.equal((await searchItem(id)).status, expected);
+        }
+      });
+
+      await t.test("fixtures retain their own status rules", async () => {
         const record = structuredClone(fixtures.listings[0]);
         record.publicId = "lst_writer_fixture_delete";
         record.source.ListingKey = "Synthetic writer fixture delete";
@@ -349,6 +376,16 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(
           (await publicDetail(record.publicId)).body.data.status,
           "closed",
+        );
+        record.source.StandardStatus = "Unrecognized";
+        await seed(db, batch);
+        assert.equal(
+          (await publicDetail(record.publicId)).body.data.status,
+          "Unrecognized",
+        );
+        assert.equal(
+          (await searchItem(record.publicId)).status,
+          "Unrecognized",
         );
         record.source.StandardStatus = "Delete";
         await seed(db, batch);

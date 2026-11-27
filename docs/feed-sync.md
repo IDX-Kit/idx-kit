@@ -82,6 +82,10 @@ disclosures:
 
 ## Run and check the feed
 
+Feed listings are eligible for display only with a status of Active, Active
+Under Contract, Coming Soon, or Pending. Any other status, including an empty
+or missing status, withdraws the listing when the record is processed.
+
 `npm run --silent sync -- incremental` reads from the saved position and
 renews the freshness window when it completes.
 

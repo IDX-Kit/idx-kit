@@ -38,17 +38,6 @@ const shownStatuses = new Set([
   "coming soon",
   "pending",
 ]);
-const removalStatuses = new Set([
-  "canceled",
-  "closed",
-  "delete",
-  "deleted",
-  "expired",
-  "hold",
-  "incomplete",
-  "sold",
-  "withdrawn",
-]);
 
 export function listingStatus(value: Listing["status"], fixture: boolean) {
   const status = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -59,10 +48,8 @@ export function listingStatus(value: Listing["status"], fixture: boolean) {
         status === "withdrawn" || status === "delete" || status === "deleted",
     };
   }
-  return {
-    status: shownStatuses.has(status) ? status : null,
-    removed: removalStatuses.has(status),
-  };
+  const shown = shownStatuses.has(status);
+  return { status: shown ? status : null, removed: !shown };
 }
 
 const photoLimit = 128;
