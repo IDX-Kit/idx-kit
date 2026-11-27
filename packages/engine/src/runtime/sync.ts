@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import pg from "pg";
 import { z } from "zod";
 import { ResoConnector } from "../connectors/reso.ts";
-import { readFeedState } from "../db/feed-sync-outcomes.ts";
+import { emptyCounts, readFeedState } from "../db/feed-sync-outcomes.ts";
 import { syncFullScan } from "../sync/full-scan.ts";
 import { syncIncrementally } from "../sync/incremental.ts";
 import { readSyncSettings } from "./sync-settings.ts";
@@ -39,7 +39,7 @@ function print(output: object) {
 }
 
 function failRun(feedId: string, code: string, message: string) {
-  print({ feedId, code });
+  print({ feedId, code, counts: emptyCounts });
   return fail(1, message);
 }
 
@@ -90,6 +90,7 @@ async function run() {
         feedId,
         code: "waiting",
         secondsLeft: state.waitingSeconds,
+        counts: emptyCounts,
       });
       return 3;
     }
@@ -126,6 +127,8 @@ async function run() {
       feedId,
       code: result.code,
       nextStep,
+      counts: result.counts,
+      ...("message" in result && { message: result.message }),
       ...("outcomeSaved" in result &&
         result.outcomeSaved === false && { outcomeSaved: false }),
       ...("pagesRead" in result && {

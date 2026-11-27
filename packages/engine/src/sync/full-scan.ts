@@ -3,8 +3,10 @@ import { z } from "zod";
 import {
   readScanCheckpoint,
   saveScanCheckpoint,
+  saveScanReport,
 } from "../db/feed-scan-positions.ts";
-import type { FeedNextStep } from "../db/feed-sync-outcomes.ts";
+import { allRejectedMessage, emptyCounts } from "../db/feed-sync-outcomes.ts";
+import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
 import { FeedPositionChanged } from "../db/feed-sync-positions.ts";
 import { applyListingPage, listingFeedTransaction } from "../db/listings.ts";
 import { listingChangesFor, nextStepFor, readFeedPages } from "./pages.ts";
@@ -16,11 +18,7 @@ type ScanFeed = SyncFeed &
     | { removeMissing: true; maxRemovals: number }
   );
 
-type ScanResult = {
-  pagesRead: number;
-  recordsSeen: number;
-  listingsRemoved: number;
-} & (
+type ScanOutcome =
   | { code: "complete" | "position_changed"; nextStep: { kind: "none" } }
   | { code: StoppedRun["code"]; nextStep: FeedNextStep }
   | { code: "invalid_removal_limit"; nextStep: { kind: "stop" } }
@@ -40,8 +38,16 @@ type ScanResult = {
       nextStep: { kind: "stop" };
       wouldRemove: number;
       maxRemovals: number;
-    }
-);
+    };
+
+type ScanResult = ScanOutcome & {
+  pagesRead: number;
+  recordsSeen: number;
+  listingsRemoved: number;
+  counts: RecordCounts;
+  message?: string;
+  outcomeSaved?: false;
+};
 
 const removalLimit = z.int().nonnegative();
 
@@ -52,13 +58,32 @@ export async function syncFullScan(
 ): Promise<ScanResult> {
   const { feedId, connector, disclosures } = feed;
   const maxRemovals = feed.removeMissing ? feed.maxRemovals : undefined;
-  const counts = { pagesRead: 0, recordsSeen: 0, listingsRemoved: 0 };
+  const progress = { pagesRead: 0, recordsSeen: 0, listingsRemoved: 0 };
+  let counts = emptyCounts;
+  let version: bigint | undefined;
+  async function finish(outcome: ScanOutcome, traversed = false): Promise<ScanResult> {
+    const result = {
+      ...progress,
+      ...outcome,
+      counts,
+      ...(traversed && counts.accepted === 0 && counts.rejected > 0 && {
+        message: allRejectedMessage,
+      }),
+    };
+    if (version === undefined || outcome.code === "position_changed") return result;
+    try {
+      await saveScanReport(client, feedId, version, counts);
+    } catch {
+      return { ...result, outcomeSaved: false };
+    }
+    return result;
+  }
+
   if (feed.removeMissing && !removalLimit.safeParse(maxRemovals).success) {
-    return {
-      ...counts,
+    return finish({
       code: "invalid_removal_limit",
       nextStep: { kind: "stop" },
-    };
+    });
   }
 
   try {
@@ -68,11 +93,14 @@ export async function syncFullScan(
       checkpoint.active = true;
       checkpoint.recordsSeen = 0;
       checkpoint.unreadableRecords = 0;
+      checkpoint.counts = emptyCounts;
       await listingFeedTransaction(client, feedId, () =>
         saveScanCheckpoint(client, feedId, checkpoint),
       );
       checkpoint.version += 1n;
     }
+    counts = checkpoint.counts ?? emptyCounts;
+    version = checkpoint.version;
     const mapChanges = listingChangesFor(feed);
     let wouldRemove = 0;
     const outcome = await readFeedPages(
@@ -80,11 +108,11 @@ export async function syncFullScan(
       null,
       checkpoint.nextLink,
       async ({ records, nextLink }) => {
-        counts.pagesRead += 1;
-        counts.recordsSeen += records.length;
+        progress.pagesRead += 1;
+        progress.recordsSeen += records.length;
         const changes = mapChanges(records);
         const next = { ...checkpoint, active: nextLink !== null, nextLink };
-        const { scanCheckpoint: saved, removal } = await applyListingPage(
+        const page = await applyListingPage(
           client,
           feedId,
           changes,
@@ -94,57 +122,56 @@ export async function syncFullScan(
             scan: { checkpoint: next, maxRemovals },
           },
         );
-        if (!saved) throw new Error("Missing saved scan checkpoint");
-        checkpoint = { ...saved, version: next.version + 1n };
-        if (removal) {
-          wouldRemove = removal.wouldRemove;
-          counts.listingsRemoved = removal.listingsRemoved;
+        if (!page.scanCheckpoint) throw new Error("Missing saved scan checkpoint");
+        checkpoint = { ...page.scanCheckpoint, version: next.version + 1n };
+        counts = page.counts;
+        version = checkpoint.version;
+        if (page.removal) {
+          wouldRemove = page.removal.wouldRemove;
+          progress.listingsRemoved = page.removal.listingsRemoved;
         }
       },
       async () => {
-        const ended = { ...checkpoint, active: false, nextLink: null };
+        const ended = { ...checkpoint, active: false, nextLink: null, counts: undefined };
         await listingFeedTransaction(client, feedId, () =>
           saveScanCheckpoint(client, feedId, ended),
         );
+        version = checkpoint.version + 1n;
       },
     );
     if (outcome.code !== "complete") {
-      return { ...counts, code: outcome.code, nextStep: nextStepFor(outcome) };
+      return finish({ code: outcome.code, nextStep: nextStepFor(outcome) });
     }
     if (checkpoint.recordsSeen === 0) {
-      return {
-        ...counts,
+      return finish({
         code: "empty_scan",
         nextStep: { kind: "stop" },
         ...(maxRemovals !== undefined && { wouldRemove, maxRemovals }),
-      };
+      });
     }
     if (checkpoint.unreadableRecords > 0) {
-      return {
-        ...counts,
+      return finish({
         code: "unreadable_keys",
         nextStep: { kind: "stop" },
         unreadableRecords: checkpoint.unreadableRecords,
-      };
+      }, true);
     }
     if (maxRemovals !== undefined && wouldRemove > maxRemovals) {
-      return {
-        ...counts,
+      return finish({
         code: "removal_limit_exceeded",
         nextStep: { kind: "stop" },
         wouldRemove,
         maxRemovals,
-      };
+      }, true);
     }
-    return { ...counts, code: "complete", nextStep: { kind: "none" } };
+    return finish({ code: "complete", nextStep: { kind: "none" } }, true);
   } catch (error) {
     if (error instanceof FeedPositionChanged) {
-      return {
-        ...counts,
+      return finish({
         code: "position_changed",
         nextStep: { kind: "none" },
-      };
+      });
     }
-    return { ...counts, code: "write_failed", nextStep: { kind: "retry" } };
+    return finish({ code: "write_failed", nextStep: { kind: "retry" } });
   }
 }

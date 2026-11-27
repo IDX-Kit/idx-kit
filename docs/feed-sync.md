@@ -92,18 +92,35 @@ accepted record. Unreadable identities and revisions more than five minutes
 ahead of the sync clock are rejected, and only eligible revisions move the
 saved mark forward. A future-dated removal hides a listing only if its page has
 no trusted record for the same listing. The stored revision stays in place.
-A traversal in progress during the upgrade restarts at its last completed mark.
+An upgrade to rejection reporting replays a partial poll with earlier records
+from its last completed mark and restarts an unfinished scan.
 
 ```json
-{"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"}}
+{"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
 ```
 
 `npm run --silent sync -- scan` repairs missed edits across the feed. It can
 apply explicit withdrawals and preserves listings that are merely absent.
+Incremental sync renews the feed freshness window.
 
 ```json
-{"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"pagesRead":3,"recordsSeen":24,"listingsRemoved":0}
+{"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"pagesRead":3,"recordsSeen":24,"listingsRemoved":0,"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
 ```
+
+The `counts` cover all saved pages in the traversal, including pages from
+earlier calls. Accepted records include explicit withdrawals and valid
+records already up to date. Each rejected record contributes to one code.
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_key` | The listing key is missing, unreadable, or too large. |
+| `invalid_change` | The revision, listing facts, or disclosures failed validation. |
+| `future_revision` | An incremental record's revision is more than five minutes ahead of the sync clock. |
+
+When every record is rejected, the result explains that freshness stayed
+unchanged. Start with the reported codes. For `invalid_change`, check the
+Property resource's field names and types, including the decimal-string
+price and the address field. For `future_revision`, check both clocks.
 
 Enable removal by absence only when you know the feed's full list is complete.
 Run `npm run --silent sync -- scan --remove-missing --max-removals N` with both
@@ -114,9 +131,12 @@ exceeds the limit, the run removes none of them and reports `wouldRemove` and
 `npm run --silent sync -- status` reads saved state without calling the feed.
 Before the first run, the dates reflect initial provisioning. Missing marks,
 scan numbers, counts, and outcomes are `null`. A scan number is a decimal string.
+`lastRun` shows the counts from the most recent reported incremental or scan
+attempt. A pause at the page limit leaves this report in place until a later
+attempt finishes. `lastOutcome` tracks incremental retry and stop state.
 
 ```json
-{"feedId":"feed_example","refreshedAt":"2026-11-03T15:00:00+00:00","expiresAt":"2026-11-03T16:00:00+00:00","completedMark":"2026-11-03T14:59:00.000001Z","incrementalInProgress":false,"scanNumber":"1","scanInProgress":false,"recordsSeen":24,"unreadableRecords":0,"lastOutcome":{"code":"complete","httpStatus":null,"nextStep":null,"retrySeconds":null,"savedAt":"2026-11-03T15:00:00+00:00"}}
+{"feedId":"feed_example","refreshedAt":"2026-11-03T15:00:00+00:00","expiresAt":"2026-11-03T16:00:00+00:00","completedMark":"2026-11-03T14:59:00.000001Z","incrementalInProgress":false,"scanNumber":"1","scanInProgress":false,"recordsSeen":24,"unreadableRecords":0,"lastOutcome":{"code":"complete","httpStatus":null,"nextStep":null,"retrySeconds":null,"savedAt":"2026-11-03T15:00:00+00:00"},"lastRun":{"kind":"scan","finishedAt":"2026-11-03T15:10:00+00:00","counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}}
 ```
 
 | Exit | Meaning |
@@ -204,7 +224,8 @@ the build. Authorize each site that can display the feed as described above.
 
 Open `idx-kit-listing-sync` in the Cloudflare Workflows dashboard to see
 instances, step attempts and the run's result. Each successful run returns a code,
-the next step and the number of pages applied. `waiting` means the saved
+the next step, the number of pages applied, and the traversal counts. Each
+page step includes the counts in its result and log line. `waiting` means the saved
 retry delay has yet to elapse. For `stopped`, check the prior run and fix
 the cause, then start one fresh instance by hand. This clears the saved hold
 before reading the next page. The Node `status` command shows `resumed` as the
@@ -227,7 +248,8 @@ Cloudflare says adding, changing or removing a Cron Trigger can take up to
 
 For a first load, start the feed expired. Each schedule can apply up to
 pages per run times page size listings if the feed honors the requested page
-size. The last page renews freshness and makes the feed available in the API.
+size. The last page of an empty traversal or a traversal with accepted records
+renews freshness and makes the feed available in the API.
 A temporarily more frequent schedule can speed up the initial load.
 
 ### Measured processor time on Workers

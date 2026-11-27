@@ -1,5 +1,9 @@
 import type pg from "pg";
-import { saveFeedOutcome } from "../db/feed-sync-outcomes.ts";
+import {
+  allRejectedMessage,
+  emptyCounts,
+  saveFeedOutcome,
+} from "../db/feed-sync-outcomes.ts";
 import type { FeedNextStep } from "../db/feed-sync-outcomes.ts";
 import {
   FeedPositionChanged,
@@ -25,25 +29,28 @@ export async function syncIncrementally(
   }
   const { feedId, disclosures, connector } = feed;
   let checkpoint: FeedCheckpoint | undefined;
+  let counts = emptyCounts;
   let outcome: Awaited<ReturnType<typeof readFeedPages>>;
   try {
     const current = await readFeedCheckpoint(client, feedId);
     checkpoint = current;
+    counts = current.position.counts ?? emptyCounts;
     const mapChanges = listingChangesFor(feed);
     outcome = await readFeedPages(
       connector,
       current.position.completedMark,
       current.position.nextLink,
       async ({ records, nextLink }) => {
-        const { savedPosition } = await applyListingPage(
+        const page = await applyListingPage(
           client,
           feedId,
           mapChanges(records),
           disclosures,
           { incremental: { checkpoint: current, nextLink } },
         );
-        if (!savedPosition) throw new Error("Missing saved feed position");
-        current.position = savedPosition;
+        if (!page.savedPosition) throw new Error("Missing saved feed position");
+        counts = page.counts;
+        current.position = page.savedPosition;
         current.version += 1n;
       },
       async () => {
@@ -52,6 +59,7 @@ export async function syncIncrementally(
           nextLink: null,
           pendingMark: null,
           recordState: "empty" as const,
+          counts: undefined,
         };
         await listingFeedTransaction(client, feedId, () =>
           saveFeedCheckpoint(client, feedId, { ...current, position }),
@@ -62,18 +70,24 @@ export async function syncIncrementally(
     );
   } catch (error) {
     if (error instanceof FeedPositionChanged) {
-      return { code: "position_changed", nextStep: { kind: "none" } } as const;
+      return { code: "position_changed", nextStep: { kind: "none" }, counts } as const;
     }
     outcome = { code: "write_failed" };
   }
   if (outcome.code === "page_limit") {
     const nextStep: FeedNextStep = { kind: "retry" };
-    return { code: "page_limit", nextStep } as const;
+    return { code: "page_limit", nextStep, counts } as const;
   }
   const result =
     outcome.code === "complete"
-      ? ({ code: "complete" } as const)
-      : { code: outcome.code, nextStep: nextStepFor(outcome) };
+      ? ({
+          code: "complete",
+          counts,
+          ...(counts.accepted === 0 && counts.rejected > 0 && {
+            message: allRejectedMessage,
+          }),
+        } as const)
+      : { code: outcome.code, nextStep: nextStepFor(outcome), counts };
   if (!checkpoint) return { ...result, outcomeSaved: false } as const;
   try {
     const nextStep = result.code === "complete" ? null : result.nextStep;
@@ -83,6 +97,7 @@ export async function syncIncrementally(
       checkpoint.version,
       outcome,
       nextStep,
+      counts,
     );
   } catch {
     return { ...result, outcomeSaved: false } as const;

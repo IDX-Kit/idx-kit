@@ -1,4 +1,5 @@
 import type pg from "pg";
+import type { RecordCounts } from "./feed-sync-outcomes.ts";
 import { FeedPositionChanged } from "./feed-sync-positions.ts";
 
 export interface ScanCheckpoint {
@@ -8,6 +9,7 @@ export interface ScanCheckpoint {
   nextLink: string | null;
   recordsSeen: number;
   unreadableRecords: number;
+  counts?: RecordCounts;
 }
 
 export async function readScanCheckpoint(
@@ -21,6 +23,7 @@ export async function readScanCheckpoint(
     next_link: string | null;
     records_seen: string;
     unreadable_records: string;
+    record_counts: RecordCounts | null;
   }>("SELECT * FROM idx.feed_scan_positions WHERE feed_id = $1", [feedId]);
   const row = rows[0];
   return {
@@ -30,6 +33,7 @@ export async function readScanCheckpoint(
     nextLink: row?.next_link ?? null,
     recordsSeen: row ? Number(row.records_seen) : 0,
     unreadableRecords: row ? Number(row.unreadable_records) : 0,
+    ...(row?.record_counts && { counts: row.record_counts }),
   };
 }
 
@@ -46,16 +50,17 @@ export async function saveScanCheckpoint(
     nextLink,
     recordsSeen,
     unreadableRecords,
+    counts,
   } = checkpoint;
   const sql =
     version === 0n
       ? `INSERT INTO idx.feed_scan_positions
-          (feed_id, version, scan_number, active, next_link, records_seen, unreadable_records)
-        VALUES ($1, $2::bigint + 1, $3, $4, $5, $6, $7)
+          (feed_id, version, scan_number, active, next_link, records_seen, unreadable_records, record_counts)
+        VALUES ($1, $2::bigint + 1, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (feed_id) DO NOTHING`
       : `UPDATE idx.feed_scan_positions SET version = version + 1,
           scan_number = $3, active = $4, next_link = $5,
-          records_seen = $6, unreadable_records = $7
+          records_seen = $6, unreadable_records = $7, record_counts = $8
         WHERE feed_id = $1 AND version = $2`;
   const result = await client.query(sql, [
     feedId,
@@ -65,8 +70,23 @@ export async function saveScanCheckpoint(
     nextLink,
     recordsSeen,
     unreadableRecords,
+    counts ?? null,
   ]);
   if (!result.rowCount) throw new FeedPositionChanged();
+}
+
+export async function saveScanReport(
+  client: pg.Client,
+  feedId: string,
+  version: bigint,
+  counts: RecordCounts,
+) {
+  await client.query(
+    `UPDATE idx.feed_scan_positions SET last_report =
+      jsonb_build_object('kind', 'scan', 'finishedAt', statement_timestamp(), 'counts', $3::jsonb)
+    WHERE feed_id = $1 AND version = $2`,
+    [feedId, version.toString(), counts],
+  );
 }
 
 export async function stampScanKeys(

@@ -3,6 +3,23 @@ import type pg from "pg";
 export type FeedNextStep =
   { kind: "retry"; afterSeconds?: number } | { kind: "stop" };
 
+export type RejectionCode = "invalid_key" | "invalid_change" | "future_revision";
+
+export interface RecordCounts {
+  accepted: number;
+  rejected: number;
+  rejectedByCode: Partial<Record<RejectionCode, number>>;
+}
+
+export const emptyCounts: RecordCounts = {
+  accepted: 0,
+  rejected: 0,
+  rejectedByCode: {},
+};
+
+export const allRejectedMessage =
+  "Feed freshness stayed unchanged because no feed record could be used. Check the rejection codes.";
+
 export async function readFeedState(client: pg.Client, feedId: string) {
   const { rows } = await client.query<{
     status: { lastOutcome: { nextStep: "retry" | "stop" | null } | null };
@@ -17,7 +34,11 @@ export async function readFeedState(client: pg.Client, feedId: string) {
       'lastOutcome', CASE WHEN o.feed_id IS NOT NULL THEN jsonb_build_object(
         'code', o.code, 'httpStatus', o.http_status, 'nextStep', o.next_step,
         'retrySeconds', o.retry_after_seconds, 'savedAt', o.saved_at
-      ) END
+      ) END,
+      'lastRun', CASE
+        WHEN s.last_report IS NULL OR
+          (o.last_report->>'finishedAt')::timestamptz >= (s.last_report->>'finishedAt')::timestamptz
+        THEN o.last_report ELSE s.last_report END
     ) AS status,
     CASE WHEN o.next_step = 'retry' AND o.retry_after_seconds IS NOT NULL THEN
       GREATEST(0, CEIL(o.retry_after_seconds + EXTRACT(EPOCH FROM (o.saved_at - statement_timestamp()))))::integer
@@ -38,6 +59,7 @@ export async function saveFeedOutcome(
   version: bigint,
   { code, status }: { code: string; status?: number },
   nextStep: FeedNextStep | null,
+  counts?: RecordCounts,
 ) {
   const step = nextStep?.kind ?? null;
   const seconds =
@@ -45,13 +67,15 @@ export async function saveFeedOutcome(
   // A completion produced its version, so any stop at that version came later.
   await client.query(
     `INSERT INTO idx.feed_sync_outcomes AS outcomes
-      (feed_id, position_version, code, http_status, next_step, retry_after_seconds, saved_at)
-    VALUES ($1, $2, $3, $4, $5, $6, statement_timestamp())
+      (feed_id, position_version, code, http_status, next_step, retry_after_seconds, saved_at, last_report)
+    VALUES ($1, $2, $3, $4, $5, $6, statement_timestamp(), CASE WHEN $7::jsonb IS NOT NULL THEN
+      jsonb_build_object('kind', 'incremental', 'finishedAt', statement_timestamp(), 'counts', $7::jsonb) END)
     ON CONFLICT (feed_id) DO UPDATE SET position_version = EXCLUDED.position_version,
       code = EXCLUDED.code, http_status = EXCLUDED.http_status, next_step = EXCLUDED.next_step,
-      retry_after_seconds = EXCLUDED.retry_after_seconds, saved_at = EXCLUDED.saved_at
+      retry_after_seconds = EXCLUDED.retry_after_seconds, saved_at = EXCLUDED.saved_at,
+      last_report = COALESCE(EXCLUDED.last_report, outcomes.last_report)
     WHERE outcomes.position_version < EXCLUDED.position_version
        OR (outcomes.position_version = EXCLUDED.position_version AND EXCLUDED.code <> 'complete')`,
-    [feedId, version.toString(), code, status ?? null, step, seconds],
+    [feedId, version.toString(), code, status ?? null, step, seconds, counts ?? null],
   );
 }

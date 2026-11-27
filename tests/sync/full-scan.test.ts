@@ -21,6 +21,7 @@ import {
   standIn,
 } from "./feed.ts";
 
+const assertRun = assert.partialDeepStrictEqual;
 const none = { kind: "none" };
 const complete = { code: "complete", nextStep: none };
 const revision = (n: number) => `2026-11-03T00:00:00.00000${n}Z`;
@@ -93,7 +94,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       syncIncrementally(client, options(feed));
     const poll = async (records: unknown[], client = writer) => {
       const feed = await standIn(t, () => page(records));
-      assert.deepEqual(await incremental(feed, client), { code: "complete" });
+      assert.equal((await incremental(feed, client)).code, "complete");
     };
     await poll(initial);
     return {
@@ -197,13 +198,13 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
             )
           : page([third]);
       });
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 2,
         recordsSeen: 2,
         listingsRemoved: 1,
       });
-      assert.deepEqual([...offsets, statements()], [5, 12, 21]);
+      assert.deepEqual([...offsets, statements()], [5, 12, 22]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
@@ -232,6 +233,24 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
+    "an all-rejected scan reports invalid facts and leaves feed freshness alone",
+    async (t) => {
+      const state = await setup(t, "invalid_facts");
+      const before = await state.incrementalState();
+      const bad = { ...record("bad"), ListPrice: 100 };
+      const feed = await standIn(t, () => page([bad]));
+      const result = await state.scan(feed);
+      assert.deepEqual(result.counts, {
+        accepted: 0,
+        rejected: 1,
+        rejectedByCode: { invalid_change: 1 },
+      });
+      assert.match(result.message ?? "", /no feed record could be used/i);
+      assert.deepEqual(await state.incrementalState(), before);
+    },
+  );
+
+  await t.test(
     "a resumed scan can withdraw after a nonempty first page and an empty final page",
     async (t) => {
       const state = await setup(t, "resume", [first]);
@@ -244,7 +263,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         if (n === 2) return { status: 503, retryAfter: "120" };
         return page([]);
       });
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         code: "http_error",
         nextStep: { kind: "retry", afterSeconds: 120 },
         pagesRead: 1,
@@ -271,6 +290,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         pagesRead: 1,
         recordsSeen: 0,
         listingsRemoved: 1,
+        counts: { accepted: 2, rejected: 0, rejectedByCode: {} },
       });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
@@ -298,7 +318,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         if (n === 2) return { status: 410 };
         return page([second, third]);
       });
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         code: "continuation_rejected",
         nextStep: { kind: "retry" },
         pagesRead: 1,
@@ -309,7 +329,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(ended.active, false);
       assert.equal(ended.nextLink, null);
       assert.ok((await state.listings()).every(({ facts }) => facts !== null));
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
         recordsSeen: 2,
@@ -358,7 +378,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         pollState = await state.incrementalState();
         return page([withdrawn]);
       });
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 2,
         recordsSeen: 2,
@@ -386,7 +406,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     const before = await state.listings();
     const feed = await standIn(t, () => page([first]));
     for (const invalid of [-1, 1.5, Infinity]) {
-      assert.deepEqual(await state.scan(feed, invalid), {
+      assertRun(await state.scan(feed, invalid), {
         code: "invalid_removal_limit",
         nextStep: { kind: "stop" },
         pagesRead: 0,
@@ -396,7 +416,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     }
     assert.equal(feed.calls.length, 0);
     await state.clearOldestIngest();
-    assert.deepEqual(await state.scan(feed, 1), {
+    assertRun(await state.scan(feed, 1), {
       code: "removal_limit_exceeded",
       nextStep: { kind: "stop" },
       pagesRead: 1,
@@ -425,7 +445,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
           { ...record("second", 2), StandardStatus: "Unrecognized" },
         ]),
       );
-      assert.deepEqual(await state.scan(feed, 0), {
+      assertRun(await state.scan(feed, 0), {
         code: "removal_limit_exceeded",
         nextStep: { kind: "stop" },
         pagesRead: 1,
@@ -449,7 +469,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const feed = await standIn(t, () => page([]));
       for (const maxRemovals of [0, 1]) {
         await state.clearOldestIngest();
-        assert.deepEqual(await state.scan(feed, maxRemovals), {
+        assertRun(await state.scan(feed, maxRemovals), {
           code: "empty_scan",
           nextStep: { kind: "stop" },
           pagesRead: 1,
@@ -483,7 +503,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         ]),
       );
       await state.clearOldestIngest();
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         code: "unreadable_keys",
         nextStep: { kind: "stop" },
         pagesRead: 1,
@@ -514,7 +534,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         if (n === 2) return { status: 503 };
         return page([record("third", 2, "225.00"), second]);
       });
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         code: "http_error",
         nextStep: { kind: "retry" },
         pagesRead: 1,
@@ -522,7 +542,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         listingsRemoved: 0,
       });
       assert.equal((await state.checkpoint()).unreadableRecords, 2);
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         code: "unreadable_keys",
         nextStep: { kind: "stop" },
         pagesRead: 1,
@@ -534,7 +554,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.deepEqual(kept, before[0]);
       assert.equal(repaired.facts?.price, 225);
       assert.equal((await state.checkpoint()).active, false);
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
         recordsSeen: 2,
@@ -549,7 +569,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     async (t) => {
       const state = await setup(t, "keep");
       const feed = await standIn(t, () => page([record("first", 2, "225.00")]));
-      assert.deepEqual(await state.scan(feed), {
+      assertRun(await state.scan(feed), {
         ...complete,
         pagesRead: 1,
         recordsSeen: 1,
@@ -578,7 +598,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(hidden.facts, null);
       assert.equal(hidden.revision, "infinity");
       const feed = await standIn(t, () => page([first]));
-      assert.deepEqual(await state.scan(feed, 0), {
+      assertRun(await state.scan(feed, 0), {
         ...complete,
         pagesRead: 1,
         recordsSeen: 1,
@@ -602,7 +622,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       let winningListings:
         Awaited<ReturnType<typeof state.listings>> | undefined;
       const loser = await standIn(t, async () => {
-        assert.deepEqual(await state.scan(winner, 1, peer), {
+        assertRun(await state.scan(winner, 1, peer), {
           ...complete,
           pagesRead: 1,
           recordsSeen: 2,
@@ -612,7 +632,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         winningListings = await state.listings();
         return page([record("loser", 2), record("first", 2)]);
       });
-      assert.deepEqual(await state.scan(loser, 1), {
+      assertRun(await state.scan(loser, 1), {
         code: "position_changed",
         nextStep: none,
         pagesRead: 1,
@@ -631,7 +651,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const state = await setup(t, "restore", [first, second]);
       const [before] = await state.listings();
       const feed = await standIn(t, () => page([second]));
-      assert.deepEqual(await state.scan(feed, 1), {
+      assertRun(await state.scan(feed, 1), {
         ...complete,
         pagesRead: 1,
         recordsSeen: 1,

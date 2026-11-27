@@ -124,13 +124,14 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
     ListingKey: `Synthetic Worker listing ${number}`,
     ModificationTimestamp: "2026-11-03T00:00:00.000001Z",
   }));
+  const invalid = { ...records[1], ListPrice: "invalid synthetic price" };
   let reply:
     | typeof records
     | ReturnType<typeof page>
     | { status: number; retryAfter?: string };
   const feed = await standIn(t, () => {
     if (reply) return reply;
-    return records;
+    return [records[0], invalid, records[2]];
   });
   const feedSettings = {
     feedId,
@@ -183,7 +184,9 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
       };
       const listingIds = async () => {
         const { rows } = await db.query<{ listing_id: string }>(
-          "SELECT listing_id FROM idx.source_mappings WHERE feed_id=$1 ORDER BY listing_id",
+          `SELECT m.listing_id FROM idx.source_mappings m
+          JOIN idx.listings l ON l.id = m.listing_id
+          WHERE m.feed_id=$1 ORDER BY m.listing_id`,
           [feedId],
         );
         return rows.map(({ listing_id }) => listing_id);
@@ -192,16 +195,24 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
       const first = await finished(firstId);
       checkRedacted(JSON.stringify(first));
       assert.equal(first.status, "complete");
+      const firstCounts = { accepted: 1, rejected: 0, rejectedByCode: {} };
+      const partialCounts = {
+        accepted: 1,
+        rejected: 1,
+        rejectedByCode: { invalid_change: 1 },
+      };
       assert.deepEqual(first.output, {
         code: "page_limit",
         nextStep: { kind: "retry" },
         pagesApplied: 2,
+        counts: partialCounts,
       });
       assert.equal(first.steps.length, 2);
-      for (const step of first.steps) {
+      for (const [index, step] of first.steps.entries()) {
         assert.deepEqual(step.output, {
           code: "page_limit",
           nextStep: { kind: "retry" },
+          counts: index === 0 ? firstCounts : partialCounts,
         });
         assert.deepEqual(step.config.retries, {
           limit: 1,
@@ -217,17 +228,28 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
         [firstId],
       );
       assert.equal(feed.calls.length, 2);
-      assert.equal((await listingIds()).length, 2);
+      assert.equal((await listingIds()).length, 1);
       assert.equal((await readApi(503)).code, "feed_expired");
 
       const last = await finished(await tick());
       checkRedacted(JSON.stringify(last));
       assert.equal(last.status, "complete");
+      const counts = { ...partialCounts, accepted: 2 };
       assert.deepEqual(last.output, {
         code: "complete",
         nextStep: { kind: "none" },
         pagesApplied: 1,
+        counts,
       });
+      assert.deepEqual(last.steps[0].output.counts, counts);
+      const logs = worker.rawLogs();
+      assert.ok(logs.includes(JSON.stringify({
+        operation: "listing.sync",
+        code: "complete",
+        nextStep: { kind: "none" },
+        counts,
+      })));
+      checkRedacted(logs, invalid.ListingKey, invalid.ListPrice);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", "?cursor=1", "?cursor=2"],
@@ -236,7 +258,7 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
       assert.deepEqual(feed.preferences, Array(3).fill("odata.maxpagesize=1"));
       const body = await readApi(200);
       const ids = await listingIds();
-      assert.equal(ids.length, 3);
+      assert.equal(ids.length, 2);
       assert.deepEqual(
         body.data.map(({ id }: { id: string }) => id).sort(),
         ids,
@@ -305,6 +327,7 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
       code: "missing_feed",
       nextStep: { kind: "stop" },
       pagesApplied: 0,
+      counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
     });
     assert.equal(feed.calls.length, start);
   });

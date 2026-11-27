@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      11,
+      12,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -97,6 +97,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
             "006_listing_revisions.sql",
             "007_feed_sync_positions.sql",
             "011_feed_sync_record_presence.sql",
+            "012_feed_sync_reports.sql",
           ],
         ],
       );
@@ -146,8 +147,9 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     "the outcome migration preserves an existing sync position",
     async () => {
       await db.query("DROP TABLE idx.feed_sync_outcomes");
-      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+      await db.query("DELETE FROM public.schema_migrations WHERE name IN ($1, $2)", [
         "008_feed_sync_outcomes.sql",
+        "012_feed_sync_reports.sql",
       ]);
       const legacy = await db.query(
         `INSERT INTO idx.feed_sync_positions
@@ -193,8 +195,9 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       await db.query(
         "DROP TABLE idx.feed_scan_positions, idx.listing_scan_stamps",
       );
-      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+      await db.query("DELETE FROM public.schema_migrations WHERE name IN ($1, $2)", [
         "009_feed_scan.sql",
+        "012_feed_sync_reports.sql",
       ]);
       await db.query(
         `INSERT INTO idx.feed_sync_outcomes

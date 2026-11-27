@@ -17,6 +17,8 @@ import type {
   NormalizedListing,
   WithheldField,
 } from "../domain/normalize.ts";
+import { emptyCounts } from "./feed-sync-outcomes.ts";
+import type { RecordCounts, RejectionCode } from "./feed-sync-outcomes.ts";
 import { saveFeedCheckpoint } from "./feed-sync-positions.ts";
 import type { FeedCheckpoint } from "./feed-sync-positions.ts";
 import { saveScanCheckpoint, stampScanKeys } from "./feed-scan-positions.ts";
@@ -414,7 +416,7 @@ export async function applyListingPage(
 
   const rejected: {
     index: number;
-    code: "invalid_key" | "invalid_change" | "future_revision";
+    code: RejectionCode;
   }[] = [];
   const indexed = Array.from(changes, (change, index) => ({ change, index }));
   const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
@@ -517,12 +519,20 @@ export async function applyListingPage(
       }
       rows.push(selected);
     }
+    const priorCounts = previous?.counts ?? scan?.checkpoint.counts ?? emptyCounts;
+    const counts: RecordCounts = {
+      accepted: priorCounts.accepted + changes.length - rejected.length,
+      rejected: priorCounts.rejected + rejected.length,
+      rejectedByCode: { ...priorCounts.rejectedByCode },
+    };
+    for (const { code } of rejected) {
+      counts.rejectedByCode[code] = (counts.rejectedByCode[code] ?? 0) + 1;
+    }
     const scanCheckpoint = scan && {
       ...scan.checkpoint,
+      counts: scan.checkpoint.active ? counts : undefined,
       recordsSeen: scan.checkpoint.recordsSeen + changes.length,
-      unreadableRecords:
-        scan.checkpoint.unreadableRecords +
-        rejected.filter(({ code }) => code === "invalid_key").length,
+      unreadableRecords: counts.rejectedByCode.invalid_key ?? 0,
     };
     if (scanCheckpoint)
       await saveScanCheckpoint(client, feedId, scanCheckpoint);
@@ -530,10 +540,9 @@ export async function applyListingPage(
     let renewFreshness = false;
     const incrementalContinues = incremental?.nextLink != null;
     if (incremental) {
-      let recordState = previous?.recordState ?? "empty";
-      if (rejected.length < changes.length) recordState = "accepted";
-      else if (changes.length > 0 && recordState === "empty")
-        recordState = "rejected";
+      let recordState: FeedCheckpoint["position"]["recordState"] = "empty";
+      if (counts.accepted > 0) recordState = "accepted";
+      else if (counts.rejected > 0) recordState = "rejected";
       savedPosition = {
         completedMark: incrementalContinues
           ? completedMark
@@ -541,6 +550,7 @@ export async function applyListingPage(
         nextLink: incremental.nextLink,
         pendingMark: incrementalContinues ? pendingMark : null,
         recordState: incrementalContinues ? recordState : "empty",
+        ...(incrementalContinues && { counts }),
       };
       await saveFeedCheckpoint(client, feedId, {
         position: savedPosition,
@@ -592,6 +602,7 @@ export async function applyListingPage(
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }
     return {
+      counts,
       ...(savedPosition && { savedPosition }),
       ...(scanCheckpoint && { scanCheckpoint }),
       ...(removal && { removal }),

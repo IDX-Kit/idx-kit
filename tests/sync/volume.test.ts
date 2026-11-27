@@ -247,6 +247,7 @@ test(
     assert.deepEqual(stopped, {
       code: "http_error",
       nextStep: { kind: "retry" },
+      counts: { accepted: midpoint * pageSize, rejected: 0, rejectedByCode: {} },
     });
     await assertExpired(unfinished);
     assertStatements(offsets.splice(0), statements, midpoint, 1, 1, false);
@@ -266,7 +267,10 @@ test(
     started = performance.now();
     const resumed = await syncIncrementally(writer, options);
     const loadMs = firstMs + performance.now() - started;
-    assert.deepEqual(resumed, { code: "complete" });
+    assert.deepEqual(resumed, {
+      code: "complete",
+      counts: { accepted: volume, rejected: 0, rejectedByCode: {} },
+    });
     const loadBytes = await databaseSize();
     assert.equal(feed.calls[midpoint + 1].query, cursor(midpoint));
     // The final incremental page renews the feed window after recomputing.
@@ -329,8 +333,9 @@ test(
       pagesRead: pages,
       recordsSeen: volume - changed,
       listingsRemoved: changed,
+      counts: { accepted: volume - changed, rejected: 0, rejectedByCode: {} },
     });
-    assertStatements(offsets, statements, pages, 5, 0, true);
+    assertStatements(offsets, statements, pages, 5, 1, true);
     const repaired = await listings();
     assert.equal(repaired.length, volume);
     for (const [index, row] of repaired.entries()) {

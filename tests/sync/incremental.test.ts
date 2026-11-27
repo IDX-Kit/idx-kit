@@ -24,6 +24,7 @@ import {
   standIn,
 } from "./feed.ts";
 
+const assertRun = assert.partialDeepStrictEqual;
 const firstMark = "2026-11-03T00:00:00.000001Z";
 const secondMark = "2026-11-03T00:00:00.000002Z";
 const thirdMark = "2026-11-03T00:00:00.000003Z";
@@ -243,10 +244,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
             } finally {
               generator.mock.restore();
             }
-            assert.deepEqual(
-              result,
-              final ? { code: "complete" } : pageLimitReached,
-            );
+            assert.deepEqual(result, {
+              ...(final ? { code: "complete" } : pageLimitReached),
+              counts: { accepted: end, rejected: 0, rejectedByCode: {} },
+            });
             assert.equal(
               statements() - before,
               1 + (end - start) * 7 + (final ? 3 : 0),
@@ -301,11 +302,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (n === 3) return page([second], "?cursor=3");
         return { status: 503 };
       });
-      assert.deepEqual(await state.run(feed), stopHttpError);
+      assertRun(await state.run(feed), stopHttpError);
       const outcome = await state.outcome();
-      assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      assertRun(await state.run(feed, writer, 1), pageLimitReached);
       assert.deepEqual(await state.outcome(), outcome);
-      assert.deepEqual(await state.run(feed, writer, 2), retryHttpError);
+      assertRun(await state.run(feed, writer, 2), retryHttpError);
       await assertOutcome(state, {
         code: "http_error",
         status: 503,
@@ -341,7 +342,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 2) return page([first], "?cursor=3");
         return page([second]);
       });
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual([...offsets, statements()], [1, 8, 15, 25]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
@@ -387,7 +388,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         return page([first]);
       });
       const oldFreshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), retryHttpError);
+      assertRun(await state.run(feed), retryHttpError);
       assert.deepEqual(await state.freshness(), oldFreshness);
       const saved = await state.checkpoint();
       assert.equal(saved.version, 1n);
@@ -402,7 +403,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(oldest.conservative, true);
 
       fail = false;
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", "?cursor=2", "?cursor=2", "?cursor=3"],
@@ -428,7 +429,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const initial = await standIn(t, (_url, n) =>
         n === 1 ? page([first], "?cursor=2") : page([second]),
       );
-      assert.deepEqual(await state.run(initial), { code: "complete" });
+      assertRun(await state.run(initial), { code: "complete" });
       const before = await state.oldestIngest();
       assert.ok(before.stored);
       assert.equal(before.stored, before.actual);
@@ -444,14 +445,14 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (fail) return { status: 503 };
         return page([]);
       });
-      assert.deepEqual(await state.run(feed), retryHttpError);
+      assertRun(await state.run(feed), retryHttpError);
       const partial = await state.oldestIngest();
       assert.equal(partial.stored, before.stored);
       assert.ok(partial.actual && partial.actual !== partial.stored);
       assert.equal(partial.conservative, true);
 
       fail = false;
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(await state.oldestIngest(), {
         stored: partial.actual,
         actual: partial.actual,
@@ -480,7 +481,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         },
       );
       try {
-        assert.deepEqual(await state.run(feed), writeFailed);
+        assertRun(await state.run(feed), writeFailed);
       } finally {
         fault.mock.restore();
       }
@@ -490,7 +491,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal((await state.checkpoint()).version, 1n);
 
       const peer = await connectWriter(t);
-      assert.deepEqual(await state.run(feed, peer), { code: "complete" });
+      assertRun(await state.run(feed, peer), { code: "complete" });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", "?cursor=2"],
@@ -525,7 +526,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         },
       );
       try {
-        assert.deepEqual(await state.run(feed), writeFailed);
+        assertRun(await state.run(feed), writeFailed);
       } finally {
         fault.mock.restore();
       }
@@ -538,7 +539,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       });
       assert.deepEqual(await state.listings(), []);
       assert.deepEqual(await state.freshness(), oldFreshness);
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", ""],
@@ -560,9 +561,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
             : [],
         );
       });
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       const [before] = await state.listings();
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", filter(firstMark)],
@@ -601,14 +602,14 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         );
       });
 
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       const position = (await state.checkpoint()).position;
       const live = await state.listings();
       assert.equal(live.length, 1);
       assert.equal(live[0].key, first.ListingKey);
       assert.equal(live[0].revision, firstMark);
       await assertFresh(state);
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.equal(
         (await state.listings()).find(({ key }) => key === first.ListingKey)
           ?.revision,
@@ -644,9 +645,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         rejected: 2,
         rejectedByCode: { invalid_change: 2 },
       };
-      assert.partialDeepStrictEqual(result, { counts });
+      assert.deepEqual(result.counts, counts);
       assert.match(
-        Reflect.get(result, "message"),
+        "message" in result ? result.message ?? "" : "",
         /no feed record could be used/i,
       );
     },
@@ -664,7 +665,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 4) return page([bad, future], "?cursor=empty");
         return page([]);
       });
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
       const freshness = await state.freshness();
       const checkpoint = await state.checkpoint();
@@ -688,27 +689,27 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       ]);
       assert.deepEqual(await state.freshness(), freshness);
       for (let poll = 0; poll < 2; poll += 1) {
-        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assertRun(await state.run(feed), { code: "complete" });
         assert.deepEqual(
           (await state.checkpoint()).position,
           complete(firstMark),
         );
         assert.deepEqual(await state.freshness(), freshness);
       }
-      assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      assertRun(await state.run(feed, writer, 1), pageLimitReached);
       const { position } = await state.checkpoint();
       assert.equal(position.completedMark, firstMark);
       assert.equal(position.pendingMark, null);
       assert.equal(position.recordState, "rejected");
       assert.equal(new URL(position.nextLink!).search, "?cursor=empty");
 
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(
         (await state.checkpoint()).position,
         complete(firstMark),
       );
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       await assertFresh(state);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
@@ -735,22 +736,40 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 1) return page([first]);
         if (number === 2) return page([second], "?cursor=rejected");
         if (number === 3)
-          return page([record("future", futureMark)], "?cursor=withdrawal");
+          return page(
+            [record("future", futureMark), { ...third, ListingKey: null }],
+            "?cursor=withdrawal",
+          );
         if (number === 4) return page([withdrawal]);
         return page([]);
       });
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      for (const cursor of ["?cursor=rejected", "?cursor=withdrawal"]) {
-        assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      for (const [index, cursor] of ["?cursor=rejected", "?cursor=withdrawal"].entries()) {
+        const result = await state.run(feed, writer, 1);
+        assert.deepEqual(result, {
+          ...pageLimitReached,
+          counts: {
+            accepted: 1,
+            rejected: index * 2,
+            rejectedByCode: index === 0 ? {} : { future_revision: 1, invalid_key: 1 },
+          },
+        });
         const { position } = await state.checkpoint();
         assert.equal(position.completedMark, firstMark);
         assert.equal(position.pendingMark, secondMark);
         assert.equal(new URL(position.nextLink!).search, cursor);
         assert.deepEqual(await state.freshness(), freshness);
       }
-      assert.deepEqual(await state.run(feed, writer, 1), { code: "complete" });
+      assert.deepEqual(await state.run(feed, writer, 1), {
+        code: "complete",
+        counts: {
+          accepted: 2,
+          rejected: 2,
+          rejectedByCode: { future_revision: 1, invalid_key: 1 },
+        },
+      });
       assert.deepEqual(
         (await state.checkpoint()).position,
         complete(thirdMark),
@@ -759,7 +778,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(withdrawn.key, first.ListingKey);
       assert.equal(withdrawn.revision, null);
       await assertFresh(state);
-      assert.deepEqual(await state.run(feed, writer, 1), { code: "complete" });
+      assertRun(await state.run(feed, writer, 1), { code: "complete" });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         [
@@ -793,10 +812,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         return page([restored]);
       });
 
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(
         (await state.listings()).map(({ revision }) => revision),
         [null, null, null],
@@ -806,9 +825,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         complete(thirdMark),
       );
       assert.deepEqual(await state.freshness(), freshness);
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.equal((await state.listings())[2].revision, null);
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.equal(
         (await state.listings())[2].revision,
         restored.ModificationTimestamp,
@@ -838,11 +857,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         [restored, future],
       ];
       const feed = await standIn(t, (_url, n) => page(responses[n - 1]));
-      assert.deepEqual(await state.run(feed), { code: "complete" });
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.equal((await state.listings())[0].revision, null);
       for (let n = 3; n <= responses.length; n += 1) {
-        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assertRun(await state.run(feed), { code: "complete" });
         assert.equal((await state.listings())[0].revision, secondMark);
         assert.deepEqual(
           (await state.checkpoint()).position,
@@ -879,12 +898,12 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const feed = await standIn(t, (_url, n) =>
         page(n === 1 ? [atBoundary] : [pastBoundary]),
       );
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual((await state.checkpoint()).position, complete(boundary));
       await assertFresh(state);
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual((await state.checkpoint()).position, complete(boundary));
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(
@@ -906,9 +925,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         number === 1 ? page([], "?cursor=empty") : page([]),
       );
       const freshness = await state.freshness();
-      assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      assertRun(await state.run(feed, writer, 1), pageLimitReached);
       assert.deepEqual(await state.freshness(), freshness);
-      assert.deepEqual(await state.run(feed, writer, 1), { code: "complete" });
+      assertRun(await state.run(feed, writer, 1), { code: "complete" });
       await assertFresh(state);
       assert.deepEqual((await state.checkpoint()).position, complete(null));
       assert.deepEqual(
@@ -928,12 +947,12 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 3) return { status: 503 };
         return page([second]);
       });
-      assert.deepEqual(await state.run(feed), { code: "complete" });
-      assert.deepEqual(await state.run(feed), retryHttpError);
+      assertRun(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), retryHttpError);
       const { position } = await state.checkpoint();
       assert.equal(position.completedMark, thirdMark);
       assert.equal(position.pendingMark, thirdMark);
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(await state.checkpoint(), {
         version: 3n,
         position: complete(thirdMark),
@@ -953,9 +972,9 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           if (number === 4) return page([third, first], "?cursor=fresh");
           return page([second]);
         });
-        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assertRun(await state.run(feed), { code: "complete" });
         const freshness = await state.freshness();
-        assert.deepEqual(await state.run(feed), {
+        assertRun(await state.run(feed), {
           code: "continuation_rejected",
           nextStep: retry,
         });
@@ -975,7 +994,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           applied.map(({ key }) => key),
           [first.ListingKey, third.ListingKey],
         );
-        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assertRun(await state.run(feed), { code: "complete" });
         assert.deepEqual(
           feed.calls.map(({ query }) => query),
           [
@@ -1022,18 +1041,18 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 4) return page([second], "?cursor=3");
         return page([third]);
       });
-      assert.deepEqual(await state.run(feed), retryHttpError);
+      assertRun(await state.run(feed), retryHttpError);
       const losing = state.run(feed, peer);
       let winningOutcome;
       try {
         await Promise.race([arrived, losing]);
-        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assertRun(await state.run(feed), { code: "complete" });
         winningOutcome = await state.outcome();
       } finally {
         release();
       }
       const freshness = await state.freshness();
-      assert.deepEqual(await losing, {
+      assertRun(await losing, {
         code: "position_changed",
         nextStep: { kind: "none" },
       });
@@ -1063,11 +1082,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const winner = await standIn(t, () => page([first]));
       let winningOutcome;
       const stale = await standIn(t, async () => {
-        assert.deepEqual(await state.run(winner, peer), { code: "complete" });
+        assertRun(await state.run(winner, peer), { code: "complete" });
         winningOutcome = await state.outcome();
         return { status: 401 };
       });
-      assert.deepEqual(await state.run(stale), stopHttpError);
+      assertRun(await state.run(stale), stopHttpError);
       assert.deepEqual(await state.outcome(), winningOutcome);
       assert.deepEqual(await state.checkpoint(), {
         version: 1n,
@@ -1091,12 +1110,12 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         async (sql: string, values?: unknown[]) => {
           const result = await query(sql, values);
           if (sql === "COMMIT") {
-            assert.deepEqual(await state.run(feed, peer), stopHttpError);
+            assertRun(await state.run(feed, peer), stopHttpError);
           }
           return result;
         },
       );
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       await assertOutcome(state, {
         code: "http_error",
         status: 401,
@@ -1124,7 +1143,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         "REVOKE ALL ON idx.feed_sync_outcomes FROM idx_listing_writer",
       );
       try {
-        assert.deepEqual(await state.run(feed), {
+        assertRun(await state.run(feed), {
           code: "complete",
           outcomeSaved: false,
         });
@@ -1133,7 +1152,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           position: complete(firstMark),
         });
         await assertFresh(state);
-        assert.deepEqual(await state.run(feed), {
+        assertRun(await state.run(feed), {
           ...stopHttpError,
           outcomeSaved: false,
         });
@@ -1151,10 +1170,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const feed = await standIn(t, (_url, number) =>
         page(number === 1 ? [first] : []),
       );
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       const before = await state.listings();
       await state.setOldFreshness();
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(await state.checkpoint(), {
         version: 2n,
         position: complete(firstMark),
@@ -1187,13 +1206,13 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       });
       const freshness = await state.freshness();
       for (const link of links) {
-        assert.deepEqual(
+        assertRun(
           await state.run(feed),
           { code: "invalid_link", nextStep: stop },
           link,
         );
       }
-      assert.deepEqual(await state.run(feed), stopHttpError);
+      assertRun(await state.run(feed), stopHttpError);
       assert.deepEqual(outsideRequests, []);
       assert.deepEqual(
         feed.calls,
@@ -1229,7 +1248,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         assert.deepEqual(await remote.readPage(null, null), {
           code: "invalid_link",
         });
-        assert.deepEqual(await state.run({ connector: remote }), {
+        assertRun(await state.run({ connector: remote }), {
           code: "invalid_link",
           nextStep: stop,
         });
@@ -1268,12 +1287,12 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 4) return page([second], cursor);
         return page([second]);
       });
-      assert.deepEqual(await state.run(feed), retryHttpError);
+      assertRun(await state.run(feed), retryHttpError);
       const checkpoint = await state.checkpoint();
       const listings = await state.listings();
       const freshness = await state.freshness();
       for (const requestCount of [3, 4]) {
-        assert.deepEqual(await state.run(feed), {
+        assertRun(await state.run(feed), {
           code: "invalid_page",
           nextStep: retry,
         });
@@ -1325,7 +1344,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const checkpoint = await state.checkpoint();
       const freshness = await state.freshness();
       for (const [index, { status, nextStep }] of cases.entries()) {
-        assert.deepEqual(await state.run(feed), {
+        assertRun(await state.run(feed), {
           code: "http_error",
           nextStep,
         });
@@ -1341,7 +1360,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         assert.deepEqual(await state.checkpoint(), checkpoint);
         assert.deepEqual(await state.freshness(), freshness);
       }
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       await assertOutcome(state, {
         code: "complete",
         status: null,
@@ -1375,7 +1394,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         1_000,
       );
       const freshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), retryHttpError);
+      assertRun(await state.run(feed), retryHttpError);
       await assertOutcome(state, {
         code: "http_error",
         status: 429,
@@ -1391,7 +1410,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         "fetch_timeout",
       ];
       for (const code of failures) {
-        assert.deepEqual(await state.run(feed), { code, nextStep: retry });
+        assertRun(await state.run(feed), { code, nextStep: retry });
         await assertOutcome(state, {
           code,
           status: 200,
@@ -1402,7 +1421,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         assert.deepEqual(await state.listings(), before);
         assert.deepEqual(await state.freshness(), freshness);
       }
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", ...Array(6).fill("?cursor=retry-marker")],
@@ -1422,12 +1441,12 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
               record("first", secondMark, "invalid synthetic price"),
             ]),
       );
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       const [before] = await state.listings();
       assert.equal(before.price, first.ListPrice);
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(await state.listings(), [
         { key: before.key, id: before.id, price: null, revision: null },

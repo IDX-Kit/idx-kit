@@ -71,6 +71,7 @@ test(
     const second = record("second", 2, "200.00");
     const third = record("third", 4, "300.00");
     const edited = record("first", 3, "125.00");
+    const invalid = { ...record("invalid", 1, "125.00"), ListPrice: 125 };
     let respond: Parameters<typeof standIn>[1] = (url) => {
       switch (url.searchParams.get("cursor")) {
         case "2":
@@ -78,7 +79,7 @@ test(
         case "3":
           return page([third]);
         default:
-          return page([first], "?cursor=2");
+          return page([first, invalid], "?cursor=2");
       }
     };
     const feed = await standIn(t, (url, n) => respond(url, n));
@@ -146,7 +147,11 @@ test(
       const body = JSON.parse(result.stdout);
       assert.equal(body.feedId, config.feedId);
       if (failure)
-        assert.deepEqual(body, { feedId: config.feedId, code: failure });
+        assert.deepEqual(body, {
+          feedId: config.feedId,
+          code: failure,
+          counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
+        });
       return body;
     }
 
@@ -160,12 +165,19 @@ test(
         assert.equal(before.scanNumber, null);
         assert.equal(before.recordsSeen, null);
         assert.equal(before.lastOutcome, null);
+        assert.equal(before.lastRun, null);
         assert.equal(feed.calls.length, 0);
         assert.equal((await api(search, 503)).code, "feed_expired");
+        const counts = {
+          accepted: 3,
+          rejected: 1,
+          rejectedByCode: { invalid_change: 1 },
+        };
         assert.deepEqual(await run(["incremental"]), {
           feedId: config.feedId,
           code: "complete",
           nextStep: { kind: "none" },
+          counts,
         });
         assert.equal(feed.calls.length, 3);
         assert.ok(feed.calls.every(({ authorized }) => authorized));
@@ -179,6 +191,8 @@ test(
         assert.equal(after.completedMark, revision(4));
         assert.equal(after.incrementalInProgress, false);
         assert.equal(after.lastOutcome.code, "complete");
+        assert.deepEqual(after.lastRun.counts, counts);
+        assert.equal(after.lastRun.kind, "incremental");
         assert.equal(feed.calls.length, 3);
       },
     );
@@ -202,7 +216,9 @@ test(
             assert.fail("Command exited before requesting the continuation"),
           ),
         ]);
-        assert.equal((await run(["status"])).incrementalInProgress, true);
+        const pending = await run(["status"]);
+        assert.equal(pending.incrementalInProgress, true);
+        assert.equal(pending.lastRun.counts.accepted, 3);
         interrupted.kill();
         assert.equal((await interrupted.done).signal, "SIGKILL");
         respond = () => page([third]);
@@ -264,10 +280,12 @@ test(
             code: "http_error",
             nextStep: { kind: "stop" },
             outcomeSaved: false,
+            counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
           });
           assert.equal(feed.calls.length, offset + 1);
           const after = await run(["status"]);
           assert.deepEqual(after.lastOutcome, before.lastOutcome);
+          assert.deepEqual(after.lastRun, before.lastRun);
         } finally {
           await db.query(
             "GRANT INSERT ON idx.feed_sync_outcomes TO idx_listing_writer",
@@ -284,21 +302,29 @@ test(
             listing.price.amount === "200.00",
         );
         assert.ok(missing);
-        respond = () => page([edited, third]);
+        respond = () => page([edited, third, invalid]);
         const repaired = await run(["scan"]);
+        const counts = {
+          accepted: 2,
+          rejected: 1,
+          rejectedByCode: { invalid_change: 1 },
+        };
         assert.deepEqual(repaired, {
           feedId: config.feedId,
           code: "complete",
           nextStep: { kind: "none" },
           pagesRead: 1,
-          recordsSeen: 2,
+          recordsSeen: 3,
           listingsRemoved: 0,
+          counts,
         });
         const scanned = await run(["status"]);
         assert.equal(scanned.scanNumber, "1");
         assert.equal(scanned.scanInProgress, false);
-        assert.equal(scanned.recordsSeen, 2);
+        assert.equal(scanned.recordsSeen, 3);
         assert.equal(scanned.unreadableRecords, 0);
+        assert.equal(scanned.lastRun.kind, "scan");
+        assert.deepEqual(scanned.lastRun.counts, counts);
         assert.deepEqual(
           (await api()).map((listing: typeof missing) => listing.price.amount),
           ["125.00", "200.00", "300.00"],
