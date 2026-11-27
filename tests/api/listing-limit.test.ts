@@ -336,7 +336,7 @@ test("detail admission uses two SQL statements and refusal uses one", async (t) 
       [key.id],
     );
     await db.query("BEGIN");
-    let pending: Promise<Response>;
+    let pending: ReturnType<typeof request>;
     let blocked = false;
     try {
       await db.query("SELECT idx.charge_listing_request($1, 1)", [key.id]);
