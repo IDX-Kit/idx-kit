@@ -28,13 +28,14 @@ export async function readFeedCheckpoint(
     [feedId],
   );
   const row = rows[0];
+  const legacy = row?.nextLink && !row.counts;
   return {
     version: row ? BigInt(row.version) : 0n,
     position: {
       completedMark: row?.completedMark ?? null,
-      nextLink: row?.nextLink ?? null,
-      pendingMark: row?.pendingMark ?? null,
-      recordState: row?.recordState ?? "empty",
+      nextLink: legacy ? null : (row?.nextLink ?? null),
+      pendingMark: legacy ? null : (row?.pendingMark ?? null),
+      recordState: legacy ? "empty" : (row?.recordState ?? "empty"),
       ...(row?.counts && { counts: row.counts }),
     },
   };

@@ -145,11 +145,13 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         { connector }: Pick<StandIn, "connector">,
         client = writer,
         pageLimit?: number,
+        stepId?: string,
       ) =>
         syncIncrementally(
           client,
           { feedId, synthetic: true, connector, disclosures },
           pageLimit,
+          stepId,
         ),
       checkpoint: () => readFeedCheckpoint(db, feedId),
       oldestIngest: () => readOldestIngest(db, feedId),
@@ -189,6 +191,86 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     pendingMark: null,
     recordState: "empty",
   });
+
+  await t.test(
+    "retrying a committed final Worker step returns its traversal totals",
+    async (t) => {
+      const state = await setup(t, "lost_final_ack");
+      const bad = { ...second, ListPrice: 200 };
+      const feed = await standIn(t, (url) =>
+        url.search === "" ? page([first], "?cursor=2") : page([bad]),
+      );
+      assertRun(await state.run(feed, writer, 1, "synthetic-step-1"), {
+        code: "page_limit",
+      });
+
+      const query = writer.query.bind(writer);
+      const fault = t.mock.method(
+        writer,
+        "query",
+        async (sql: string, values?: unknown[]) => {
+          const result = await query(sql, values);
+          if (sql === "COMMIT")
+            throw new Error("Synthetic lost acknowledgement");
+          return result;
+        },
+      );
+      const stepId = "synthetic-step-2";
+      try {
+        await assert.rejects(
+          state.run(feed, writer, 1, stepId),
+          /Synthetic lost acknowledgement/,
+        );
+      } finally {
+        fault.mock.restore();
+      }
+      await assertFresh(state);
+      const freshness = await state.freshness();
+      const peer = await connectWriter(t);
+      assert.deepEqual(await state.run(feed, peer, 1, stepId), {
+        code: "complete",
+        counts: {
+          accepted: 1,
+          rejected: 1,
+          rejectedByCode: { invalid_change: 1 },
+        },
+      });
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", "?cursor=2"],
+      );
+    },
+  );
+
+  await t.test(
+    "a legacy partial poll without counts restarts from its completed mark",
+    async (t) => {
+      const state = await setup(t, "legacy_partial");
+      const feed = await standIn(t, (url) =>
+        page(
+          url.searchParams.has("cursor") ? [] : [{ ...third, ListPrice: 300 }],
+        ),
+      );
+      await db.query(
+        `INSERT INTO idx.feed_sync_positions
+          (feed_id, version, completed_mark, next_link, pending_mark, record_state)
+        VALUES ($1, 1, $2, $3, $4, 'rejected')`,
+        [state.feedId, firstMark, feed.propertyUrl + "?cursor=old", secondMark],
+      );
+      const freshness = await state.freshness();
+      assertRun(await state.run(feed), {
+        code: "complete",
+        counts: {
+          accepted: 0,
+          rejected: 1,
+          rejectedByCode: { invalid_change: 1 },
+        },
+      });
+      assert.equal(feed.calls[0].query, filter(firstMark));
+      assert.deepEqual(await state.freshness(), freshness);
+    },
+  );
 
   await t.test(
     "bounded runs match the unlimited load and renew freshness only on completion",
@@ -1134,7 +1216,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
-    "a writer without outcome grants still returns complete and stop",
+    "a refused final report rolls back the page and freshness",
     async (t) => {
       const state = await setup(t, "outcome_denied");
       const feed = await standIn(t, (_url, number) =>
@@ -1152,14 +1234,18 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       );
       try {
         assertRun(await state.run(feed), {
-          code: "complete",
+          ...writeFailed,
           outcomeSaved: false,
         });
         assert.deepEqual(await state.checkpoint(), {
-          version: 1n,
-          position: complete(firstMark),
+          version: 0n,
+          position: complete(null),
         });
-        await assertFresh(state);
+        assert.deepEqual(await state.listings(), []);
+        assert.equal(
+          (await state.freshness()).refreshed_at.getTime(),
+          Date.parse(initialRefresh),
+        );
         assertRun(await state.run(feed), {
           ...stopHttpError,
           outcomeSaved: false,

@@ -4,11 +4,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import pg from "pg";
 import { z } from "zod";
 import { ResoConnector } from "../connectors/reso.ts";
-import {
-  emptyCounts,
-  readFeedState,
-  saveFeedOutcome,
-} from "../db/feed-sync-outcomes.ts";
+import { readFeedState, saveFeedOutcome } from "../db/feed-sync-outcomes.ts";
 import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { reportSyncStep, syncIncrementally } from "../sync/incremental.ts";
 import { feedSettings, feedTokenSchema } from "./sync-feed-settings.ts";
@@ -97,43 +93,24 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
     let last;
     let pagesApplied = 0;
     do {
+      const name = `apply page ${pagesApplied + 1}`;
       last = await step.do(
-        `apply page ${pagesApplied + 1}`,
+        name,
         pageStep,
         async () => {
           const result = await withWriter(this.env, async (client) => {
-            const state = await readFeedState(client, feed.feedId);
-            if (!state) {
-              return {
-                code: "missing_feed",
-                nextStep: { kind: "stop" },
-                counts: emptyCounts,
-              } as const;
-            }
-            if (state.waitingSeconds) {
-              return {
-                code: "waiting",
-                counts: emptyCounts,
-                nextStep: {
-                  kind: "retry",
-                  afterSeconds: state.waitingSeconds,
-                },
-              } as const;
-            }
-            if (state.status.lastOutcome?.nextStep === "stop") {
-              return {
-                code: "stopped",
-                nextStep: { kind: "stop" },
-                counts: emptyCounts,
-              } as const;
-            }
             const connector = new ResoConnector(
               feed.propertyUrl.href,
               token,
               undefined,
               feed.pageSize,
             );
-            return syncIncrementally(client, { ...feed, connector }, 1);
+            return syncIncrementally(
+              client,
+              { ...feed, connector },
+              1,
+              `${event.instanceId}:${name}`,
+            );
           });
           const output = reportSyncStep(result);
           if ("outcomeSaved" in result && result.outcomeSaved === false)

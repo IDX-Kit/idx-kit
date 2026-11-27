@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   readScanCheckpoint,
   saveScanCheckpoint,
-  saveScanReport,
 } from "../db/feed-scan-positions.ts";
 import { allRejectedMessage, emptyCounts } from "../db/feed-sync-outcomes.ts";
 import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
@@ -46,7 +45,6 @@ type ScanResult = ScanOutcome & {
   listingsRemoved: number;
   counts: RecordCounts;
   message?: string;
-  outcomeSaved?: false;
 };
 
 const removalLimit = z.int().nonnegative();
@@ -60,12 +58,8 @@ export async function syncFullScan(
   const maxRemovals = feed.removeMissing ? feed.maxRemovals : undefined;
   const progress = { pagesRead: 0, recordsSeen: 0, listingsRemoved: 0 };
   let counts = emptyCounts;
-  let version: bigint | undefined;
-  async function finish(
-    outcome: ScanOutcome,
-    traversed = false,
-  ): Promise<ScanResult> {
-    const result = {
+  function finish(outcome: ScanOutcome, traversed = false): ScanResult {
+    return {
       ...progress,
       ...outcome,
       counts,
@@ -75,14 +69,6 @@ export async function syncFullScan(
           message: allRejectedMessage,
         }),
     };
-    if (version === undefined || outcome.code === "position_changed")
-      return result;
-    try {
-      await saveScanReport(client, feedId, version, counts);
-    } catch {
-      return { ...result, outcomeSaved: false };
-    }
-    return result;
   }
 
   if (feed.removeMissing && !removalLimit.safeParse(maxRemovals).success) {
@@ -106,7 +92,6 @@ export async function syncFullScan(
       checkpoint.version += 1n;
     }
     counts = checkpoint.counts ?? emptyCounts;
-    version = checkpoint.version;
     const mapChanges = listingChangesFor(feed);
     let wouldRemove = 0;
     const outcome = await readFeedPages(
@@ -132,7 +117,6 @@ export async function syncFullScan(
           throw new Error("Missing saved scan checkpoint");
         checkpoint = { ...page.scanCheckpoint, version: next.version + 1n };
         counts = page.counts;
-        version = checkpoint.version;
         if (page.removal) {
           wouldRemove = page.removal.wouldRemove;
           progress.listingsRemoved = page.removal.listingsRemoved;
@@ -143,12 +127,10 @@ export async function syncFullScan(
           ...checkpoint,
           active: false,
           nextLink: null,
-          counts: undefined,
         };
         await listingFeedTransaction(client, feedId, () =>
           saveScanCheckpoint(client, feedId, ended),
         );
-        version = checkpoint.version + 1n;
       },
     );
     if (outcome.code !== "complete") {

@@ -3,6 +3,7 @@ import { test, type TestContext } from "node:test";
 import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { readScanCheckpoint } from "@idx-kit/engine/src/db/feed-scan-positions.ts";
+import { readFeedState } from "@idx-kit/engine/src/db/feed-sync-outcomes.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
@@ -98,6 +99,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     };
     await poll(initial);
     return {
+      feedId,
       siteId,
       poll,
       scan: (feed: Feed, maxRemovals?: number, client = writer) =>
@@ -204,7 +206,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         recordsSeen: 2,
         listingsRemoved: 1,
       });
-      assert.deepEqual([...offsets, statements()], [5, 12, 22]);
+      assert.deepEqual([...offsets, statements()], [5, 12, 21]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
@@ -229,6 +231,44 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(after[0].facts?.price, 225);
       assert.deepEqual(after[1], { ...missing, facts: null });
       assert.deepEqual(after[2], { ...unchanged, stamp: "1" });
+    },
+  );
+
+  await t.test(
+    "a second scan starting after commit sees the first scan's report",
+    async (t) => {
+      const state = await setup(t, "scan_report_overlap");
+      const peer = await connectWriter(t);
+      const original = await standIn(t, () => page([first]));
+      let during;
+      const next = await standIn(t, async () => {
+        during = (await readFeedState(db, state.feedId))?.status.lastRun;
+        return page([second, third]);
+      });
+      let commits = 0;
+      const query = writer.query.bind(writer);
+      t.mock.method(
+        writer,
+        "query",
+        async (sql: string, values?: unknown[]) => {
+          const result = await query(sql, values);
+          if (sql === "COMMIT" && ++commits === 2) {
+            assert.equal(
+              (await state.scan(next, undefined, peer)).code,
+              "complete",
+            );
+          }
+          return result;
+        },
+      );
+      const firstScan = await state.scan(original);
+      assert.equal(firstScan.code, "complete");
+      assertRun(during, { kind: "scan", counts: firstScan.counts });
+      const after = (await readFeedState(db, state.feedId))?.status.lastRun;
+      assertRun(after, {
+        kind: "scan",
+        counts: { accepted: 2, rejected: 0, rejectedByCode: {} },
+      });
     },
   );
 

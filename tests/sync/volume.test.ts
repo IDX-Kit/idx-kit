@@ -41,20 +41,20 @@ function assertStatements(
   pageCount: number,
   setup: number,
   completion: number,
-  finalPage: boolean,
+  finalPageExtra: number,
 ) {
-  assert.equal(offsets.length, pageCount + Number(!finalPage));
+  assert.equal(offsets.length, pageCount + Number(finalPageExtra === 0));
   assert.equal(offsets[0], setup, "statements before the first fetch");
   const bounds = [...offsets, total - completion];
   for (let index = 0; index < pageCount; index++) {
-    const expected = finalPage && index === pageCount - 1 ? 9 : 7;
+    const expected = index === pageCount - 1 ? 7 + finalPageExtra : 7;
     assert.equal(
       bounds[index + 1] - bounds[index],
       expected,
       `SQL statements on page ${index + 1} of this invocation`,
     );
   }
-  const pageStatements = pageCount * 7 + (finalPage ? 2 : 0);
+  const pageStatements = pageCount * 7 + finalPageExtra;
   assert.equal(total, setup + pageStatements + completion);
 }
 
@@ -254,7 +254,7 @@ test(
       },
     });
     await assertExpired(unfinished);
-    assertStatements(offsets.splice(0), statements, midpoint, 1, 1, false);
+    assertStatements(offsets.splice(0), statements, midpoint, 1, 1, 0);
     const firstStatements = statements;
     const saved = await readFeedCheckpoint(db, feedId);
     assert.equal(saved.version, BigInt(midpoint));
@@ -278,15 +278,15 @@ test(
     const loadBytes = await databaseSize();
     assert.equal(feed.calls[midpoint + 1].query, cursor(midpoint));
     // The final incremental page renews the feed window after recomputing.
-    const loadRecomputeMs = finalTimes.splice(0).at(-2)!;
+    const loadRecomputeMs = finalTimes.splice(0).at(-3)!;
     const loadReads = checkPageReads(pageReads.splice(0));
     assertStatements(
       offsets.splice(0),
       statements,
       pages - midpoint,
       1,
-      1,
-      true,
+      0,
+      3,
     );
     const loadStatements = firstStatements + statements;
     assert.equal(loadStatements, pages * 7 + 6);
@@ -339,7 +339,7 @@ test(
       listingsRemoved: changed,
       counts: { accepted: volume - changed, rejected: 0, rejectedByCode: {} },
     });
-    assertStatements(offsets, statements, pages, 5, 1, true);
+    assertStatements(offsets, statements, pages, 5, 0, 2);
     const repaired = await listings();
     assert.equal(repaired.length, volume);
     for (const [index, row] of repaired.entries()) {

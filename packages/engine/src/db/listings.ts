@@ -17,7 +17,7 @@ import type {
   NormalizedListing,
   WithheldField,
 } from "../domain/normalize.ts";
-import { emptyCounts } from "./feed-sync-outcomes.ts";
+import { emptyCounts, saveFeedOutcome } from "./feed-sync-outcomes.ts";
 import type { RecordCounts, RejectionCode } from "./feed-sync-outcomes.ts";
 import { saveFeedCheckpoint } from "./feed-sync-positions.ts";
 import type { FeedCheckpoint } from "./feed-sync-positions.ts";
@@ -382,7 +382,11 @@ function disclosureResolver(blocks: DisplayBlock[], required: string[]) {
 
 type PageOptions = { authoritativeSnapshot?: boolean } & (
   | {
-      incremental?: { checkpoint: FeedCheckpoint; nextLink: string | null };
+      incremental?: {
+        checkpoint: FeedCheckpoint;
+        nextLink: string | null;
+        stepId?: string;
+      };
       scan?: never;
     }
   | {
@@ -531,7 +535,7 @@ export async function applyListingPage(
     }
     const scanCheckpoint = scan && {
       ...scan.checkpoint,
-      counts: scan.checkpoint.active ? counts : undefined,
+      counts,
       recordsSeen: scan.checkpoint.recordsSeen + changes.length,
       unreadableRecords: counts.rejectedByCode.invalid_key ?? 0,
     };
@@ -601,6 +605,17 @@ export async function applyListingPage(
       );
     if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
+    }
+    if (incremental && !incrementalContinues) {
+      await saveFeedOutcome(
+        client,
+        feedId,
+        incremental.checkpoint.version + 1n,
+        { code: "complete" },
+        null,
+        counts,
+        incremental.stepId,
+      );
     }
     return {
       counts,

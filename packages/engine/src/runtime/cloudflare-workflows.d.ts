@@ -11,6 +11,7 @@ declare module "cloudflare:workers" {
   }
 
   export interface WorkflowEvent<Params> {
+    readonly instanceId: string;
     readonly payload: Readonly<Params>;
   }
 

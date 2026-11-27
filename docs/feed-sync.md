@@ -131,9 +131,9 @@ exceeds the limit, the run removes none of them and reports `wouldRemove` and
 `npm run --silent sync -- status` reads saved state without calling the feed.
 Before the first run, the dates reflect initial provisioning. Missing marks,
 scan numbers, counts, and outcomes are `null`. A scan number is a decimal string.
-`lastRun` shows the counts from the most recent reported incremental or scan
-attempt. A pause at the page limit leaves this report in place until a later
-attempt finishes. `lastOutcome` tracks incremental retry and stop state.
+`lastRun` shows the counts saved with the most recent final incremental or
+scan checkpoint. An interrupted traversal leaves this report in place until
+a traversal finishes. `lastOutcome` tracks incremental retry and stop state.
 
 ```json
 {"feedId":"feed_example","refreshedAt":"2026-11-03T15:00:00+00:00","expiresAt":"2026-11-03T16:00:00+00:00","completedMark":"2026-11-03T14:59:00.000001Z","incrementalInProgress":false,"scanNumber":"1","scanInProgress":false,"recordsSeen":24,"unreadableRecords":0,"lastOutcome":{"code":"complete","httpStatus":null,"nextStep":null,"retrySeconds":null,"savedAt":"2026-11-03T15:00:00+00:00"},"lastRun":{"kind":"scan","finishedAt":"2026-11-03T15:10:00+00:00","counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}}
@@ -150,10 +150,10 @@ attempt finishes. `lastOutcome` tracks incremental retry and stop state.
 Usage and settings errors print a diagnostic to standard error. Once the
 settings are valid, the command prints a JSON result even if it cannot connect
 to the database or find the feed.
-When `outcomeSaved` is `false`, listing changes, position, and the refresh time
-for a completed run are still saved with its pages, and `status` shows position
-and freshness as usual alongside the previous `lastOutcome` because the record
-of how the run ended, including any wait the feed requested, could not be saved.
+When `outcomeSaved` is `false`, `status` still shows the previous
+`lastOutcome` because the latest incremental failure, including any wait
+the feed requested, could not be saved. The final checkpoint and counts of
+a completed traversal are saved together.
 
 Each invocation makes one attempt. After an interruption, run the same command
 again to resume after the last saved page. If the feed rejects its continuation,

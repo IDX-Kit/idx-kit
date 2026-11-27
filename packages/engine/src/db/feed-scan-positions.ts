@@ -26,11 +26,12 @@ export async function readScanCheckpoint(
     record_counts: RecordCounts | null;
   }>("SELECT * FROM idx.feed_scan_positions WHERE feed_id = $1", [feedId]);
   const row = rows[0];
+  const active = row?.active === true && row.record_counts !== null;
   return {
     version: row ? BigInt(row.version) : 0n,
     scanNumber: row ? BigInt(row.scan_number) : 0n,
-    active: row?.active ?? false,
-    nextLink: row?.next_link ?? null,
+    active,
+    nextLink: active ? row.next_link : null,
     recordsSeen: row ? Number(row.records_seen) : 0,
     unreadableRecords: row ? Number(row.unreadable_records) : 0,
     ...(row?.record_counts && { counts: row.record_counts }),
@@ -60,7 +61,11 @@ export async function saveScanCheckpoint(
         ON CONFLICT (feed_id) DO NOTHING`
       : `UPDATE idx.feed_scan_positions SET version = version + 1,
           scan_number = $3, active = $4, next_link = $5,
-          records_seen = $6, unreadable_records = $7, record_counts = $8
+          records_seen = $6, unreadable_records = $7,
+          record_counts = CASE WHEN $5 THEN $8::jsonb END,
+          last_report = CASE WHEN NOT $5 AND $8::jsonb IS NOT NULL THEN
+            jsonb_build_object('kind', 'scan', 'finishedAt', statement_timestamp(), 'counts', $8::jsonb)
+            ELSE last_report END
         WHERE feed_id = $1 AND version = $2`;
   const result = await client.query(sql, [
     feedId,
@@ -73,20 +78,6 @@ export async function saveScanCheckpoint(
     counts ?? null,
   ]);
   if (!result.rowCount) throw new FeedPositionChanged();
-}
-
-export async function saveScanReport(
-  client: pg.Client,
-  feedId: string,
-  version: bigint,
-  counts: RecordCounts,
-) {
-  await client.query(
-    `UPDATE idx.feed_scan_positions SET last_report =
-      jsonb_build_object('kind', 'scan', 'finishedAt', statement_timestamp(), 'counts', $3::jsonb)
-    WHERE feed_id = $1 AND version = $2`,
-    [feedId, version.toString(), counts],
-  );
 }
 
 export async function stampScanKeys(
