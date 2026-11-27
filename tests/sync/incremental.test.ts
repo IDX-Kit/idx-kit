@@ -627,6 +627,29 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
+    "a first load with only invalid listing facts stays expired and reports rejections",
+    async (t) => {
+      const state = await setup(t, "invalid_facts");
+      const feed = await standIn(t, () =>
+        page([{ ...first, ListPrice: 100 }, { ...second, Address: undefined }]),
+      );
+      const freshness = await state.freshness();
+      const result = await state.run(feed);
+      assert.deepEqual(await state.freshness(), freshness);
+      const counts = {
+        accepted: 0,
+        rejected: 2,
+        rejectedByCode: { invalid_change: 2 },
+      };
+      assert.partialDeepStrictEqual(result, { counts });
+      assert.match(
+        Reflect.get(result, "message"),
+        /no feed record could be used/i,
+      );
+    },
+  );
+
+  await t.test(
     "repeated future-only polls and a rejected traversal leave freshness alone",
     async (t) => {
       const state = await setup(t, "rejected_only");
