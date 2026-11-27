@@ -243,12 +243,16 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
       });
       assert.deepEqual(last.steps[0].output.counts, counts);
       const logs = worker.rawLogs();
-      assert.ok(logs.includes(JSON.stringify({
-        operation: "listing.sync",
-        code: "complete",
-        nextStep: { kind: "none" },
-        counts,
-      })));
+      assert.ok(
+        logs.includes(
+          JSON.stringify({
+            operation: "listing.sync",
+            code: "complete",
+            nextStep: { kind: "none" },
+            counts,
+          }),
+        ),
+      );
       checkRedacted(logs, invalid.ListingKey, invalid.ListPrice);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),

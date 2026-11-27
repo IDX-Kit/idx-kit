@@ -70,7 +70,11 @@ export async function syncIncrementally(
     );
   } catch (error) {
     if (error instanceof FeedPositionChanged) {
-      return { code: "position_changed", nextStep: { kind: "none" }, counts } as const;
+      return {
+        code: "position_changed",
+        nextStep: { kind: "none" },
+        counts,
+      } as const;
     }
     outcome = { code: "write_failed" };
   }
@@ -83,9 +87,10 @@ export async function syncIncrementally(
       ? ({
           code: "complete",
           counts,
-          ...(counts.accepted === 0 && counts.rejected > 0 && {
-            message: allRejectedMessage,
-          }),
+          ...(counts.accepted === 0 &&
+            counts.rejected > 0 && {
+              message: allRejectedMessage,
+            }),
         } as const)
       : { code: outcome.code, nextStep: nextStepFor(outcome), counts };
   if (!checkpoint) return { ...result, outcomeSaved: false } as const;

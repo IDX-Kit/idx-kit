@@ -247,7 +247,11 @@ test(
     assert.deepEqual(stopped, {
       code: "http_error",
       nextStep: { kind: "retry" },
-      counts: { accepted: midpoint * pageSize, rejected: 0, rejectedByCode: {} },
+      counts: {
+        accepted: midpoint * pageSize,
+        rejected: 0,
+        rejectedByCode: {},
+      },
     });
     await assertExpired(unfinished);
     assertStatements(offsets.splice(0), statements, midpoint, 1, 1, false);

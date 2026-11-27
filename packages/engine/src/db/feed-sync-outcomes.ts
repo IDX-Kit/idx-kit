@@ -3,7 +3,8 @@ import type pg from "pg";
 export type FeedNextStep =
   { kind: "retry"; afterSeconds?: number } | { kind: "stop" };
 
-export type RejectionCode = "invalid_key" | "invalid_change" | "future_revision";
+export type RejectionCode =
+  "invalid_key" | "invalid_change" | "future_revision";
 
 export interface RecordCounts {
   accepted: number;
@@ -76,6 +77,14 @@ export async function saveFeedOutcome(
       last_report = COALESCE(EXCLUDED.last_report, outcomes.last_report)
     WHERE outcomes.position_version < EXCLUDED.position_version
        OR (outcomes.position_version = EXCLUDED.position_version AND EXCLUDED.code <> 'complete')`,
-    [feedId, version.toString(), code, status ?? null, step, seconds, counts ?? null],
+    [
+      feedId,
+      version.toString(),
+      code,
+      status ?? null,
+      step,
+      seconds,
+      counts ?? null,
+    ],
   );
 }

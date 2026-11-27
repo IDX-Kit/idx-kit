@@ -4,7 +4,11 @@ import { NonRetryableError } from "cloudflare:workflows";
 import pg from "pg";
 import { z } from "zod";
 import { ResoConnector } from "../connectors/reso.ts";
-import { emptyCounts, readFeedState, saveFeedOutcome } from "../db/feed-sync-outcomes.ts";
+import {
+  emptyCounts,
+  readFeedState,
+  saveFeedOutcome,
+} from "../db/feed-sync-outcomes.ts";
 import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { logLine } from "../log.ts";
 import { syncIncrementally } from "../sync/incremental.ts";
@@ -118,7 +122,11 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
               } as const;
             }
             if (state.status.lastOutcome?.nextStep === "stop") {
-              return { code: "stopped", nextStep: { kind: "stop" }, counts: emptyCounts } as const;
+              return {
+                code: "stopped",
+                nextStep: { kind: "stop" },
+                counts: emptyCounts,
+              } as const;
             }
             const connector = new ResoConnector(
               feed.propertyUrl.href,

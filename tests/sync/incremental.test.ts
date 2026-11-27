@@ -647,7 +647,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       };
       assert.deepEqual(result.counts, counts);
       assert.match(
-        "message" in result ? result.message ?? "" : "",
+        "message" in result ? (result.message ?? "") : "",
         /no feed record could be used/i,
       );
     },
@@ -746,14 +746,18 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      for (const [index, cursor] of ["?cursor=rejected", "?cursor=withdrawal"].entries()) {
+      for (const [index, cursor] of [
+        "?cursor=rejected",
+        "?cursor=withdrawal",
+      ].entries()) {
         const result = await state.run(feed, writer, 1);
         assert.deepEqual(result, {
           ...pageLimitReached,
           counts: {
             accepted: 1,
             rejected: index * 2,
-            rejectedByCode: index === 0 ? {} : { future_revision: 1, invalid_key: 1 },
+            rejectedByCode:
+              index === 0 ? {} : { future_revision: 1, invalid_key: 1 },
           },
         });
         const { position } = await state.checkpoint();

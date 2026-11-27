@@ -61,16 +61,22 @@ export async function syncFullScan(
   const progress = { pagesRead: 0, recordsSeen: 0, listingsRemoved: 0 };
   let counts = emptyCounts;
   let version: bigint | undefined;
-  async function finish(outcome: ScanOutcome, traversed = false): Promise<ScanResult> {
+  async function finish(
+    outcome: ScanOutcome,
+    traversed = false,
+  ): Promise<ScanResult> {
     const result = {
       ...progress,
       ...outcome,
       counts,
-      ...(traversed && counts.accepted === 0 && counts.rejected > 0 && {
-        message: allRejectedMessage,
-      }),
+      ...(traversed &&
+        counts.accepted === 0 &&
+        counts.rejected > 0 && {
+          message: allRejectedMessage,
+        }),
     };
-    if (version === undefined || outcome.code === "position_changed") return result;
+    if (version === undefined || outcome.code === "position_changed")
+      return result;
     try {
       await saveScanReport(client, feedId, version, counts);
     } catch {
@@ -122,7 +128,8 @@ export async function syncFullScan(
             scan: { checkpoint: next, maxRemovals },
           },
         );
-        if (!page.scanCheckpoint) throw new Error("Missing saved scan checkpoint");
+        if (!page.scanCheckpoint)
+          throw new Error("Missing saved scan checkpoint");
         checkpoint = { ...page.scanCheckpoint, version: next.version + 1n };
         counts = page.counts;
         version = checkpoint.version;
@@ -132,7 +139,12 @@ export async function syncFullScan(
         }
       },
       async () => {
-        const ended = { ...checkpoint, active: false, nextLink: null, counts: undefined };
+        const ended = {
+          ...checkpoint,
+          active: false,
+          nextLink: null,
+          counts: undefined,
+        };
         await listingFeedTransaction(client, feedId, () =>
           saveScanCheckpoint(client, feedId, ended),
         );
@@ -150,19 +162,25 @@ export async function syncFullScan(
       });
     }
     if (checkpoint.unreadableRecords > 0) {
-      return finish({
-        code: "unreadable_keys",
-        nextStep: { kind: "stop" },
-        unreadableRecords: checkpoint.unreadableRecords,
-      }, true);
+      return finish(
+        {
+          code: "unreadable_keys",
+          nextStep: { kind: "stop" },
+          unreadableRecords: checkpoint.unreadableRecords,
+        },
+        true,
+      );
     }
     if (maxRemovals !== undefined && wouldRemove > maxRemovals) {
-      return finish({
-        code: "removal_limit_exceeded",
-        nextStep: { kind: "stop" },
-        wouldRemove,
-        maxRemovals,
-      }, true);
+      return finish(
+        {
+          code: "removal_limit_exceeded",
+          nextStep: { kind: "stop" },
+          wouldRemove,
+          maxRemovals,
+        },
+        true,
+      );
     }
     return finish({ code: "complete", nextStep: { kind: "none" } }, true);
   } catch (error) {

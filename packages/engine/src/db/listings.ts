@@ -519,7 +519,8 @@ export async function applyListingPage(
       }
       rows.push(selected);
     }
-    const priorCounts = previous?.counts ?? scan?.checkpoint.counts ?? emptyCounts;
+    const priorCounts =
+      previous?.counts ?? scan?.checkpoint.counts ?? emptyCounts;
     const counts: RecordCounts = {
       accepted: priorCounts.accepted + changes.length - rejected.length,
       rejected: priorCounts.rejected + rejected.length,

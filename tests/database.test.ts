@@ -147,10 +147,10 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     "the outcome migration preserves an existing sync position",
     async () => {
       await db.query("DROP TABLE idx.feed_sync_outcomes");
-      await db.query("DELETE FROM public.schema_migrations WHERE name IN ($1, $2)", [
-        "008_feed_sync_outcomes.sql",
-        "012_feed_sync_reports.sql",
-      ]);
+      await db.query(
+        "DELETE FROM public.schema_migrations WHERE name IN ($1, $2)",
+        ["008_feed_sync_outcomes.sql", "012_feed_sync_reports.sql"],
+      );
       const legacy = await db.query(
         `INSERT INTO idx.feed_sync_positions
         (feed_id, version, completed_mark, next_link, pending_mark)
@@ -195,10 +195,10 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       await db.query(
         "DROP TABLE idx.feed_scan_positions, idx.listing_scan_stamps",
       );
-      await db.query("DELETE FROM public.schema_migrations WHERE name IN ($1, $2)", [
-        "009_feed_scan.sql",
-        "012_feed_sync_reports.sql",
-      ]);
+      await db.query(
+        "DELETE FROM public.schema_migrations WHERE name IN ($1, $2)",
+        ["009_feed_scan.sql", "012_feed_sync_reports.sql"],
+      );
       await db.query(
         `INSERT INTO idx.feed_sync_outcomes
           (feed_id, position_version, code, http_status, next_step, retry_after_seconds, saved_at)
