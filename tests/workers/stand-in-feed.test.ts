@@ -23,9 +23,9 @@ const headers = { Authorization: `Bearer ${feedToken}` };
 
 async function openFeed(t: TestContext, token?: string, count?: string) {
   const directory = await mkdtemp(`${tmpdir()}/idx-worker-feed-`);
-  let worker: Awaited<ReturnType<typeof startWorker>> | undefined;
+  let stop = () => Promise.resolve();
   t.after(async () => {
-    await worker?.stop();
+    await stop();
     await rm(directory, { recursive: true, force: true });
   });
   const { config } = ts.parseConfigFileTextToJson(
@@ -44,11 +44,12 @@ async function openFeed(t: TestContext, token?: string, count?: string) {
       { mode: 0o600 },
     );
   }
-  worker = await startWorker(path, port, {
+  const worker = await startWorker(path, port, {
     hyperdrive: false,
     readyPath: propertyPath,
     readyStatus: 401,
   });
+  stop = worker.stop;
   return worker;
 }
 
