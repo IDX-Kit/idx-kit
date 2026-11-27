@@ -17,6 +17,7 @@ export async function startWorker(
     readyPath?: string;
     readyStatus?: number;
     persistTo?: string;
+    logLevel?: "error" | "info";
   } = {},
 ) {
   const environment = { ...process.env };
@@ -47,7 +48,7 @@ export async function startWorker(
       "--inspector-port",
       "0",
       "--log-level",
-      "error",
+      options.logLevel ?? "error",
       ...(options.persistTo ? ["--persist-to", options.persistTo] : []),
     ],
     {

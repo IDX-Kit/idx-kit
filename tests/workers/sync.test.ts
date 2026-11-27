@@ -93,6 +93,7 @@ async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
     writer: true,
     readyPath: "/cdn-cgi/local/explorer/api/workflows",
     persistTo: `${directory}/state`,
+    logLevel: "info",
   });
   stop = worker.stop;
   return { worker, directory };
