@@ -62,8 +62,8 @@ export async function saveScanCheckpoint(
       : `UPDATE idx.feed_scan_positions SET version = version + 1,
           scan_number = $3, active = $4, next_link = $5,
           records_seen = $6, unreadable_records = $7,
-          record_counts = CASE WHEN $5 THEN $8::jsonb END,
-          last_report = CASE WHEN NOT $5 AND $8::jsonb IS NOT NULL THEN
+          record_counts = CASE WHEN $4 THEN $8::jsonb END,
+          last_report = CASE WHEN NOT $4 AND $8::jsonb IS NOT NULL THEN
             jsonb_build_object('kind', 'scan', 'finishedAt', statement_timestamp(), 'counts', $8::jsonb)
             ELSE last_report END
         WHERE feed_id = $1 AND version = $2`;
