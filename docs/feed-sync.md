@@ -212,13 +212,43 @@ To pause, deploy with an empty `triggers.crons` array and let active runs
 finish. To resume the schedule, restore `*/30 * * * *` and redeploy. The saved
 position carries over. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/#remove-a-cron-trigger)
 
+Cloudflare says adding, changing or removing a Cron Trigger can take up to
+15 minutes to take effect. In the hosted test, a new schedule first ran about
+8 minutes after deployment. [Cloudflare Cron Trigger changes](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+
 For a first load, start the feed expired. Each schedule can apply up to
 pages per run times page size listings if the feed honors the requested page
 size. The last page renews freshness and makes the feed available in the API.
 A temporarily more frequent schedule can speed up the initial load.
-Cloudflare lists 10 ms of processor time per step on the Free plan. Start
-cautiously with `pageSize: 25` and measure representative pages on Workers to
-choose the right size. [Cloudflare Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/)
+
+### Measured processor time on Workers
+
+On November 27, 2026, the stand-in feed Worker and sync Worker ran on
+Cloudflare with 300 heavy invented listings. Cloudflare reports processor
+time per Workflow run. These runs handled at most one page each.
+
+| Listings per page | Typical | Range | Runs |
+| --- | --- | --- | --- |
+| No work to do | 22 ms | 20 to 40 ms | 4 |
+| 1 | 22 ms | 8 to 40 ms | 7 |
+| 25 | 30 ms | 17 to 58 ms | 8 |
+| 50 | 48 ms | 43 to 73 ms | 6 |
+| 100 | 65 ms | 41 to 75 ms | 3 |
+
+Two runs of five 25-listing pages used 165 and 176 ms. Each page took
+0.4 to 0.9 seconds of wall time and used about 9 to 10 database statements.
+These are small samples from one test. Real feeds differ.
+
+Cloudflare lists 10 ms of processor time for Workflows on Workers Free.
+Its pricing page describes that figure per invocation.
+[Cloudflare Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/) · [Cloudflare Workflows pricing](https://developers.cloudflare.com/workflows/reference/pricing/)
+
+Typical runs at every tested page size exceeded 10 ms, and runs with no work
+took 20 to 40 ms. A smaller `pageSize` did not reliably keep sync under 10 ms.
+Plan on Workers Paid for sync on Cloudflare. Sync was not tested on Workers
+Free. On Workers Paid, setting `IDX_SYNC_CPU_MS` to 10 still let the runs
+finish, so that setting cannot be used to rehearse the Free plan. The measured
+`pageSize` values up to 100 were well within the default Paid limit.
 
 The [stand-in feed Worker](../tests/workers/wrangler.stand-in-feed.jsonc) serves
 invented listings for hosted sync tests. Its records come from the repository's
