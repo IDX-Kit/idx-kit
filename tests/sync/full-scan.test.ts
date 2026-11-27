@@ -111,7 +111,8 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
               maxRemovals,
             }),
       checkpoint: () => readScanCheckpoint(db, feedId),
-      lastRun: async () => (await readFeedState(db, feedId, true))?.status.lastRun,
+      lastRun: async () =>
+        (await readFeedState(db, feedId, true))?.status.lastRun,
       oldestIngest: () => readOldestIngest(db, feedId),
       clearOldestIngest: () =>
         db.query(
