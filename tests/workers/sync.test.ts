@@ -10,6 +10,7 @@ import pg from "pg";
 import ts from "typescript";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
+import { reportSyncStep } from "@idx-kit/engine/src/sync/incremental.ts";
 import { validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { keyCommand } from "../api/runtime.ts";
@@ -93,11 +94,30 @@ async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
     writer: true,
     readyPath: "/cdn-cgi/local/explorer/api/workflows",
     persistTo: `${directory}/state`,
-    logLevel: "info",
   });
   stop = worker.stop;
   return { worker, directory };
 }
+
+test("Worker sync steps log the same counts they return", (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  const counts = {
+    accepted: 2,
+    rejected: 1,
+    rejectedByCode: { invalid_change: 1 },
+  };
+  const output = reportSyncStep({ code: "complete", counts });
+  assert.deepEqual(output, {
+    code: "complete",
+    nextStep: { kind: "none" },
+    counts,
+  });
+  assert.equal(log.mock.callCount(), 1);
+  assert.deepEqual(JSON.parse(log.mock.calls[0].arguments[0]), {
+    operation: "listing.sync",
+    ...output,
+  });
+});
 
 test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -243,18 +263,6 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
         counts,
       });
       assert.deepEqual(last.steps[0].output.counts, counts);
-      const logs = worker.rawLogs();
-      assert.ok(
-        logs.includes(
-          JSON.stringify({
-            operation: "listing.sync",
-            code: "complete",
-            nextStep: { kind: "none" },
-            counts,
-          }),
-        ),
-      );
-      checkRedacted(logs, invalid.ListingKey, invalid.ListPrice);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", "?cursor=1", "?cursor=2"],
@@ -268,7 +276,7 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
         body.data.map(({ id }: { id: string }) => id).sort(),
         ids,
       );
-      checkRedacted(worker.rawLogs());
+      checkRedacted(worker.rawLogs(), invalid.ListingKey, invalid.ListPrice);
     },
   );
 

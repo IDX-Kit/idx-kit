@@ -4,7 +4,7 @@ import {
   emptyCounts,
   saveFeedOutcome,
 } from "../db/feed-sync-outcomes.ts";
-import type { FeedNextStep } from "../db/feed-sync-outcomes.ts";
+import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
 import {
   FeedPositionChanged,
   readFeedCheckpoint,
@@ -12,8 +12,32 @@ import {
 } from "../db/feed-sync-positions.ts";
 import type { FeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { applyListingPage, listingFeedTransaction } from "../db/listings.ts";
+import { logLine } from "../log.ts";
 import { listingChangesFor, nextStepFor, readFeedPages } from "./pages.ts";
 import type { SyncFeed } from "./pages.ts";
+
+export function reportSyncStep(result: {
+  code: string;
+  counts: RecordCounts;
+  nextStep?: FeedNextStep | { kind: "none" };
+  message?: string;
+  outcomeSaved?: false;
+}) {
+  const output = {
+    code: result.code,
+    nextStep: result.nextStep ?? { kind: "none" },
+    counts: result.counts,
+    ...(result.message && { message: result.message }),
+  };
+  console.log(
+    logLine({
+      operation: "listing.sync",
+      ...output,
+      ...(result.outcomeSaved === false && { outcomeSaved: false }),
+    }),
+  );
+  return output;
+}
 
 // Each run uses its own connected writer client.
 export async function syncIncrementally(

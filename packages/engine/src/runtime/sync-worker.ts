@@ -10,8 +10,7 @@ import {
   saveFeedOutcome,
 } from "../db/feed-sync-outcomes.ts";
 import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
-import { logLine } from "../log.ts";
-import { syncIncrementally } from "../sync/incremental.ts";
+import { reportSyncStep, syncIncrementally } from "../sync/incremental.ts";
 import { feedSettings, feedTokenSchema } from "./sync-feed-settings.ts";
 
 interface SyncEnv {
@@ -136,15 +135,9 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
             );
             return syncIncrementally(client, { ...feed, connector }, 1);
           });
+          const output = reportSyncStep(result);
           if ("outcomeSaved" in result && result.outcomeSaved === false)
             throw new NonRetryableError("Could not save sync outcome");
-          const output = {
-            code: result.code,
-            nextStep: result.nextStep ?? { kind: "none" },
-            counts: result.counts,
-            ...("message" in result && { message: result.message }),
-          };
-          console.log(logLine({ operation: "listing.sync", ...output }));
           return output;
         },
       );
