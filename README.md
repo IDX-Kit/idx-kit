@@ -62,6 +62,13 @@ npm run demo:db:migrate
 npm run demo:seed
 ```
 
+When upgrading the engine, apply the migrations first, then replace every
+running engine instance before the updated instances serve the same keys.
+An old engine on the migrated database keeps counting requests, and an updated
+engine refuses listing requests until the migrations run.
+If both versions serve the same key during a rollout, the key can briefly
+exceed its listing request limit by a small amount.
+
 Set `DATABASE_URL` to a dedicated database owned by a migration role. Create a
 separate role named `idx_runtime` before migrating. Revoke public schema creation
 from `PUBLIC`; the runtime role must not inherit schema ownership or other roles.

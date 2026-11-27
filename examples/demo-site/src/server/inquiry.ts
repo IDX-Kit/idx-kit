@@ -87,6 +87,7 @@ export async function sendInquiry(request: Request, listingId: string) {
   let engine: ReturnType<typeof engineClient> | undefined;
   try {
     // Astro's checkOrigin protects form content types before this page runs.
+    // Run Hono's body limit directly because Astro handles this route.
     const context = new Context(request);
     await limitInquiry(context, async () => {});
     const body = await context.req.raw.formData();
