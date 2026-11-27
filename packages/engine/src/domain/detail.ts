@@ -24,6 +24,11 @@ export function listingDetail(row: ListingRow): ListingResponse {
       expiresAt: row.expires_at.toISOString(),
     },
   });
+  const withheldFields = row.withheld_fields;
+  let images = row.images;
+  if (withheldFields.includes("address")) {
+    images = withheldFields.includes("images") ? null : [];
+  }
   return {
     data: {
       id: row.id,
@@ -35,8 +40,8 @@ export function listingDetail(row: ListingRow): ListingResponse {
           : { amount: row.price, currency: row.currency! },
       address: row.address,
       bedrooms: row.bedrooms === null ? null : Number(row.bedrooms),
-      images: row.images,
-      withheldFields: row.withheld_fields,
+      images,
+      withheldFields,
       display: display(
         row.display_blocks,
         row.source_updated_at?.toISOString() ?? null,

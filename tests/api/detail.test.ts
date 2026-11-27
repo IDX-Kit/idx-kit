@@ -516,6 +516,38 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
+        "search and detail hide photos left in a stored row with a withheld address",
+        async () => {
+          const id = "lst_writer_legacy_photos";
+          await db.query(
+            `WITH copied AS (
+              INSERT INTO idx.listings
+                (id, synthetic, status, price, currency, bedrooms, images,
+                 withheld_fields, entire_listing_display, display_blocks,
+                 page_blocks, source_updated_at, ingested_at)
+              SELECT $1, synthetic, status, price, currency, bedrooms, images,
+                ARRAY['address'], true, display_blocks, page_blocks,
+                source_updated_at, ingested_at
+              FROM idx.listings WHERE id = 'lst_demo_0001'
+              RETURNING id, source_updated_at
+            )
+            INSERT INTO idx.source_mappings (feed_id, source_key, listing_id, source_revision)
+            SELECT $2, $3, id, source_updated_at FROM copied`,
+            [id, primary, "Synthetic writer legacy photos"],
+          );
+          const [row] = await stored(id);
+          assert.deepEqual(row.images, fixtures.listings[0].source.Images);
+          for (const item of [
+            (await publicDetail(id)).body.data,
+            await searchItem(id),
+          ]) {
+            assert.deepEqual(item.withheldFields, ["address"]);
+            assert.deepEqual(item.images, []);
+          }
+        },
+      );
+
+      await t.test(
         "approved disclosures replace legacy blocks and ignore carried property photos",
         async () => {
           const key = "Synthetic writer legacy disclosure";
@@ -1133,6 +1165,92 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
               .toLowerCase()
               .includes(street.toLowerCase()),
           );
+        }
+      } finally {
+        await seed(db, fixtures);
+      }
+    },
+  );
+  await t.test(
+    "encoded disclosure image addresses reject ingestion and preserve safe rows and HTTP responses",
+    async () => {
+      const fixtures = await new FixtureConnector().read();
+      const safe = structuredClone(fixtures);
+      const hidden = "/api/v1/listings/lst_demo_0002";
+      const street = safe.listings[1].source.Address!.line1;
+      const asset = "/media/synthetic-house-002.svg";
+      const safeUrl = `${asset}?label=%53ynthetic+house&size=2#illustration`;
+      const block = () => ({
+        id: "safe_media",
+        text: "Synthetic disclosure.",
+        placement: "pageFooter",
+        prominence: "normal",
+        image: { url: safeUrl, alt: "Synthetic illustration" },
+      });
+      safe.listings[1].blocks.push(block());
+      safe.listings[1].pageBlocks.push(block());
+      safe.feeds[0].blocks.push(block());
+      const media = (input: typeof safe) => [
+        input.listings[1].blocks.at(-1)!.image!,
+        input.listings[1].pageBlocks.at(-1)!.image!,
+        input.feeds[0].blocks.at(-1)!.image!,
+      ];
+      const rows = async () => ({
+        listings: (await db.query("SELECT * FROM idx.listings ORDER BY id"))
+          .rows,
+        feeds: (await db.query("SELECT * FROM idx.feeds ORDER BY id")).rows,
+      });
+      try {
+        await seed(db, safe);
+        const stored = await rows();
+        const hiddenBody = (await request(hidden)).body;
+        const visibleBody = (await request(listing)).body;
+        assert.equal(hiddenBody.data.display.blocks.at(-1).image.url, safeUrl);
+        assert.deepEqual(
+          hiddenBody.display.blocks
+            .filter((item: DisplayBlock) => item.id === "safe_media")
+            .map((item: DisplayBlock) => item.image!.url),
+          [safeUrl, safeUrl],
+        );
+        assert.equal(
+          visibleBody.display.blocks.find(
+            (item: DisplayBlock) => item.id === "safe_media",
+          ).image.url,
+          safeUrl,
+        );
+        const encoded = encodeURIComponent(street);
+        const escapedLetter = encoded.replace("Hidden", "%48idden");
+        const references = [
+          `/media/${street}.svg`,
+          `/media/${encoded}.svg`,
+          `/media/${escapedLetter}.svg`,
+          `/media/${escapedLetter}/../synthetic-house-002.svg`,
+          `${asset}?address=${encoded.replaceAll("%20", "+")}`,
+          `${asset}?address=${escapedLetter.replaceAll("%20", "+")}`,
+          `${asset}?address=${escapedLetter}`,
+          `${asset}?${escapedLetter}=illustration`,
+          `${asset}#${escapedLetter}`,
+          `https://synthetic.example.invalid/media/${escapedLetter}.svg`,
+          `${asset}?address=%ZZ`,
+        ];
+        for (const reference of references) {
+          for (let target = 0; target < 3; target++) {
+            const attempt = structuredClone(safe);
+            media(attempt)[target].url = reference;
+            // Stage observable writes before each rejection, including shared-feed rejection.
+            attempt.feeds.forEach((feed) => {
+              feed.blocks[0].text = "Synthetic staged rollback marker.";
+            });
+            attempt.feeds.reverse();
+            attempt.listings[0].source.StandardStatus = "pending";
+            await assert.rejects(
+              seed(db, attempt),
+              /Withheld address in media reference/,
+            );
+            assert.deepEqual(await rows(), stored);
+            assert.deepEqual((await request(hidden)).body, hiddenBody);
+            assert.deepEqual((await request(listing)).body, visibleBody);
+          }
         }
       } finally {
         await seed(db, fixtures);
