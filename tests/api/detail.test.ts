@@ -474,8 +474,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           hidden.listing.source.Address!.line1 = oldStreet;
           hidden.listing.source.StandardStatus = `100% ready at ${encoded}`;
           assert.deepEqual((await write([hidden])).rejected, []);
-          assert.equal((await stored(id))[0].status, null);
-          assert.equal((await searchItem(id)).status, null);
+          await absent(id);
 
           const unknownStreet = hiddenAddress(key, 4);
           unknownStreet.listing.source.Images = [reference, undecodable];
