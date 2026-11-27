@@ -13,13 +13,13 @@ import { validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { keyCommand, startEngine } from "../api/runtime.ts";
 import { connectWriter, feedToken, page, standIn } from "./feed.ts";
+import { heavyRecords, initialRevision, sourceKey } from "./stand-in-records.ts";
 
 const volume = 100_000;
 const pageSize = 200;
 const pages = volume / pageSize;
 const midpoint = pages / 2;
 const changed = 50;
-const initialRevision = "2026-11-03T00:00:00.000001Z";
 const editedRevision = "2026-11-03T00:00:00.000002Z";
 const editedPrice = "900000";
 const initialRefresh = "2000-01-01T00:00:00Z";
@@ -28,8 +28,6 @@ const feedId = "feed_sync_volume";
 const siteId = "site_sync_volume";
 const search = "/api/v1/listings";
 
-const sourceKey = (n: number) =>
-  `Synthetic volume ${String(n).padStart(6, "0")}`;
 const price = (n: number) => String(350_000 + (n % 5000) * 100);
 const cursor = (index: number) => `?cursor=${index}`;
 
@@ -384,15 +382,6 @@ test(
     const fixtures = await new FixtureConnector().read();
     const [fixtureFeed] = fixtures.feeds;
     const disclosures = fixtureDisclosures(fixtures, fixtureFeed.id);
-    const heavySource = {
-      ...fixtures.listings[0].source,
-      PublicRemarks:
-        "Invented property remarks for the page cost measurement. ".repeat(80),
-      Images: Array.from({ length: 40 }, (_, index) => ({
-        alt: `Invented property photo ${index + 1}`,
-        url: `https://images.example.test/property/${index + 1}.jpg`,
-      })),
-    };
     for (const size of [200, 100, 50, 25]) {
       const feedId = `feed_sync_cost_${size}`;
       await seed(db, {
@@ -400,12 +389,12 @@ test(
         listings: [],
         sites: [],
       });
-      const records = Array.from({ length: size * 20 }, (_, index) => ({
-        ...heavySource,
-        ListingKey: sourceKey(index + 1),
-        ModificationTimestamp: initialRevision,
-      }));
-      const feed = await standIn(t, () => records);
+      const generated = heavyRecords(fixtures.listings[0].source, size * 20);
+      const records = generated.slice(0, generated.length);
+      const fixedRecords = Object.assign(records, {
+        revision: initialRevision,
+      });
+      const feed = await standIn(t, () => fixedRecords);
       const connector = new ResoConnector(
         feed.propertyUrl,
         feedToken,

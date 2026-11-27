@@ -11,16 +11,27 @@ export const workerRuntime = process.env.IDX_RUNTIME === "worker";
 export async function startWorker(
   config: string,
   port: number,
-  options: { writer?: boolean; readyPath?: string; persistTo?: string } = {},
+  options: {
+    writer?: boolean;
+    hyperdrive?: false;
+    readyPath?: string;
+    readyStatus?: number;
+    persistTo?: string;
+  } = {},
 ) {
-  const connection = options.writer
-    ? process.env.LISTING_WRITER_DATABASE_URL!
-    : process.env.RUNTIME_DATABASE_URL!;
-  assert.equal(
-    new URL(connection).username,
-    options.writer ? "idx_listing_writer" : "idx_runtime",
-  );
-  const binding = options.writer ? "LISTING_WRITER_HYPERDRIVE" : "HYPERDRIVE";
+  const environment = { ...process.env };
+  if (options.hyperdrive !== false) {
+    const connection = options.writer
+      ? process.env.LISTING_WRITER_DATABASE_URL!
+      : process.env.RUNTIME_DATABASE_URL!;
+    assert.equal(
+      new URL(connection).username,
+      options.writer ? "idx_listing_writer" : "idx_runtime",
+    );
+    const binding = options.writer ? "LISTING_WRITER_HYPERDRIVE" : "HYPERDRIVE";
+    environment[`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${binding}`] =
+      connection;
+  }
   const child = spawn(
     process.execPath,
     [
@@ -42,9 +53,7 @@ export async function startWorker(
     {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
-        [`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${binding}`]:
-          connection,
+        ...environment,
         WRANGLER_SEND_METRICS: "false",
         NO_COLOR: "1",
       },
@@ -70,7 +79,11 @@ export async function startWorker(
     const response = await fetch(`http://127.0.0.1:${port}${readyPath}`).catch(
       () => null,
     );
-    if (response?.ok) {
+    const ready =
+      options.readyStatus === undefined
+        ? response?.ok
+        : response?.status === options.readyStatus;
+    if (response && ready) {
       readyId = response.headers.get("Request-Id");
       return {
         rawLogs: () => output,

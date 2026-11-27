@@ -2,23 +2,20 @@ import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
 import pg from "pg";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
-import { listingPageLimit } from "@idx-kit/engine/src/db/listings.ts";
 import { listenOnLoopback } from "../api/loopback-server.ts";
+import { page, pageRecords, propertyPath } from "./stand-in-records.ts";
+import type { FeedRecords } from "./stand-in-records.ts";
 
-interface Page {
-  value: unknown[];
-  "@odata.nextLink"?: string;
-}
+export { page, propertyPath };
 
 type Reply =
-  | Page
-  | unknown[]
+  | ReturnType<typeof page>
+  | FeedRecords
   | { status: number; location?: string; retryAfter?: string; body?: string }
   | "disconnect"
   | "invalid_json"
   | "stall";
 
-export const propertyPath = "/feed/Property";
 export const feedToken = "synthetic-feed-token";
 
 export async function connectWriter(t: TestContext) {
@@ -59,10 +56,6 @@ export async function readOldestIngest(client: pg.Client, feedId: string) {
   return rows[0];
 }
 
-export function page(records: unknown[], nextLink?: string): Page {
-  return { value: records, "@odata.nextLink": nextLink };
-}
-
 export async function standIn(
   t: TestContext,
   respond: (url: URL, requestNumber: number) => Reply | Promise<Reply>,
@@ -80,7 +73,6 @@ export async function standIn(
     const header = request.headers.prefer;
     const prefer = Array.isArray(header) ? header.join(", ") : header;
     preferences.push(prefer);
-    const size = prefer?.match(/^odata\.maxpagesize=(\d+)$/)?.[1];
     async function reply() {
       const result = await respond(url, calls.length);
       if (result === "disconnect") {
@@ -105,14 +97,8 @@ export async function standIn(
         return;
       }
       response.setHeader("Content-Type", "application/json");
-      if (Array.isArray(result)) {
-        const start = Number(url.searchParams.get("cursor"));
-        const end = start + (size ? Number(size) : listingPageLimit);
-        const nextLink = end < result.length ? `?cursor=${end}` : undefined;
-        response.end(JSON.stringify(page(result.slice(start, end), nextLink)));
-      } else {
-        response.end(JSON.stringify(result));
-      }
+      const body = "slice" in result ? pageRecords(result, url, prefer) : result;
+      response.end(JSON.stringify(body));
     }
     void reply().catch(() => response.destroy());
   });

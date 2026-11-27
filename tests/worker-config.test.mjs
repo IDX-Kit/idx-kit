@@ -21,10 +21,13 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
       { database_password: "synthetic-marker" },
       { env: { unsafe: { workers_dev: true } } },
       { route: "synthetic.example.invalid/*" },
-      { observability: { enabled: false } },
+      { observability: { enabled: kind === "stand-in-feed" } },
       { observability: { enabled: true, logs: { enabled: false } } },
       { compatibility_flags: [] },
       { name: "changed" },
+      ...(kind === "stand-in-feed"
+        ? [{ routes: [] }, { hyperdrive: [] }, { main: "sync-worker.ts" }]
+        : []),
       ...(kind === "engine"
         ? [
             { routes: [] },

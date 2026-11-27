@@ -218,7 +218,8 @@ jobs:
           npx wrangler deploy --config packages/engine/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-engine"
           npx wrangler deploy --config examples/demo-site/dist-worker/server/wrangler.json --dry-run --outdir "$RUNNER_TEMP/worker-site"
           npx wrangler deploy --config packages/engine/wrangler.sync.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-sync"
-          node scripts/check-worker-size.mjs "$RUNNER_TEMP/worker-engine" "$RUNNER_TEMP/worker-site" "$RUNNER_TEMP/worker-sync"
+          npx wrangler deploy --config tests/workers/wrangler.stand-in-feed.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-stand-in-feed"
+          node scripts/check-worker-size.mjs "$RUNNER_TEMP/worker-engine" "$RUNNER_TEMP/worker-site" "$RUNNER_TEMP/worker-sync" "$RUNNER_TEMP/worker-stand-in-feed"
           if grep -qEr --include='*.js' 'IDX_SYNC_|LISTING_WRITER_HYPERDRIVE|LISTING_SYNC' "$RUNNER_TEMP/worker-engine"; then
             echo "The HTTP Worker bundle contains a sync setting or binding." >&2
             exit 1
@@ -237,6 +238,8 @@ jobs:
         run: node --test tests/workers/database.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-database.log"
       - name: Prove scheduled listing sync through local Workflows and Hyperdrive
         run: node --test tests/workers/sync.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-sync.log"
+      - name: Prove the stand-in feed Worker with the listing connector
+        run: node --test tests/workers/stand-in-feed.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/worker-stand-in-feed.log"
       - name: Prove safe database failure with the cluster stopped by CI
         run: |
           /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" -m fast -w stop

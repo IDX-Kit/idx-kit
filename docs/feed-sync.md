@@ -182,3 +182,7 @@ A temporarily more frequent schedule can speed up the initial load.
 Cloudflare lists 10 ms of processor time per step on the Free plan. Start
 cautiously with `pageSize: 25` and measure representative pages on Workers to
 choose the right size. [Cloudflare Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/)
+
+The [stand-in feed Worker](../tests/workers/wrangler.stand-in-feed.jsonc) serves
+invented listings for hosted sync tests. Its records come from the repository's
+[synthetic fixtures](../fixtures/RIGHTS.md).

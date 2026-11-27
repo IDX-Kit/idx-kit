@@ -8,6 +8,7 @@ export const configs = {
   engine: "packages/engine/wrangler.jsonc",
   site: "examples/demo-site/wrangler.jsonc",
   sync: "packages/engine/wrangler.sync.jsonc",
+  "stand-in-feed": "tests/workers/wrangler.stand-in-feed.jsonc",
 };
 export async function readConfig(path) {
   const text = await readFile(path, "utf8");
@@ -32,7 +33,8 @@ export function checkConfig(
     "workers_dev",
     "preview_urls",
     "observability",
-    ...(kind === "site" ? ["routes", "services"] : ["main", "hyperdrive"]),
+    ...(kind === "site" ? ["routes", "services"] : ["main"]),
+    ...(["engine", "sync"].includes(kind) ? ["hyperdrive"] : []),
     ...(kind === "engine" ? ["placement"] : []),
     ...(kind === "sync" ? ["triggers", "workflows"] : []),
   ];
@@ -43,7 +45,9 @@ export function checkConfig(
     );
   assert.equal(
     config.name,
-    kind === "sync" ? "idx-kit-sync" : `idx-kit-demo-${kind}`,
+    ["sync", "stand-in-feed"].includes(kind)
+      ? `idx-kit-${kind}`
+      : `idx-kit-demo-${kind}`,
   );
   assert.equal(config.compatibility_date, "2026-11-06");
   assert.deepEqual(config.compatibility_flags, ["nodejs_compat"]);
@@ -53,9 +57,12 @@ export function checkConfig(
   assert.ok(!("route" in config));
   assert.ok(!config.vars || Object.keys(config.vars).length === 0);
   assert.ok(!config.env || Object.keys(config.env).length === 0);
-  assert.equal(config.observability?.enabled, true);
-  assert.notEqual(config.observability?.logs?.enabled, false);
-  if (source) assert.deepEqual(config.observability, { enabled: true });
+  const observability = kind !== "stand-in-feed";
+  assert.equal(config.observability?.enabled, observability);
+  if (observability)
+    assert.notEqual(config.observability?.logs?.enabled, false);
+  if (source)
+    assert.deepEqual(config.observability, { enabled: observability });
   if (kind === "engine") {
     assert.ok(!("routes" in config));
     assert.deepEqual(config.hyperdrive, [
@@ -77,6 +84,9 @@ export function checkConfig(
     assert.deepEqual(config.hyperdrive, [
       { binding: "LISTING_WRITER_HYPERDRIVE", id: hyperdriveId },
     ]);
+  } else if (kind === "stand-in-feed") {
+    assert.equal(config.main, "stand-in-feed.ts");
+    assert.ok(!("routes" in config));
   } else {
     assert.deepEqual(config.routes, [
       { pattern: "demo.idxkit.com", custom_domain: true },
@@ -94,7 +104,7 @@ if (
   for (const [kind, path] of Object.entries(configs)) {
     const { text, config } = await readConfig(path);
     checkConfig(config, kind);
-    if (kind !== "site")
+    if (["engine", "sync"].includes(kind))
       assert.match(text, /\/\/ Placeholder for local builds only\./);
     if (kind === "sync") {
       const entry = resolve(dirname(path), config.main);

@@ -1,0 +1,9 @@
+{
+  "name": "idx-kit-stand-in-feed",
+  "main": "stand-in-feed.ts",
+  "compatibility_date": "2026-11-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false }
+}
