@@ -385,7 +385,6 @@ type PageOptions = { authoritativeSnapshot?: boolean } & (
       incremental?: {
         checkpoint: FeedCheckpoint;
         nextLink: string | null;
-        stepId?: string;
       };
       scan?: never;
     }
@@ -614,7 +613,6 @@ export async function applyListingPage(
         { code: "complete" },
         null,
         counts,
-        incremental.stepId,
       );
     }
     return {

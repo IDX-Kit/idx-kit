@@ -111,6 +111,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
               maxRemovals,
             }),
       checkpoint: () => readScanCheckpoint(db, feedId),
+      lastRun: async () => (await readFeedState(db, feedId, true))?.status.lastRun,
       oldestIngest: () => readOldestIngest(db, feedId),
       clearOldestIngest: () =>
         db.query(
@@ -242,7 +243,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const original = await standIn(t, () => page([first]));
       let during;
       const next = await standIn(t, async () => {
-        during = (await readFeedState(db, state.feedId))?.status.lastRun;
+        during = await state.lastRun();
         return page([second, third]);
       });
       let commits = 0;
@@ -264,7 +265,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       const firstScan = await state.scan(original);
       assert.equal(firstScan.code, "complete");
       assertRun(during, { kind: "scan", counts: firstScan.counts });
-      const after = (await readFeedState(db, state.feedId))?.status.lastRun;
+      const after = await state.lastRun();
       assertRun(after, {
         kind: "scan",
         counts: { accepted: 2, rejected: 0, rejectedByCode: {} },
@@ -353,6 +354,8 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     "rejecting a continuation closes the scan and the next scan ignores its stamps",
     async (t) => {
       const state = await setup(t, "rejected");
+      const finished = await state.lastRun();
+      assert.ok(finished);
       const feed = await standIn(t, (_url, n) => {
         if (n === 1) return page([first], "?cursor=expired");
         if (n === 2) return { status: 410 };
@@ -364,7 +367,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         pagesRead: 1,
         recordsSeen: 1,
         listingsRemoved: 0,
+        counts: { accepted: 1, rejected: 0, rejectedByCode: {} },
       });
+      assert.deepEqual(await state.lastRun(), finished);
       const ended = await state.checkpoint();
       assert.equal(ended.active, false);
       assert.equal(ended.nextLink, null);

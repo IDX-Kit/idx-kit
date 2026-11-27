@@ -46,7 +46,7 @@ type PageReadArgs = [
   completedMark: string | null,
   nextLink: string | null,
   applyPage: (page: Page) => Promise<void>,
-  rejectContinuation: (outcome: StoppedRun) => Promise<void>,
+  rejectContinuation: () => Promise<void>,
 ];
 type FeedRun = StoppedRun | { code: "complete"; status?: number };
 
@@ -70,7 +70,7 @@ export async function readFeedPages(
   while (true) {
     const page = await connector.readPage(completedMark, nextLink);
     if (page.code === "continuation_rejected" && nextLink !== null) {
-      await rejectContinuation(page);
+      await rejectContinuation();
     }
     if (page.code !== "page") return page;
     await applyPage(page);

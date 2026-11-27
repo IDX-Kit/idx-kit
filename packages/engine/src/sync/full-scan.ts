@@ -127,6 +127,7 @@ export async function syncFullScan(
           ...checkpoint,
           active: false,
           nextLink: null,
+          counts: undefined,
         };
         await listingFeedTransaction(client, feedId, () =>
           saveScanCheckpoint(client, feedId, ended),

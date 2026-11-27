@@ -225,7 +225,8 @@ the build. Authorize each site that can display the feed as described above.
 Open `idx-kit-listing-sync` in the Cloudflare Workflows dashboard to see
 instances, step attempts and the run's result. Each successful run returns a code,
 the next step, the number of pages applied, and the traversal counts. Each
-page step includes the counts in its result and log line. `waiting` means the saved
+page step includes the counts in its result and log line. A step retried after
+sync finishes runs a new poll and reports that poll. `waiting` means the saved
 retry delay has yet to elapse. For `stopped`, check the prior run and fix
 the cause, then start one fresh instance by hand. This clears the saved hold
 before reading the next page. The Node `status` command shows `resumed` as the

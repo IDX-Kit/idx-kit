@@ -24,14 +24,19 @@ export const allRejectedMessage =
 export async function readFeedState(
   client: pg.Client,
   feedId: string,
-  stepId?: string,
+  includeLastRun = false,
 ) {
+  const lastRun = includeLastRun
+    ? `, 'lastRun', CASE
+        WHEN s.last_report IS NULL OR
+          (o.last_report->>'finishedAt')::timestamptz >= (s.last_report->>'finishedAt')::timestamptz
+        THEN o.last_report ELSE s.last_report END`
+    : "";
   const { rows } = await client.query<{
     status: {
-      lastOutcome: { nextStep: "retry" | "stop" | null } | null;
-      lastRun: { kind: "incremental" | "scan"; counts: RecordCounts } | null;
+      lastOutcome: { code: string; nextStep: "retry" | "stop" | null } | null;
+      lastRun?: { kind: "incremental" | "scan"; counts: RecordCounts } | null;
     };
-    finishedCounts: RecordCounts | null;
     waitingSeconds: number | null;
   }>(
     `SELECT jsonb_build_object(
@@ -43,14 +48,8 @@ export async function readFeedState(
       'lastOutcome', CASE WHEN o.feed_id IS NOT NULL THEN jsonb_build_object(
         'code', o.code, 'httpStatus', o.http_status, 'nextStep', o.next_step,
         'retrySeconds', o.retry_after_seconds, 'savedAt', o.saved_at
-      ) END,
-      'lastRun', CASE
-        WHEN s.last_report IS NULL OR
-          (o.last_report->>'finishedAt')::timestamptz >= (s.last_report->>'finishedAt')::timestamptz
-        THEN o.last_report - 'worker' ELSE s.last_report END
+      ) END${lastRun}
     ) AS status,
-    CASE WHEN o.last_report->'worker'->>'stepId' = $2
-      THEN o.last_report->'worker'->'counts' END AS "finishedCounts",
     CASE WHEN o.next_step = 'retry' AND o.retry_after_seconds IS NOT NULL THEN
       GREATEST(0, CEIL(o.retry_after_seconds + EXTRACT(EPOCH FROM (o.saved_at - statement_timestamp()))))::integer
     END AS "waitingSeconds"
@@ -59,7 +58,7 @@ export async function readFeedState(
     LEFT JOIN idx.feed_scan_positions s ON s.feed_id = f.id
     LEFT JOIN idx.feed_sync_outcomes o ON o.feed_id = f.id
     WHERE f.id = $1`,
-    [feedId, stepId ?? null],
+    [feedId],
   );
   return rows[0];
 }
@@ -71,26 +70,20 @@ export async function saveFeedOutcome(
   { code, status }: { code: string; status?: number },
   nextStep: FeedNextStep | null,
   counts?: RecordCounts,
-  stepId?: string,
 ) {
   const step = nextStep?.kind ?? null;
   const seconds =
     nextStep?.kind === "retry" ? (nextStep.afterSeconds ?? null) : null;
-  // A Node poll can finish while the Workflow is waiting to retry its step.
   await client.query(
     `INSERT INTO idx.feed_sync_outcomes AS outcomes
       (feed_id, position_version, code, http_status, next_step, retry_after_seconds, saved_at, last_report)
     VALUES ($1, $2, $3, $4, $5, $6, statement_timestamp(), CASE WHEN $7::jsonb IS NOT NULL THEN
-      jsonb_strip_nulls(jsonb_build_object(
-        'kind', 'incremental', 'finishedAt', statement_timestamp(), 'counts', $7::jsonb,
-        'worker', CASE WHEN $8::text IS NOT NULL THEN jsonb_build_object('stepId', $8::text, 'counts', $7::jsonb) END
-      )) END)
+      jsonb_build_object('kind', 'incremental', 'finishedAt', statement_timestamp(), 'counts', $7::jsonb)
+      END)
     ON CONFLICT (feed_id) DO UPDATE SET position_version = EXCLUDED.position_version,
       code = EXCLUDED.code, http_status = EXCLUDED.http_status, next_step = EXCLUDED.next_step,
       retry_after_seconds = EXCLUDED.retry_after_seconds, saved_at = EXCLUDED.saved_at,
-      last_report = COALESCE(EXCLUDED.last_report, outcomes.last_report) ||
-        CASE WHEN $8::text IS NULL AND outcomes.last_report ? 'worker'
-          THEN jsonb_build_object('worker', outcomes.last_report->'worker') ELSE '{}'::jsonb END
+      last_report = COALESCE(EXCLUDED.last_report, outcomes.last_report)
     WHERE outcomes.position_version <= EXCLUDED.position_version`,
     [
       feedId,
@@ -100,7 +93,6 @@ export async function saveFeedOutcome(
       step,
       seconds,
       counts ?? null,
-      stepId ?? null,
     ],
   );
 }

@@ -4,8 +4,9 @@ import { test, type TestContext } from "node:test";
 import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
-import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
+import { readFeedState } from "@idx-kit/engine/src/db/feed-sync-outcomes.ts";
 import type { FeedNextStep } from "@idx-kit/engine/src/db/feed-sync-outcomes.ts";
+import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { applyListingPage } from "@idx-kit/engine/src/db/listings.ts";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
@@ -145,15 +146,14 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         { connector }: Pick<StandIn, "connector">,
         client = writer,
         pageLimit?: number,
-        stepId?: string,
       ) =>
         syncIncrementally(
           client,
           { feedId, synthetic: true, connector, disclosures },
           pageLimit,
-          stepId,
         ),
       checkpoint: () => readFeedCheckpoint(db, feedId),
+      status: async () => (await readFeedState(db, feedId, true))?.status,
       oldestIngest: () => readOldestIngest(db, feedId),
       outcome,
       setOldFreshness,
@@ -193,16 +193,14 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   });
 
   await t.test(
-    "retrying a committed final Worker step returns its traversal totals",
+    "retrying after a final commit polls from the saved mark",
     async (t) => {
       const state = await setup(t, "lost_final_ack");
       const bad = { ...second, ListPrice: 200 };
       const feed = await standIn(t, (url) =>
         url.search === "" ? page([first], "?cursor=2") : page([bad]),
       );
-      assertRun(await state.run(feed, writer, 1, "synthetic-step-1"), {
-        code: "page_limit",
-      });
+      assertRun(await state.run(feed, writer, 1), pageLimitReached);
 
       const query = writer.query.bind(writer);
       const fault = t.mock.method(
@@ -215,20 +213,30 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           return result;
         },
       );
-      const stepId = "synthetic-step-2";
       try {
-        await assert.rejects(
-          state.run(feed, writer, 1, stepId),
-          /Synthetic lost acknowledgement/,
-        );
+        assertRun(await state.run(feed, writer, 1), writeFailed);
       } finally {
         fault.mock.restore();
       }
+      assertRun(await state.status(), {
+        lastOutcome: { code: "complete" },
+        lastRun: {
+          kind: "incremental",
+          counts: {
+            accepted: 1,
+            rejected: 1,
+            rejectedByCode: { invalid_change: 1 },
+          },
+        },
+      });
+      assert.deepEqual(await state.checkpoint(), {
+        version: 2n,
+        position: complete(secondMark),
+      });
       await assertFresh(state);
       const freshness = await state.freshness();
       const peer = await connectWriter(t);
-      const newer = await standIn(t, () => page([bad]));
-      assertRun(await state.run(newer, peer), {
+      assertRun(await state.run(feed, peer, 1), {
         code: "complete",
         counts: {
           accepted: 0,
@@ -236,18 +244,14 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           rejectedByCode: { invalid_change: 1 },
         },
       });
-      assert.deepEqual(await state.run(feed, peer, 1, stepId), {
-        code: "complete",
-        counts: {
-          accepted: 1,
-          rejected: 1,
-          rejectedByCode: { invalid_change: 1 },
-        },
+      assert.deepEqual(await state.checkpoint(), {
+        version: 3n,
+        position: complete(secondMark),
       });
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
-        ["", "?cursor=2"],
+        ["", "?cursor=2", filter(secondMark)],
       );
     },
   );
@@ -621,7 +625,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         },
       );
       try {
-        assertRun(await state.run(feed), writeFailed);
+        assertRun(await state.run(feed, writer, 1), writeFailed);
       } finally {
         fault.mock.restore();
       }
@@ -631,6 +635,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         status: null,
         step: "retry",
         version: 0,
+      });
+      assertRun(await state.status(), {
+        lastOutcome: { code: "write_failed" },
+        lastRun: null,
       });
       assert.deepEqual(await state.listings(), []);
       assert.deepEqual(await state.freshness(), oldFreshness);
@@ -1066,17 +1074,29 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         const state = await setup(t, `expired_${status}`);
         const feed = await standIn(t, (_url, number) => {
           if (number === 1) return page([first]);
-          if (number === 2) return page([third], "?cursor=expired");
+          if (number === 2)
+            return page(
+              [third, { ...second, ListingKey: "" }],
+              "?cursor=expired",
+            );
           if (number === 3) return { status };
           if (number === 4) return page([third, first], "?cursor=fresh");
           return page([second]);
         });
         assertRun(await state.run(feed), { code: "complete" });
+        const finished = (await state.status())?.lastRun;
+        assert.ok(finished);
         const freshness = await state.freshness();
         assertRun(await state.run(feed), {
           code: "continuation_rejected",
           nextStep: retry,
+          counts: {
+            accepted: 1,
+            rejected: 1,
+            rejectedByCode: { invalid_key: 1 },
+          },
         });
+        assert.deepEqual((await state.status())?.lastRun, finished);
         await assertOutcome(state, {
           code: "continuation_rejected",
           status,

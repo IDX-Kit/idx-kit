@@ -24,7 +24,11 @@ export async function readScanCheckpoint(
     records_seen: string;
     unreadable_records: string;
     record_counts: RecordCounts | null;
-  }>("SELECT * FROM idx.feed_scan_positions WHERE feed_id = $1", [feedId]);
+  }>(
+    `SELECT version, scan_number, active, next_link, records_seen, unreadable_records, record_counts
+    FROM idx.feed_scan_positions WHERE feed_id = $1`,
+    [feedId],
+  );
   const row = rows[0];
   const active = row?.active === true && row.record_counts !== null;
   return {

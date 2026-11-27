@@ -73,7 +73,7 @@ async function run() {
   client.on("error", () => {});
   try {
     await client.connect();
-    const state = await readFeedState(client, feedId);
+    const state = await readFeedState(client, feedId, args.command === "status");
     if (!state) {
       return failRun(
         feedId,

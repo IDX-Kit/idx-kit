@@ -2,7 +2,6 @@ import type pg from "pg";
 import {
   allRejectedMessage,
   emptyCounts,
-  readFeedState,
   saveFeedOutcome,
 } from "../db/feed-sync-outcomes.ts";
 import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
@@ -54,7 +53,6 @@ export async function syncIncrementally(
   client: pg.Client,
   feed: SyncFeed,
   pageLimit?: number,
-  stepId?: string,
 ) {
   if (
     pageLimit !== undefined &&
@@ -63,27 +61,8 @@ export async function syncIncrementally(
     throw new RangeError("Page limit must be a whole number of one or more");
   }
   const { feedId, disclosures, connector } = feed;
-  if (stepId !== undefined) {
-    const state = await readFeedState(client, feedId, stepId);
-    if (state?.finishedCounts) return completedRun(state.finishedCounts);
-    if (!state || state.status.lastOutcome?.nextStep === "stop") {
-      return {
-        code: state ? "stopped" : "missing_feed",
-        nextStep: { kind: "stop" },
-        counts: emptyCounts,
-      } as const;
-    }
-    if (state.waitingSeconds) {
-      return {
-        code: "waiting",
-        nextStep: { kind: "retry", afterSeconds: state.waitingSeconds },
-        counts: emptyCounts,
-      } as const;
-    }
-  }
   let checkpoint: FeedCheckpoint | undefined;
   let counts = emptyCounts;
-  let writingFinalPage = false;
   let outcome: Awaited<ReturnType<typeof readFeedPages>>;
   try {
     const current = await readFeedCheckpoint(client, feedId);
@@ -95,20 +74,19 @@ export async function syncIncrementally(
       current.position.completedMark,
       current.position.nextLink,
       async ({ records, nextLink }) => {
-        writingFinalPage = nextLink === null;
         const page = await applyListingPage(
           client,
           feedId,
           mapChanges(records),
           disclosures,
-          { incremental: { checkpoint: current, nextLink, stepId } },
+          { incremental: { checkpoint: current, nextLink } },
         );
         if (!page.savedPosition) throw new Error("Missing saved feed position");
         counts = page.counts;
         current.position = page.savedPosition;
         current.version += 1n;
       },
-      async (rejected) => {
+      async () => {
         const position = {
           ...current.position,
           nextLink: null,
@@ -116,17 +94,10 @@ export async function syncIncrementally(
           recordState: "empty" as const,
           counts: undefined,
         };
-        await listingFeedTransaction(client, feedId, async () => {
-          await saveFeedCheckpoint(client, feedId, { ...current, position });
-          await saveFeedOutcome(
-            client,
-            feedId,
-            current.version + 1n,
-            rejected,
-            nextStepFor(rejected),
-            counts,
-          );
-        });
+        await listingFeedTransaction(client, feedId, () =>
+          saveFeedCheckpoint(client, feedId, { ...current, position }),
+        );
+        current.version += 1n;
       },
       pageLimit,
     );
@@ -138,8 +109,6 @@ export async function syncIncrementally(
         counts,
       } as const;
     }
-    // A Workflow retry can read the committed report if the final reply was lost.
-    if (stepId !== undefined && writingFinalPage) throw error;
     outcome = { code: "write_failed" };
   }
   if (outcome.code === "page_limit") {
@@ -148,7 +117,6 @@ export async function syncIncrementally(
   }
   if (outcome.code === "complete") return completedRun(counts);
   const result = { code: outcome.code, nextStep: nextStepFor(outcome), counts };
-  if (outcome.code === "continuation_rejected") return result;
   if (!checkpoint) return { ...result, outcomeSaved: false } as const;
   try {
     await saveFeedOutcome(
