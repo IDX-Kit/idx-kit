@@ -403,12 +403,16 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(oldest.conservative, true);
 
       fail = false;
-      assertRun(await state.run(feed), { code: "complete" });
+      const resumed = await state.run(feed);
+      assert.deepEqual(resumed, {
+        code: "complete",
+        counts: { accepted: 3, rejected: 0, rejectedByCode: {} },
+      });
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", "?cursor=2", "?cursor=2", "?cursor=3"],
       );
-      assert.deepEqual(await uninterrupted.run(feed), { code: "complete" });
+      assert.deepEqual(await uninterrupted.run(feed), resumed);
       assert.deepEqual(await state.facts(), await uninterrupted.facts());
       assert.equal(
         (await state.listings()).find(({ key }) => key === before.key)?.id,
