@@ -854,18 +854,12 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         page(n === 1 ? [atBoundary] : [pastBoundary]),
       );
       assert.deepEqual(await state.run(feed), { code: "complete" });
-      assert.deepEqual(
-        (await state.checkpoint()).position,
-        complete(boundary),
-      );
+      assert.deepEqual((await state.checkpoint()).position, complete(boundary));
       await assertFresh(state);
       await state.setOldFreshness();
       const freshness = await state.freshness();
       assert.deepEqual(await state.run(feed), { code: "complete" });
-      assert.deepEqual(
-        (await state.checkpoint()).position,
-        complete(boundary),
-      );
+      assert.deepEqual((await state.checkpoint()).position, complete(boundary));
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(
         (await state.listings()).map(({ revision }) => revision),
