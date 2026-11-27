@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import ts from "typescript";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
+import { readConfig } from "../../scripts/check-worker-config.mjs";
 import { registerSecret } from "../logs.ts";
 import { feedToken } from "../sync/feed.ts";
 import {
@@ -28,10 +28,8 @@ async function openFeed(t: TestContext, token?: string, count?: string) {
     await stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const { config } = ts.parseConfigFileTextToJson(
-    configPath,
-    await readFile(configPath, "utf8"),
-  );
+  const { config } = await readConfig(configPath);
+  assert.ok(typeof config.main === "string");
   config.main = resolve(dirname(configPath), config.main);
   if (count !== undefined) config.vars = { IDX_STAND_IN_LISTING_COUNT: count };
   const path = `${directory}/wrangler.json`;
