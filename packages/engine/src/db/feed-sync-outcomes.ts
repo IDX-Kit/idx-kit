@@ -6,11 +6,11 @@ export type FeedNextStep =
 export type RejectionCode =
   "invalid_key" | "invalid_change" | "future_revision";
 
-export interface RecordCounts {
+export type RecordCounts = {
   accepted: number;
   rejected: number;
   rejectedByCode: Partial<Record<RejectionCode, number>>;
-}
+};
 
 export const emptyCounts: RecordCounts = {
   accepted: 0,
