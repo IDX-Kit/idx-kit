@@ -631,7 +631,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     async (t) => {
       const state = await setup(t, "invalid_facts");
       const feed = await standIn(t, () =>
-        page([{ ...first, ListPrice: 100 }, { ...second, Address: undefined }]),
+        page([
+          { ...first, ListPrice: 100 },
+          { ...second, Address: undefined },
+        ]),
       );
       const freshness = await state.freshness();
       const result = await state.run(feed);
