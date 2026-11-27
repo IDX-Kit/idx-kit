@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      12,
+      13,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -233,10 +233,15 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     },
   );
   await t.test(
-    "runtime reads listings but cannot change schema, sites or accepted inquiries",
+    "runtime reads listings and mapping IDs but cannot read source keys or change stored data",
     async () => {
       await runtime.query("SELECT * FROM idx.listings");
+      await runtime.query(
+        "SELECT feed_id, listing_id FROM idx.source_mappings",
+      );
       for (const sql of [
+        "SELECT source_key FROM idx.source_mappings",
+        "SELECT source_revision FROM idx.source_mappings",
         "CREATE TABLE idx.forbidden (id int)",
         "CREATE TABLE public.forbidden (id int)",
         "DROP TABLE idx.listings",

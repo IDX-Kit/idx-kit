@@ -694,15 +694,50 @@ test(
       },
     );
     await t.test(
-      "runtime privileges are exactly SELECT and INSERT; constraints are immediate and indexed",
-      async () => {
+      "runtime can read receipt and replay columns but cannot read inquiry contents",
+      async (t) => {
+        assert.ok(process.env.RUNTIME_DATABASE_URL);
+        const runtime = new pg.Client({
+          connectionString: process.env.RUNTIME_DATABASE_URL,
+        });
+        await runtime.connect();
+        t.after(() => runtime.end());
+        const user = await runtime.query("SELECT current_user AS name");
+        assert.equal(user.rows[0].name, "idx_runtime");
+
+        const { id, receivedAt } = first.body.data;
+        const { rows } = await runtime.query(
+          `SELECT id, site_id, received_at, idempotency_key, body_hash
+          FROM idx.inquiries WHERE site_id=$1 AND idempotency_key=$2`,
+          [site, key],
+        );
+        assert.equal(rows.length, 1);
+        assert.deepEqual(rows[0], {
+          id,
+          site_id: site,
+          received_at: new Date(receivedAt),
+          idempotency_key: key,
+          body_hash: hashBody(input),
+        });
+        for (const column of [
+          "visitor_name",
+          "visitor_email",
+          "message",
+          "context",
+          "listing_id",
+        ]) {
+          const sql = `SELECT ${column} FROM idx.inquiries WHERE id=$1`;
+          await assert.rejects(runtime.query(sql, [id]), { code: "42501" });
+        }
         const grants = await db.query(
           "SELECT privilege_type FROM information_schema.role_table_grants WHERE table_schema='idx' AND table_name='inquiries' AND grantee='idx_runtime'",
         );
-        assert.deepEqual(grants.rows.map((row) => row.privilege_type).sort(), [
-          "INSERT",
-          "SELECT",
-        ]);
+        assert.deepEqual(grants.rows, [{ privilege_type: "INSERT" }]);
+      },
+    );
+    await t.test(
+      "the inquiry idempotency constraint is immediate",
+      async () => {
         const constraint = await db.query(
           "SELECT condeferrable FROM pg_constraint WHERE conrelid='idx.inquiries'::regclass AND conname='inquiries_site_key'",
         );

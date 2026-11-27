@@ -65,8 +65,12 @@ npm run demo:seed
 Set `DATABASE_URL` to a dedicated database owned by a migration role. Create a
 separate role named `idx_runtime` before migrating. Revoke public schema creation
 from `PUBLIC`; the runtime role must not inherit schema ownership or other roles.
-The migration role owns the tables. `idx_runtime` receives schema usage, read
-access, and permission to insert inquiries. Seeding uses the migration connection.
+The migration role owns the tables and can read stored inquiries. `idx_runtime`
+receives schema usage, read access for listing queries, and permission to insert
+inquiries. On `idx.source_mappings` it can read only `feed_id` and `listing_id`.
+On `idx.inquiries` it can read only `id`, `site_id`, `received_at`,
+`idempotency_key`, and `body_hash` for receipts and retries. Inquiry email uses
+the submitted form data. Seeding uses the migration connection.
 Repeating the seed keeps public listing IDs and updates facts by feed/source key.
 The fixtures contain 24 invented listings, including deliberately undisplayable
 and expired records. See [fixture provenance](fixtures/RIGHTS.md).

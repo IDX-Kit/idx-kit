@@ -64,7 +64,9 @@ Use UTF-8 with PostgreSQL's built-in `PG_UNICODE_FAST` database locale for
 city matching with accented letters. The temporary directory holds the
 cluster, socket, logs, and protected key.
 The migration role owns the database. The engine uses the separate runtime
-role, which gets read access to listings and permission to save inquiries.
+role, which can read listing data, save inquiries, and read the fields needed
+for inquiry receipts and retries.
+See the [database permissions](../README.md#database-development).
 
 ```bash ci
 export IDX_TEST_LOG_DIR="$IDX_DEMO_DIR/test-logs"
