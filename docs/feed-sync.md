@@ -239,16 +239,20 @@ Two runs of five 25-listing pages used 165 and 176 ms. Each page took
 0.4 to 0.9 seconds of wall time and used about 9 to 10 database statements.
 These are small samples from one test. Real feeds differ.
 
-Cloudflare lists 10 ms of processor time for Workflows on Workers Free.
-Its pricing page describes that figure per invocation.
+For Workflows on Workers Free, Cloudflare's limits page lists 10 ms of
+processor time per step. Its pricing page lists 10 ms per invocation.
 [Cloudflare Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/) · [Cloudflare Workflows pricing](https://developers.cloudflare.com/workflows/reference/pricing/)
+
+For runs with several pages, the reported total does not show how much
+processor time any single step used. The one-page runs in the table are the
+closest estimates of processor time for a page step.
 
 Typical runs at every tested page size exceeded 10 ms, and runs with no work
 took 20 to 40 ms. A smaller `pageSize` did not reliably keep sync under 10 ms.
-Plan on Workers Paid for sync on Cloudflare. Sync was not tested on Workers
-Free. On Workers Paid, setting `IDX_SYNC_CPU_MS` to 10 still let the runs
-finish, so that setting cannot be used to rehearse the Free plan. The measured
-`pageSize` values up to 100 were well within the default Paid limit.
+Plan on Workers Paid for sync on Cloudflare. The measured `pageSize` values
+up to 100 were well within the default Paid limit. On Workers Paid, the
+observed runs completed with `IDX_SYNC_CPU_MS` set to `10`. Sync behavior on
+Workers Free remains unverified.
 
 The [stand-in feed Worker](../tests/workers/wrangler.stand-in-feed.jsonc) serves
 invented listings for hosted sync tests. Its records come from the repository's
