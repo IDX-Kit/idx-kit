@@ -23,6 +23,7 @@ import { saveScanCheckpoint, stampScanKeys } from "./feed-scan-positions.ts";
 import type { ScanCheckpoint } from "./feed-scan-positions.ts";
 
 export const listingPageLimit = 200;
+const clockSkewAllowanceMs = 5 * 60 * 1000;
 // PostgreSQL stores this sentinel in the existing timestamp column. Source
 // timestamps must be finite, so only the writer can mark order as unknown.
 const orderUnknown = "infinity";
@@ -378,9 +379,12 @@ function disclosureResolver(blocks: DisplayBlock[], required: string[]) {
 }
 
 type PageOptions = { authoritativeSnapshot?: boolean } & (
-  | { checkpoint?: FeedCheckpoint; scan?: never }
   | {
-      checkpoint?: never;
+      incremental?: { checkpoint: FeedCheckpoint; nextLink: string | null };
+      scan?: never;
+    }
+  | {
+      incremental?: never;
       scan: { checkpoint: ScanCheckpoint; maxRemovals?: number };
     }
 );
@@ -390,7 +394,7 @@ export async function applyListingPage(
   feedId: string,
   changes: readonly ListingChange[],
   disclosures: ListingPageDisclosures,
-  { authoritativeSnapshot = false, checkpoint, scan }: PageOptions = {},
+  { authoritativeSnapshot = false, incremental, scan }: PageOptions = {},
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
@@ -408,12 +412,19 @@ export async function applyListingPage(
     disclosures.requiredPageBlockIds,
   );
 
-  const rejected: { index: number; code: "invalid_key" | "invalid_change" }[] =
-    [];
+  const rejected: {
+    index: number;
+    code: "invalid_key" | "invalid_change" | "future_revision";
+  }[] = [];
   const indexed = Array.from(changes, (change, index) => ({ change, index }));
   const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
+  const previous = incremental?.checkpoint.position;
+  const completedMark = previous?.completedMark ?? null;
+  const latestAllowed = incremental
+    ? revisionKey(new Date(Date.now() + clockSkewAllowanceMs).toISOString())
+    : null;
   return listingFeedTransaction(client, feedId, async () => {
-    if (checkpoint) await saveFeedCheckpoint(client, feedId, checkpoint);
+    let pendingMark = previous?.pendingMark ?? null;
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
@@ -430,15 +441,26 @@ export async function applyListingPage(
         continue;
       }
       const addresses = [stored?.address ?? null];
-      const candidates = group.map(({ change, index }) => {
-        const revision = timestampSchema.safeParse(change.revision);
+      const candidates: Candidate[] = [];
+      for (const { change, index } of group) {
+        const timestamp = timestampSchema.safeParse(change.revision);
+        const revision = timestamp.success ? revisionKey(timestamp.data) : null;
+        if (revision !== null && latestAllowed !== null) {
+          if (revision > latestAllowed) {
+            rejected.push({ index, code: "future_revision" });
+            continue;
+          }
+          pendingMark ??= completedMark;
+          if (pendingMark === null || revision > pendingMark)
+            pendingMark = revision;
+        }
         let listing: NormalizedListing | null = null;
         try {
           if (change.kind === "upsert") {
             const source = change.listing.source;
             const address = addressSchema.safeParse(source.Address);
             if (address.success) addresses.push(address.data);
-            if (!revision.success) throw new Error("Invalid revision");
+            if (revision === null) throw new Error("Invalid revision");
             if (!isRemoved(source, false)) {
               listing = normalize(
                 {
@@ -451,7 +473,7 @@ export async function applyListingPage(
               );
             }
           } else if (
-            !revision.success ||
+            revision === null ||
             (change.kind !== "withdrawn" && change.kind !== "deleted")
           ) {
             throw new Error("Invalid removal");
@@ -459,16 +481,14 @@ export async function applyListingPage(
         } catch {
           rejected.push({ index, code: "invalid_change" });
         }
-        return {
+        candidates.push({
           index,
           source_key: key,
-          revision: revision.success
-            ? revisionKey(revision.data)
-            : orderUnknown,
+          revision: revision ?? orderUnknown,
           candidate: `lst_${crypto.randomUUID()}`,
           listing,
-        };
-      });
+        });
+      }
       const selected = selectChange(
         candidates,
         stored,
@@ -498,7 +518,26 @@ export async function applyListingPage(
     };
     if (scanCheckpoint)
       await saveScanCheckpoint(client, feedId, scanCheckpoint);
-    const incrementalContinues = checkpoint?.position.nextLink != null;
+    let savedPosition: FeedCheckpoint["position"] | undefined;
+    let renewFreshness = false;
+    const incrementalContinues = incremental?.nextLink != null;
+    if (incremental) {
+      savedPosition = {
+        completedMark: incrementalContinues
+          ? completedMark
+          : (pendingMark ?? completedMark),
+        nextLink: incremental.nextLink,
+        pendingMark: incrementalContinues ? pendingMark : null,
+      };
+      await saveFeedCheckpoint(client, feedId, {
+        position: savedPosition,
+        version: incremental.checkpoint.version,
+      });
+      // A pending mark proves that some page contained an eligible revision.
+      const emptyPoll = previous?.nextLink === null && changes.length === 0;
+      renewFreshness =
+        !incrementalContinues && (pendingMark !== null || emptyPoll);
+    }
     await writePage(
       client,
       feedId,
@@ -527,11 +566,12 @@ export async function applyListingPage(
         [feedId],
         scan ? undefined : feedBlocks,
       );
-    if (checkpoint?.position.nextLink === null) {
+    if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }
     const applied = new Set(rows.map((row) => row.index));
     return {
+      ...(savedPosition && { savedPosition }),
       ...(scanCheckpoint && { scanCheckpoint }),
       ...(removal && { removal }),
       rejected: rejected

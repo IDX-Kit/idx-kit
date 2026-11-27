@@ -6,6 +6,7 @@ import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import type { FeedNextStep } from "@idx-kit/engine/src/db/feed-sync-outcomes.ts";
+import { applyListingPage } from "@idx-kit/engine/src/db/listings.ts";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { hashSecret } from "@idx-kit/engine/src/domain/keys.ts";
@@ -26,6 +27,7 @@ import {
 const firstMark = "2026-11-03T00:00:00.000001Z";
 const secondMark = "2026-11-03T00:00:00.000002Z";
 const thirdMark = "2026-11-03T00:00:00.000003Z";
+const futureMark = "2099-01-01T00:00:00.000000Z";
 const initialRefresh = "2000-01-01T00:00:00Z";
 const initialExpiry = "2000-01-01T12:00:00Z";
 const retry = { kind: "retry" } as const;
@@ -137,6 +139,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       return rows[0];
     };
     return {
+      feedId,
       run: (
         { connector }: Pick<StandIn, "connector">,
         client = writer,
@@ -370,7 +373,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       const uninterrupted = await setup(t, "uninterrupted");
       t.mock.timers.enable({
         apis: ["Date"],
-        now: Date.parse("1999-01-01T00:00:00Z"),
+        now: Date.parse("2026-11-04T00:00:00Z"),
       });
       let fail = true;
       const feed = await standIn(t, (url) => {
@@ -580,7 +583,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     "a future-dated record cannot make the next poll skip a later withdrawal",
     async (t) => {
       const state = await setup(t, "future_revision");
-      const future = record("future", "2099-01-01T00:00:00.000000Z");
+      const future = record("future", futureMark);
       const withdrawal = {
         ...first,
         StandardStatus: "Withdrawn",
@@ -599,6 +602,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
 
       assert.deepEqual(await state.run(feed), { code: "complete" });
       const position = (await state.checkpoint()).position;
+      const live = await state.listings();
+      assert.equal(live.length, 1);
+      assert.equal(live[0].key, first.ListingKey);
+      assert.equal(live[0].revision, firstMark);
+      await assertFresh(state);
       assert.deepEqual(await state.run(feed), { code: "complete" });
       assert.equal(
         (await state.listings()).find(({ key }) => key === first.ListingKey)
@@ -607,8 +615,67 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       );
       assert.deepEqual(position, complete(firstMark));
       assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(secondMark),
+      );
+      assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", filter(firstMark)],
+      );
+    },
+  );
+
+  await t.test(
+    "rejected identities and future revisions cannot renew freshness alone",
+    async (t) => {
+      const state = await setup(t, "rejected_only");
+      const bad = { ...third, ListingKey: null };
+      const future = record("future", futureMark);
+      const feed = await standIn(t, (_url, number) => {
+        if (number === 1) return page([first]);
+        if (number === 2) return page([bad, future], "?cursor=empty");
+        return page([]);
+      });
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      await state.setOldFreshness();
+      const freshness = await state.freshness();
+      const checkpoint = await state.checkpoint();
+      const { rejected } = await applyListingPage(
+        writer,
+        state.feedId,
+        [
+          { kind: "withdrawn", sourceKey: "", revision: thirdMark },
+          {
+            kind: "withdrawn",
+            sourceKey: first.ListingKey,
+            revision: futureMark,
+          },
+        ],
+        disclosures,
+        { incremental: { checkpoint, nextLink: null } },
+      );
+      assert.deepEqual(rejected, [
+        { index: 0, code: "invalid_key", hidden: false },
+        { index: 1, code: "future_revision", hidden: false },
+      ]);
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      const { position } = await state.checkpoint();
+      assert.equal(position.completedMark, firstMark);
+      assert.equal(position.pendingMark, null);
+      assert.equal(new URL(position.nextLink!).search, "?cursor=empty");
+
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(firstMark),
+      );
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      await assertFresh(state);
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", filter(firstMark), "?cursor=empty", filter(firstMark)],
       );
     },
   );

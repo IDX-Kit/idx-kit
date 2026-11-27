@@ -7,12 +7,7 @@ import {
   saveFeedCheckpoint,
 } from "../db/feed-sync-positions.ts";
 import type { FeedCheckpoint } from "../db/feed-sync-positions.ts";
-import {
-  applyListingPage,
-  listingFeedTransaction,
-  revisionKey,
-} from "../db/listings.ts";
-import { timestampSchema } from "../domain/normalize.ts";
+import { applyListingPage, listingFeedTransaction } from "../db/listings.ts";
 import { listingChangesFor, nextStepFor, readFeedPages } from "./pages.ts";
 import type { SyncFeed } from "./pages.ts";
 
@@ -39,35 +34,16 @@ export async function syncIncrementally(
       connector,
       current.position.completedMark,
       current.position.nextLink,
-      async (page) => {
-        const changes = mapChanges(page.records);
-        const { position } = current;
-        const savedMark = position.pendingMark;
-        let pendingMark = position.completedMark;
-        if (
-          savedMark !== null &&
-          (pendingMark === null || savedMark > pendingMark)
-        ) {
-          pendingMark = savedMark;
-        }
-        for (const { revision } of changes) {
-          const timestamp = timestampSchema.safeParse(revision);
-          if (!timestamp.success) continue;
-          const key = revisionKey(timestamp.data);
-          if (key !== null && (pendingMark === null || key > pendingMark)) {
-            pendingMark = key;
-          }
-        }
-        const complete = page.nextLink === null;
-        const next = {
-          completedMark: complete ? pendingMark : position.completedMark,
-          nextLink: page.nextLink,
-          pendingMark: complete ? null : pendingMark,
-        };
-        await applyListingPage(client, feedId, changes, disclosures, {
-          checkpoint: { position: next, version: current.version },
-        });
-        current.position = next;
+      async ({ records, nextLink }) => {
+        const { savedPosition } = await applyListingPage(
+          client,
+          feedId,
+          mapChanges(records),
+          disclosures,
+          { incremental: { checkpoint: current, nextLink } },
+        );
+        if (!savedPosition) throw new Error("Missing saved feed position");
+        current.position = savedPosition;
         current.version += 1n;
       },
       async () => {

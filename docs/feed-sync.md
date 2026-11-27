@@ -87,7 +87,10 @@ Under Contract, Coming Soon, or Pending. Any other status, including an empty
 or missing status, withdraws the listing when the record is processed.
 
 `npm run --silent sync -- incremental` reads from the saved position and
-renews the freshness window when it completes.
+renews freshness after a single empty page or a complete poll with at least one
+readable identity and plausible revision. Unreadable identities and revisions
+more than five minutes ahead of the sync clock are rejected, and only eligible
+revisions move the saved mark forward.
 
 ```json
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"}}
