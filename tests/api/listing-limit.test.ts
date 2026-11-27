@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
 import type { SearchResponse } from "@idx-kit/client";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
@@ -93,8 +94,10 @@ test("listing request budgets through HTTP", { timeout: 90_000 }, async (t) => {
     const { rows } = await db.query<{
       window_start: Date;
       request_count: number;
+      xmin: string;
+      xmax: string;
     }>(
-      "SELECT window_start, request_count FROM idx.listing_request_windows WHERE key_id = $1",
+      "SELECT window_start, request_count, xmin::text, xmax::text FROM idx.listing_request_windows WHERE key_id = $1",
       [id],
     );
     return rows[0];
@@ -124,10 +127,12 @@ test("listing request budgets through HTTP", { timeout: 90_000 }, async (t) => {
   const first = await request(firstPage, 200);
   const cursor = (first.body as SearchResponse).meta.page.nextCursor;
   assert.ok(cursor);
+  const firstWindow = await windowFor();
   await request(`${firstPage}&after=${encodeURIComponent(cursor)}`, 200);
   const admitted = await request(detail, 200);
   const spent = await windowFor();
   assert.equal(spent.request_count, 3);
+  assert.notEqual(spent.xmin, firstWindow.xmin);
   const refused = await request(detail, 429);
   const refusedSearch = await request(
     search + "?city=" + encodeURIComponent(queryMarker),
@@ -323,4 +328,34 @@ test("detail admission uses two SQL statements and refusal uses one", async (t) 
     429,
   );
   assert.equal(counter.mock.callCount(), 1);
+
+  await t.test("a refusal sees a reset committed while it waits", async () => {
+    const { rows } = await runtime.query("SELECT pg_backend_pid() AS pid");
+    await db.query(
+      "UPDATE idx.listing_request_windows SET window_start = clock_timestamp() - interval '61 seconds' WHERE key_id = $1",
+      [key.id],
+    );
+    await db.query("BEGIN");
+    let pending: Promise<Response>;
+    let blocked = false;
+    try {
+      await db.query("SELECT idx.charge_listing_request($1, 1)", [key.id]);
+      pending = request();
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const result = await db.query(
+          "SELECT pg_backend_pid() = ANY(pg_blocking_pids($1)) AS blocked",
+          [rows[0].pid],
+        );
+        blocked = result.rows[0].blocked;
+        if (blocked) break;
+        await delay(10);
+      }
+    } finally {
+      await db.query("COMMIT");
+    }
+    const { response } = await check(await pending, detailSchema);
+    assert.ok(blocked, "The request must wait for the reset to commit.");
+    assert.equal(response.status, 429);
+    assert.ok(Number(response.headers.get("Retry-After")) >= 55);
+  });
 });

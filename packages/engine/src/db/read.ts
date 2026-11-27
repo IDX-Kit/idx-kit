@@ -19,41 +19,13 @@ interface SiteKey {
   retry_after?: number | null;
 }
 
-// The conflicting row can be newer than this statement's snapshot. Return its
-// window from the upsert even when a refusal leaves both values unchanged.
-const listingKey = `WITH matched_key AS (
-  SELECT id, site_id, scopes, listing_request_limit
-  FROM idx.site_secret_keys
-  WHERE secret_hash = $1 AND revoked_at IS NULL
-), charged AS (
-  INSERT INTO idx.listing_request_windows AS budget (key_id, window_start, request_count)
-  SELECT id, clock_timestamp(), 1
-  FROM matched_key
-  WHERE 'listings:read' = ANY(scopes)
-  ON CONFLICT (key_id) DO UPDATE
-  SET (window_start, request_count) = (
-    SELECT CASE WHEN expired THEN checked_at ELSE budget.window_start END,
-      CASE
-        WHEN expired THEN 1
-        WHEN budget.request_count < (SELECT listing_request_limit FROM matched_key)
-          THEN budget.request_count + 1
-        ELSE budget.request_count
-      END
-    FROM (SELECT clock_timestamp() AS checked_at) AS request
-    CROSS JOIN LATERAL (
-      SELECT checked_at >= budget.window_start + interval '60 seconds' AS expired
-    ) AS timing
-  )
-  RETURNING key_id, CASE
-    WHEN OLD.window_start = NEW.window_start AND OLD.request_count = NEW.request_count
-      THEN LEAST(60, GREATEST(1, CEIL(EXTRACT(EPOCH FROM (
-        NEW.window_start + interval '60 seconds' - clock_timestamp()
-      )))))::integer
+const listingKey = `SELECT site_id, scopes,
+  CASE WHEN 'listings:read' = ANY(scopes) THEN id END AS key_id,
+  CASE WHEN 'listings:read' = ANY(scopes)
+    THEN idx.charge_listing_request(id, listing_request_limit)
   END AS retry_after
-)
-SELECT site_id, scopes, charged.key_id, charged.retry_after
-FROM matched_key LEFT JOIN charged ON charged.key_id = matched_key.id
-WHERE NOT ('listings:read' = ANY(scopes)) OR charged.key_id IS NOT NULL`;
+  FROM idx.site_secret_keys
+  WHERE secret_hash = $1 AND revoked_at IS NULL`;
 
 export interface ListingRow {
   id: string;

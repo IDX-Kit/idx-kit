@@ -300,10 +300,10 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       expect(requests.join("")).not.toContain(value);
   });
 
-  test("a 4,000-character multiline message reaches the real engine", async ({
+  test("a 4,000-character multiline Unicode message reaches the real engine", async ({
     page,
   }) => {
-    const message = `${"a".repeat(1999)}\n${"b".repeat(2000)}`;
+    const message = `${"日".repeat(1999)}\n${"本".repeat(2000)}`;
     await page.goto(property);
     await fillInquiry(page, visitor, message);
     expect((await submitInquiry(page, property)).status()).toBe(303);
@@ -311,6 +311,19 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
     const stored = await rows();
     expect(stored).toHaveLength(1);
     expect(stored[0].message).toBe(message);
+  });
+
+  test("an oversized inquiry gets a form error without reaching the engine", async ({
+    request,
+  }) => {
+    const response = await request.post(faultOrigin + property, {
+      form: { ...visitor, message: "a".repeat(16 * 1024) },
+    });
+    expect(response.status()).toBe(413);
+    expect(await response.text()).toContain("This inquiry is too large.");
+    expect(response.headers()["cache-control"]).toBe("no-store");
+    expect(posts).toBe(0);
+    expect(await rows()).toHaveLength(0);
   });
 
   test("Back to a sent form replays unchanged and requires a fresh Send after a mismatch", async ({

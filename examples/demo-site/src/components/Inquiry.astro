@@ -26,7 +26,7 @@ const wait = form.retryAfter
     </p>
   )}
   {form.retryAfter && <p data-retry-after>{wait}</p>}
-  <form method="post" action={path}>
+  <form method="post" action={path} enctype="multipart/form-data">
     <input type="hidden" name="idempotencyKey" value={form.key} />
     <div hidden aria-hidden="true">
       <label for="website">Leave this field empty</label>

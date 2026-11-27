@@ -10,6 +10,25 @@ import {
   searchProblem,
   logFailure,
 } from "@idx-kit/demo-site/src/server/engine.ts";
+import { sendInquiry } from "@idx-kit/demo-site/src/server/inquiry.ts";
+
+test("oversized inquiry bodies are refused before form parsing", async (t) => {
+  const parse = t.mock.method(Request.prototype, "formData");
+  const body = new URLSearchParams({ message: "a".repeat(16 * 1024) });
+  for (const headers of [
+    { "Content-Length": String(body.toString().length) },
+    undefined,
+  ]) {
+    const request = new Request("http://127.0.0.1/properties/lst_demo_0001", {
+      method: "POST",
+      headers,
+      body,
+    });
+    const result = await sendInquiry(request, "lst_demo_0001");
+    assert.equal(result.status, 413);
+  }
+  assert.equal(parse.mock.callCount(), 0);
+});
 
 test("demo requests use generated operations with server-only authorization and transport options", async (t) => {
   const originalFetch = globalThis.fetch;

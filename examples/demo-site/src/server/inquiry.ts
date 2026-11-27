@@ -1,5 +1,8 @@
 import { ApiError } from "@idx-kit/client";
 import { z } from "astro/zod";
+import { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { HTTPException } from "hono/http-exception";
 import {
   engineClient,
   logFailure,
@@ -9,6 +12,7 @@ import {
 import { writeLog } from "./log.ts";
 
 export const inquiryFields = ["name", "email", "message"] as const;
+const limitInquiry = bodyLimit({ maxSize: 16 * 1024 });
 const validationIssues = z.array(
   z.object({
     detail: z.string(),
@@ -83,7 +87,9 @@ export async function sendInquiry(request: Request, listingId: string) {
   let engine: ReturnType<typeof engineClient> | undefined;
   try {
     // Astro's checkOrigin protects form content types before this page runs.
-    const body = await request.formData();
+    const context = new Context(request);
+    await limitInquiry(context, async () => {});
+    const body = await context.req.raw.formData();
     for (const field of inquiryFields) {
       const value = body.get(field);
       form.values[field] = typeof value === "string" ? value : "";
@@ -116,6 +122,10 @@ export async function sendInquiry(request: Request, listingId: string) {
     if (receipt.data) return { receipt: receipt.data };
     return { form, status: 303 };
   } catch (error) {
+    if (error instanceof HTTPException && error.status === 413) {
+      form.message = "This inquiry is too large.";
+      return { form, status: 413 };
+    }
     logFailure(error, engine?.context());
     const status = inquiryFailure(
       error,
