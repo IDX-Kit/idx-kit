@@ -93,7 +93,9 @@ test("hosted sync deploy checks settings and removes its temporary config", asyn
     new URL("../docs/feed-sync.md", import.meta.url),
     "utf8",
   );
-  const json = JSON.stringify(parse(guide.match(/```yaml\n([\s\S]+?)```/)[1]));
+  const feed = parse(guide.match(/```yaml\n([\s\S]+?)```/)[1]);
+  const input = structuredClone(feed);
+  input.disclosures.approvedFeedBlocks[0].unused = "synthetic-unknown-field";
   const id = "1234567890abcdef1234567890abcdef";
   const secrets = [
     "IDX_SYNC_FEED_TOKEN",
@@ -104,7 +106,7 @@ test("hosted sync deploy checks settings and removes its temporary config", asyn
   const env = {
     ...process.env,
     SYNC_HYPERDRIVE_ID: id,
-    IDX_SYNC_FEED_JSON: json,
+    IDX_SYNC_FEED_JSON: JSON.stringify(input),
   };
   for (const name of secrets) env[name] = marker;
   await writeFile(
@@ -114,7 +116,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const [tool, action, flag, file] = process.argv.slice(2);
 assert.deepEqual([tool, action, flag], ["wrangler", "deploy", "--config"]);
-for (const name of ${JSON.stringify(secrets)}) assert.equal(process.env[name], undefined);
+for (const name of ${JSON.stringify([...secrets, "IDX_SYNC_FEED_JSON"])}) assert.equal(process.env[name], undefined);
 console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf8")) }));
 `,
     { mode: 0o700 },
@@ -151,7 +153,7 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
   const schedule = "10 7 * * mon-fri";
   const overrides = {
     IDX_SYNC_PAGES_PER_RUN: "2",
-    IDX_SYNC_SCHEDULE: schedule,
+    IDX_SYNC_SCHEDULE: `  ${schedule}  `,
     IDX_SYNC_CPU_MS: "10",
   };
   const { file, config } = generated(overrides);
@@ -159,10 +161,13 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
   assert.deepEqual(config.hyperdrive, [
     { binding: "LISTING_WRITER_HYPERDRIVE", id },
   ]);
-  assert.deepEqual(config.vars, {
-    IDX_SYNC_FEED_JSON: json,
-    IDX_SYNC_PAGES_PER_RUN: "2",
-  });
+  const generatedFeed = JSON.parse(config.vars.IDX_SYNC_FEED_JSON);
+  assert.equal(
+    generatedFeed.disclosures.approvedFeedBlocks[0].unused,
+    undefined,
+  );
+  assert.deepEqual(generatedFeed, feed);
+  assert.equal(config.vars.IDX_SYNC_PAGES_PER_RUN, "2");
   assert.deepEqual(config.triggers, { crons: [schedule] });
   assert.deepEqual(config.limits, { cpu_ms: 10 });
   assert.deepEqual(generated().config.triggers, { crons: ["*/30 * * * *"] });
@@ -175,7 +180,6 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
     ["IDX_SYNC_FEED_JSON", ""],
     ["IDX_SYNC_FEED_JSON", "{"],
     ["IDX_SYNC_PAGES_PER_RUN", "21"],
-    ["IDX_SYNC_SCHEDULE", "0 25 * * *"],
     ["IDX_SYNC_SCHEDULE", "* * * * *\n* * * * *"],
     ["IDX_SYNC_CPU_MS", "9"],
     ["IDX_SYNC_CPU_MS", "300001"],

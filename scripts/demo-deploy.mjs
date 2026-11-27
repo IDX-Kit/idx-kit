@@ -9,6 +9,7 @@ const buildOnly = new Set([
   "RUNTIME_DATABASE_PASSWORD",
   "LISTING_WRITER_DATABASE_PASSWORD",
   "IDX_SECRET_KEY",
+  "IDX_SYNC_FEED_JSON",
   "IDX_SYNC_FEED_TOKEN",
   "DEMO_HYPERDRIVE_ID",
   "SYNC_HYPERDRIVE_ID",
@@ -38,62 +39,18 @@ function integer(value, min, max) {
   return /^\d+$/.test(value) && Number(value) >= min && Number(value) <= max;
 }
 
-// Wrangler checks the shape of triggers; ranges and syntax are checked here.
-function cronField(field, min, max, names = []) {
-  if (field === "*") return true;
-  if (field.startsWith("*,") || field.startsWith("*-")) return false;
-  const valid = (value) =>
-    integer(value, min, max) || names.includes(value.toUpperCase());
-  return field.split(",").every((part) => {
-    const match = /^(\*|[a-z]+|\d+)(?:-([a-z]+|\d+))?(?:\/(\d+))?$/i.exec(part);
-    if (!match) return false;
-    const [, start, end, step] = match;
-    return (
-      (start === "*" || valid(start)) &&
-      (end === undefined || valid(end)) &&
-      (step === undefined || integer(step, 1, max - min))
-    );
-  });
-}
-
-function validCron(value) {
-  const fields = value.split(/[ \t]+/);
-  if (fields.length !== 5 || /[\r\n]/.test(value)) return false;
-  const [minute, hour, day, month, weekday] = fields;
-  const months = "JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(" ");
-  const weekdays = "SUN MON TUE WED THU FRI SAT".split(" ");
-  const lastDay = /^L-(\d+)W?$/.exec(day);
-  const nearestWeekday = /^(\d+)W$/.exec(day);
-  const specialWeekday = /^([a-zA-Z]{3}|\d+)(?:L|#(\d+))$/.exec(weekday);
-  return (
-    cronField(minute, 0, 59) &&
-    cronField(hour, 0, 23) &&
-    (cronField(day, 1, 31) ||
-      day === "L" ||
-      day === "LW" ||
-      (lastDay && integer(lastDay[1], 1, 30)) ||
-      (nearestWeekday && integer(nearestWeekday[1], 1, 31))) &&
-    cronField(month, 1, 12, months) &&
-    (cronField(weekday, 1, 7, weekdays) ||
-      weekday === "L" ||
-      (specialWeekday &&
-        (integer(specialWeekday[1], 1, 7) ||
-          weekdays.includes(specialWeekday[1].toUpperCase())) &&
-        (specialWeekday[2] === undefined || integer(specialWeekday[2], 1, 5))))
-  );
-}
-
 async function syncOverrides(config) {
   const json = process.env.IDX_SYNC_FEED_JSON;
   if (!json) throw new Error("Missing IDX_SYNC_FEED_JSON.");
   const { feedSettings } =
     await import("@idx-kit/engine/src/runtime/sync-feed-settings.ts");
+  let feed;
   try {
-    feedSettings.parse(JSON.parse(json));
+    feed = feedSettings.parse(JSON.parse(json));
   } catch {
     throw new Error("IDX_SYNC_FEED_JSON must contain valid feed settings.");
   }
-  config.vars = { IDX_SYNC_FEED_JSON: json };
+  config.vars = { IDX_SYNC_FEED_JSON: JSON.stringify(feed) };
   const pages = process.env.IDX_SYNC_PAGES_PER_RUN;
   if (pages !== undefined) {
     if (!integer(pages, 1, 20))
@@ -104,9 +61,10 @@ async function syncOverrides(config) {
   }
   const schedule = process.env.IDX_SYNC_SCHEDULE;
   if (schedule !== undefined) {
-    if (schedule !== "off" && !validCron(schedule))
-      throw new Error("IDX_SYNC_SCHEDULE must be off or one cron expression.");
-    config.triggers.crons = schedule === "off" ? [] : [schedule];
+    const cron = schedule.trim();
+    if (!cron || /[\r\n\u2028\u2029]/.test(cron))
+      throw new Error("IDX_SYNC_SCHEDULE must be one non-empty line.");
+    config.triggers.crons = schedule === "off" ? [] : [cron];
   }
   const cpu = process.env.IDX_SYNC_CPU_MS;
   if (cpu !== undefined) {

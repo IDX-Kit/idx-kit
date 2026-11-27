@@ -35,7 +35,10 @@ async function prepare() {
     const runtime = await db.query(
       "SELECT 1 FROM pg_roles WHERE rolname='idx_runtime'",
     );
-    if (!runtime.rowCount) await db.query("CREATE ROLE idx_runtime NOLOGIN");
+    if (!runtime.rowCount)
+      await db.query(
+        "CREATE ROLE idx_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION",
+      );
 
     stage = "migrations";
     await migrate(db);

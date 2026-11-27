@@ -177,6 +177,10 @@ Set the build command to `npm run sync:prepare` and the deploy command to
 | `IDX_SYNC_CPU_MS` | Optional build variable | Whole number from 10 to 300000. Use a limit supported by your plan. |
 | `IDX_SYNC_FEED_TOKEN` | Worker runtime secret | Feed bearer token. Add it as a **Secret** under the Worker's Variables and Secrets settings, outside the build. |
 
+Cloudflare validates the cron expression at deploy time.
+If your database server logs every statement, set the writer's password
+yourself using the manual database setup above.
+
 For the first build, leave `SYNC_HYPERDRIVE_ID` unset. Preparation migrates the
 database, sets up the writer login and registers a new feed expired with a
 one-hour freshness window. A repeat build preserves saved feed state. The

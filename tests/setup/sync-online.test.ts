@@ -73,7 +73,11 @@ test("hosted preparation, writer password and grants, and repeat builds", async 
   await db.connect();
   t.after(() => db.end());
   const runtimes = () =>
-    db.query("SELECT rolcanlogin FROM pg_roles WHERE rolname='idx_runtime'");
+    db.query(`
+      SELECT rolcanlogin, rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit
+        OR rolbypassrls OR rolreplication AS unsafe
+      FROM pg_roles WHERE rolname='idx_runtime'
+    `);
   assert.equal((await runtimes()).rowCount, 0);
   assert.equal(
     (
@@ -90,7 +94,9 @@ test("hosted preparation, writer password and grants, and repeat builds", async 
     port: 55432,
     database: "idx_sync_online",
   });
-  assert.deepEqual((await runtimes()).rows, [{ rolcanlogin: false }]);
+  assert.deepEqual((await runtimes()).rows, [
+    { rolcanlogin: false, unsafe: false },
+  ]);
   const original = await db.query(
     "SELECT display_blocks, expires_at < now() AS expired FROM idx.feeds",
   );
@@ -137,7 +143,9 @@ test("hosted preparation, writer password and grants, and repeat builds", async 
   );
   await db.query("ALTER ROLE idx_runtime LOGIN");
   prepare();
-  assert.deepEqual((await runtimes()).rows, [{ rolcanlogin: true }]);
+  assert.deepEqual((await runtimes()).rows, [
+    { rolcanlogin: true, unsafe: false },
+  ]);
   assert.equal((await db.query("SELECT id FROM idx.feeds")).rowCount, 1);
   assert.deepEqual(await snapshot(), first);
 
