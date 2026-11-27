@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      10,
+      11,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -96,6 +96,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
             "004_feed_freshness.sql",
             "006_listing_revisions.sql",
             "007_feed_sync_positions.sql",
+            "011_feed_sync_record_presence.sql",
           ],
         ],
       );

@@ -51,6 +51,7 @@ export async function syncIncrementally(
           ...current.position,
           nextLink: null,
           pendingMark: null,
+          recordState: "empty" as const,
         };
         await listingFeedTransaction(client, feedId, () =>
           saveFeedCheckpoint(client, feedId, { ...current, position }),

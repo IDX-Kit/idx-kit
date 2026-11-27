@@ -288,6 +288,7 @@ test(
         completedMark: initialRevision,
         nextLink: null,
         pendingMark: null,
+        recordState: "empty",
       },
     });
     const loaded = await listings();

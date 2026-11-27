@@ -182,10 +182,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     assert.equal(expires_at.getTime() - refreshed_at.getTime(), 43_200_000);
   }
 
-  const complete = (completedMark: string) => ({
+  const complete = (completedMark: string | null) => ({
     completedMark,
     nextLink: null,
     pendingMark: null,
+    recordState: "empty",
   });
 
   await t.test(
@@ -626,14 +627,15 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
-    "rejected identities and future revisions cannot renew freshness alone",
+    "repeated future-only polls and a rejected traversal leave freshness alone",
     async (t) => {
       const state = await setup(t, "rejected_only");
       const bad = { ...third, ListingKey: null };
       const future = record("future", futureMark);
       const feed = await standIn(t, (_url, number) => {
         if (number === 1) return page([first]);
-        if (number === 2) return page([bad, future], "?cursor=empty");
+        if (number <= 3) return page([future]);
+        if (number === 4) return page([bad, future], "?cursor=empty");
         return page([]);
       });
       assert.deepEqual(await state.run(feed), { code: "complete" });
@@ -646,8 +648,8 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         [
           { kind: "withdrawn", sourceKey: "", revision: thirdMark },
           {
-            kind: "withdrawn",
-            sourceKey: first.ListingKey,
+            kind: "deleted",
+            sourceKey: "Synthetic absent",
             revision: futureMark,
           },
         ],
@@ -656,13 +658,22 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       );
       assert.deepEqual(rejected, [
         { index: 0, code: "invalid_key", hidden: false },
-        { index: 1, code: "future_revision", hidden: false },
+        { index: 1, code: "future_revision", hidden: true },
       ]);
       assert.deepEqual(await state.freshness(), freshness);
+      for (let poll = 0; poll < 2; poll += 1) {
+        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assert.deepEqual(
+          (await state.checkpoint()).position,
+          complete(firstMark),
+        );
+        assert.deepEqual(await state.freshness(), freshness);
+      }
       assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
       const { position } = await state.checkpoint();
       assert.equal(position.completedMark, firstMark);
       assert.equal(position.pendingMark, null);
+      assert.equal(position.recordState, "rejected");
       assert.equal(new URL(position.nextLink!).search, "?cursor=empty");
 
       assert.deepEqual(await state.run(feed), { code: "complete" });
@@ -675,7 +686,130 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       await assertFresh(state);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
-        ["", filter(firstMark), "?cursor=empty", filter(firstMark)],
+        [
+          "",
+          ...Array(3).fill(filter(firstMark)),
+          "?cursor=empty",
+          filter(firstMark),
+        ],
+      );
+    },
+  );
+
+  await t.test(
+    "a rejected middle page still resumes at a valid withdrawal",
+    async (t) => {
+      const state = await setup(t, "rejected_middle");
+      const withdrawal = {
+        ...first,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: thirdMark,
+      };
+      const feed = await standIn(t, (_url, number) => {
+        if (number === 1) return page([first]);
+        if (number === 2) return page([second], "?cursor=rejected");
+        if (number === 3)
+          return page([record("future", futureMark)], "?cursor=withdrawal");
+        if (number === 4) return page([withdrawal]);
+        return page([]);
+      });
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      await state.setOldFreshness();
+      const freshness = await state.freshness();
+      for (const cursor of ["?cursor=rejected", "?cursor=withdrawal"]) {
+        assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+        const { position } = await state.checkpoint();
+        assert.equal(position.completedMark, firstMark);
+        assert.equal(position.pendingMark, secondMark);
+        assert.equal(new URL(position.nextLink!).search, cursor);
+        assert.deepEqual(await state.freshness(), freshness);
+      }
+      assert.deepEqual(await state.run(feed, writer, 1), { code: "complete" });
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(thirdMark),
+      );
+      const [withdrawn] = await state.listings();
+      assert.equal(withdrawn.key, first.ListingKey);
+      assert.equal(withdrawn.revision, null);
+      await assertFresh(state);
+      assert.deepEqual(await state.run(feed, writer, 1), { code: "complete" });
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        [
+          "",
+          filter(firstMark),
+          "?cursor=rejected",
+          "?cursor=withdrawal",
+          filter(thirdMark),
+        ],
+      );
+    },
+  );
+
+  await t.test(
+    "future-dated withdrawals take listings down at their last trusted revision",
+    async (t) => {
+      const state = await setup(t, "future_withdrawal");
+      const removals = [
+        { ...first, StandardStatus: "Withdrawn" },
+        { ...second, StandardStatus: "Unknown synthetic status" },
+        { ...third, InternetEntireListingDisplayYN: false },
+      ].map((record) => ({ ...record, ModificationTimestamp: futureMark }));
+      const restored = {
+        ...third,
+        ModificationTimestamp: "2026-11-04T00:00:00.000000Z",
+      };
+      const feed = await standIn(t, (_url, number) => {
+        if (number === 1) return page([first, second, third]);
+        if (number === 2) return page(removals);
+        if (number === 3) return page([third]);
+        return page([restored]);
+      });
+
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      await state.setOldFreshness();
+      const freshness = await state.freshness();
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [null, null, null],
+      );
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(thirdMark),
+      );
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.equal((await state.listings())[2].revision, null);
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.equal(
+        (await state.listings())[2].revision,
+        restored.ModificationTimestamp,
+      );
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", ...Array(3).fill(filter(thirdMark))],
+      );
+    },
+  );
+
+  await t.test(
+    "an empty continuation across bounded runs still renews freshness",
+    async (t) => {
+      const state = await setup(t, "empty_continuation");
+      const feed = await standIn(t, (_url, number) =>
+        number === 1 ? page([], "?cursor=empty") : page([]),
+      );
+      const freshness = await state.freshness();
+      assert.deepEqual(await state.run(feed, writer, 1), pageLimitReached);
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(await state.run(feed, writer, 1), { code: "complete" });
+      await assertFresh(state);
+      assert.deepEqual((await state.checkpoint()).position, complete(null));
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", "?cursor=empty"],
       );
     },
   );
@@ -1187,7 +1321,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.deepEqual(await state.run(feed), { code: "complete" });
       const [before] = await state.listings();
       assert.equal(before.price, first.ListPrice);
+      await state.setOldFreshness();
+      const freshness = await state.freshness();
       assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(await state.listings(), [
         { key: before.key, id: before.id, price: null, revision: null },
       ]);

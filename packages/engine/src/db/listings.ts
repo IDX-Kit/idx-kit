@@ -442,12 +442,21 @@ export async function applyListingPage(
       }
       const addresses = [stored?.address ?? null];
       const candidates: Candidate[] = [];
+      let futureRemoval: number | undefined;
       for (const { change, index } of group) {
         const timestamp = timestampSchema.safeParse(change.revision);
         const revision = timestamp.success ? revisionKey(timestamp.data) : null;
         if (revision !== null && latestAllowed !== null) {
           if (revision > latestAllowed) {
             rejected.push({ index, code: "future_revision" });
+            if (
+              change.kind === "withdrawn" ||
+              change.kind === "deleted" ||
+              (change.kind === "upsert" &&
+                isRemoved(change.listing.source, false))
+            ) {
+              futureRemoval ??= index;
+            }
             continue;
           }
           pendingMark ??= completedMark;
@@ -494,6 +503,17 @@ export async function applyListingPage(
         stored,
         authoritativeSnapshot === true ? "snapshot" : "stream",
       );
+      if (futureRemoval !== undefined) {
+        // Hide the listing at its last trusted revision.
+        rows.push({
+          index: futureRemoval,
+          source_key: key,
+          revision: selected?.revision ?? stored?.revision ?? null,
+          candidate: `lst_${crypto.randomUUID()}`,
+          listing: null,
+        });
+        continue;
+      }
       if (!selected) continue;
       const facts = selected.listing?.facts;
       if (facts?.images && facts.withheldFields.includes("address")) {
@@ -522,21 +542,23 @@ export async function applyListingPage(
     let renewFreshness = false;
     const incrementalContinues = incremental?.nextLink != null;
     if (incremental) {
+      let recordState = previous?.recordState ?? "empty";
+      if (rejected.length < changes.length) recordState = "accepted";
+      else if (changes.length > 0 && recordState === "empty")
+        recordState = "rejected";
       savedPosition = {
         completedMark: incrementalContinues
           ? completedMark
           : (pendingMark ?? completedMark),
         nextLink: incremental.nextLink,
         pendingMark: incrementalContinues ? pendingMark : null,
+        recordState: incrementalContinues ? recordState : "empty",
       };
       await saveFeedCheckpoint(client, feedId, {
         position: savedPosition,
         version: incremental.checkpoint.version,
       });
-      // A pending mark proves that some page contained an eligible revision.
-      const emptyPoll = previous?.nextLink === null && changes.length === 0;
-      renewFreshness =
-        !incrementalContinues && (pendingMark !== null || emptyPoll);
+      renewFreshness = !incrementalContinues && recordState !== "rejected";
     }
     await writePage(
       client,
