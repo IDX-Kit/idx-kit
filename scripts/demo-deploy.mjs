@@ -45,8 +45,7 @@ function cronField(field, min, max, names = []) {
   const valid = (value) =>
     integer(value, min, max) || names.includes(value.toUpperCase());
   return field.split(",").every((part) => {
-    const match =
-      /^(\*|[a-z]+|\d+)(?:-([a-z]+|\d+))?(?:\/(\d+))?$/i.exec(part);
+    const match = /^(\*|[a-z]+|\d+)(?:-([a-z]+|\d+))?(?:\/(\d+))?$/i.exec(part);
     if (!match) return false;
     const [, start, end, step] = match;
     return (
@@ -87,9 +86,8 @@ function validCron(value) {
 async function syncOverrides(config) {
   const json = process.env.IDX_SYNC_FEED_JSON;
   if (!json) throw new Error("Missing IDX_SYNC_FEED_JSON.");
-  const { feedSettings } = await import(
-    "@idx-kit/engine/src/runtime/sync-feed-settings.ts"
-  );
+  const { feedSettings } =
+    await import("@idx-kit/engine/src/runtime/sync-feed-settings.ts");
   try {
     feedSettings.parse(JSON.parse(json));
   } catch {
@@ -99,7 +97,9 @@ async function syncOverrides(config) {
   const pages = process.env.IDX_SYNC_PAGES_PER_RUN;
   if (pages !== undefined) {
     if (!integer(pages, 1, 20))
-      throw new Error("IDX_SYNC_PAGES_PER_RUN must be an integer from 1 to 20.");
+      throw new Error(
+        "IDX_SYNC_PAGES_PER_RUN must be an integer from 1 to 20.",
+      );
     config.vars.IDX_SYNC_PAGES_PER_RUN = pages;
   }
   const schedule = process.env.IDX_SYNC_SCHEDULE;

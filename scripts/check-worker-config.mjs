@@ -68,8 +68,7 @@ export function checkConfig(
         ),
       "Only approved sync vars",
     );
-    if (config.limits)
-      assert.deepEqual(Object.keys(config.limits), ["cpu_ms"]);
+    if (config.limits) assert.deepEqual(Object.keys(config.limits), ["cpu_ms"]);
   } else {
     assert.ok(!config.vars || Object.keys(config.vars).length === 0);
   }

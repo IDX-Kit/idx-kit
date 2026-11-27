@@ -17,11 +17,11 @@ async function prepare() {
     );
   let feed;
   try {
-    feed = feedSettings.parse(
-      JSON.parse(process.env.IDX_SYNC_FEED_JSON ?? ""),
-    );
+    feed = feedSettings.parse(JSON.parse(process.env.IDX_SYNC_FEED_JSON ?? ""));
   } catch {
-    throw new PrepareError("IDX_SYNC_FEED_JSON must contain valid feed settings.");
+    throw new PrepareError(
+      "IDX_SYNC_FEED_JSON must contain valid feed settings.",
+    );
   }
 
   stage = "database connection";

@@ -117,7 +117,10 @@ test("hosted preparation, writer password and grants, and repeat builds", async 
     },
   );
   assert.equal(JSON.parse(stdout).code, "complete");
-  assert.deepEqual(feed.calls.map(({ authorized }) => authorized), [true]);
+  assert.deepEqual(
+    feed.calls.map(({ authorized }) => authorized),
+    [true],
+  );
   const snapshot = async () => {
     const { rows } = await db.query(`
       SELECT to_jsonb(f) AS feed, to_jsonb(p) AS position, f.expires_at > now() AS fresh
