@@ -577,6 +577,43 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
+    "a future-dated record cannot make the next poll skip a later withdrawal",
+    async (t) => {
+      const state = await setup(t, "future_revision");
+      const future = record("future", "2099-01-01T00:00:00.000000Z");
+      const withdrawal = {
+        ...first,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: secondMark,
+      };
+      const feed = await standIn(t, (url, number) => {
+        const mark = url.searchParams.get("$filter")?.split(" ").at(-1);
+        const records = number === 1 ? [first, future] : [withdrawal, future];
+        return page(
+          records.filter(
+            ({ ModificationTimestamp }) =>
+              !mark || ModificationTimestamp >= mark,
+          ),
+        );
+      });
+
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      const position = (await state.checkpoint()).position;
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.equal(
+        (await state.listings()).find(({ key }) => key === first.ListingKey)
+          ?.revision,
+        null,
+      );
+      assert.deepEqual(position, complete(firstMark));
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", filter(firstMark)],
+      );
+    },
+  );
+
+  await t.test(
     "older pages keep both marks from moving backward",
     async (t) => {
       const state = await setup(t, "older_pages");
