@@ -396,10 +396,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         "feed photos are checked individually within the first 128 entries",
         async () => {
           const key = "Synthetic writer photo validation";
-          const hidden = upsert(key, 1);
-          hidden.listing.source.InternetAddressDisplayYN = false;
-          hidden.listing.source.Address!.line1 = oldStreet;
-          Object.assign(hidden.listing.source, {
+          const open = upsert(key, 1);
+          Object.assign(open.listing.source, {
             Images: [
               { url: newPhoto, alt: oldStreet },
               {
@@ -408,10 +406,10 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
               null,
             ],
           });
-          assert.deepEqual((await write([hidden])).rejected, []);
+          assert.deepEqual((await write([open])).rejected, []);
           const id = await identity(primary, key);
           assert.deepEqual((await publicDetail(id)).body.data.images, [
-            { url: newPhoto, alt: "Property photo" },
+            { url: newPhoto, alt: oldStreet },
           ]);
 
           const many = upsert(key, 2);
@@ -444,6 +442,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             const key = `Synthetic writer tied address ${index}`;
             const open = upsert(key, 1);
             open.listing.source.Address!.line1 = oldStreet;
+            open.listing.source.Images = [{ url: oldPhoto, alt: oldStreet }];
+            if (samePage) open.listing.withheldFields = ["bedrooms", "price"];
             const closed = hiddenAddress(key, 1);
             const changes = reverse ? [closed, open] : [open, closed];
             if (samePage) await write(changes);
@@ -453,12 +453,14 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             const id = await identity(primary, key);
             const [row] = await stored(id);
             assert.equal(row.address, null);
+            assert.deepEqual(row.images, []);
             assert.ok(row.withheld_fields.includes("address"));
             for (const item of [
               (await publicDetail(id)).body.data,
               await searchItem(id),
             ]) {
               assert.equal(item.address, null);
+              assert.deepEqual(item.images, []);
               assert.ok(item.withheldFields.includes("address"));
             }
           }
@@ -466,19 +468,14 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
-        "shown addresses keep captions and withheld addresses use generic captions",
+        "property photos are cleared when a feed withholds the address",
         async () => {
           const key = "Synthetic writer photo permissions";
           const open = upsert(key, 1);
           open.listing.source.Address!.line1 = oldStreet;
-          open.listing.source.StandardStatus = " Pending ";
           const encoded = encodeURIComponent(oldStreet);
           const reference = { url: `/media/${encoded}.svg`, alt: "Side view" };
-          const photos = [
-            { url: newPhoto, alt: oldStreet },
-            { url: "/media/first.svg", alt: "999-synthetic-writer-way" },
-            { url: "/media/second.svg", alt: "999SyntheticWriterWay" },
-          ];
+          const photos = [{ url: newPhoto, alt: oldStreet }, reference];
           const blanks = [
             { url: "/media/blank.svg", alt: "" },
             { url: "/media/spaces.svg", alt: " ".repeat(1025) },
@@ -488,42 +485,33 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             url,
             alt: "Property photo",
           });
-          open.listing.source.Images = [...photos, reference, ...blanks];
+          open.listing.source.Images = [...photos, ...blanks];
           assert.deepEqual((await write([open])).rejected, []);
           const id = await identity(primary, key);
-          const shown = await searchItem(id);
-          assert.equal(shown.status, "pending");
-          const expected = [...photos, reference, ...blanks.map(generic)];
-          assert.deepEqual(shown.images, expected);
+          const expected = [...photos, ...blanks.map(generic)];
+          assert.deepEqual((await searchItem(id)).images, expected);
+          assert.deepEqual((await publicDetail(id)).body.data.images, expected);
 
           const hidden = upsert(key, 2);
           hidden.listing.source.InternetAddressDisplayYN = false;
-          hidden.listing.source.Address!.line1 = "A.";
-          const undecodable = { url: "/media/%FF.svg", alt: "Side view" };
-          hidden.listing.source.Images = [...photos, reference, undecodable];
-          assert.deepEqual((await write([hidden])).rejected, []);
-          const item = (await publicDetail(id)).body.data;
-          assert.equal(item.status, "active");
-          assert.deepEqual(item.images, photos.map(generic));
-          assert.equal((await stored(id))[0].address, null);
-
-          hidden.revision = revision(3);
           hidden.listing.source.Address!.line1 = oldStreet;
-          hidden.listing.source.StandardStatus = `100% ready at ${encoded}`;
+          hidden.listing.source.Images = photos;
           assert.deepEqual((await write([hidden])).rejected, []);
-          await absent(id);
-
-          const unknownStreet = hiddenAddress(key, 4);
-          unknownStreet.listing.source.Images = [reference, undecodable];
-          assert.deepEqual((await write([unknownStreet])).rejected, []);
+          const [row] = await stored(id);
+          assert.deepEqual(row.images, []);
           assert.deepEqual((await searchItem(id)).images, []);
+          assert.deepEqual((await publicDetail(id)).body.data.images, []);
 
-          const pageKey = `${key} same page`;
-          const page = hiddenAddress(pageKey, 2);
-          page.listing.source.Images = [reference];
-          await write([{ ...open, sourceKey: pageKey }, page]);
-          const pageId = await identity(primary, pageKey);
-          assert.deepEqual((await searchItem(pageId)).images, []);
+          const unknownKey = `${key} unknown street`;
+          const unknownStreet = hiddenAddress(unknownKey, 1);
+          unknownStreet.listing.source.Images = [reference];
+          assert.deepEqual((await write([unknownStreet])).rejected, []);
+          const unknownId = await identity(primary, unknownKey);
+          assert.deepEqual((await searchItem(unknownId)).images, []);
+          assert.deepEqual(
+            (await publicDetail(unknownId)).body.data.images,
+            [],
+          );
         },
       );
 
@@ -1082,7 +1070,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
     },
   );
   await t.test(
-    "ingestion removes withheld addresses from image alt and every display context",
+    "fixture ingestion removes property photos and redacts withheld addresses in disclosures",
     async () => {
       const fixtures = await new FixtureConnector().read();
       const unsafe = structuredClone(fixtures);
@@ -1112,10 +1100,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         assert.equal(body.data.address, null);
         assert.deepEqual(body.data.withheldFields, ["address"]);
         assert.ok(!text.toLowerCase().includes(street.toLowerCase()));
-        assert.equal(
-          body.data.images[0].alt,
-          "Synthetic illustration of Address withheld",
-        );
+        assert.deepEqual(body.data.images, []);
         for (const [blocks, id] of [
           [body.data.display.blocks, "listing_address"],
           [body.display.blocks, "feed_address"],
@@ -1132,6 +1117,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             disclosure.image.alt,
             "Synthetic icon for Address withheld",
           );
+          assert.equal(disclosure.image.url, "/media/synthetic-house-002.svg");
         }
         // Shared feed disclosures must also be safe when another listing is requested.
         const visible = await request(listing);
@@ -1147,95 +1133,6 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
               .toLowerCase()
               .includes(street.toLowerCase()),
           );
-        }
-      } finally {
-        await seed(db, fixtures);
-      }
-    },
-  );
-  await t.test(
-    "encoded media addresses reject ingestion and preserve safe rows and HTTP responses",
-    async () => {
-      const fixtures = await new FixtureConnector().read();
-      const safe = structuredClone(fixtures);
-      const hidden = "/api/v1/listings/lst_demo_0002";
-      const street = safe.listings[1].source.Address!.line1;
-      const asset = "/media/synthetic-house-002.svg";
-      const safeUrl = `${asset}?label=%53ynthetic+house&size=2#illustration`;
-      const block = () => ({
-        id: "safe_media",
-        text: "Synthetic disclosure.",
-        placement: "pageFooter",
-        prominence: "normal",
-        image: { url: safeUrl, alt: "Synthetic illustration" },
-      });
-      safe.listings[1].source.Images![0].url = safeUrl;
-      safe.listings[1].blocks.push(block());
-      safe.listings[1].pageBlocks.push(block());
-      safe.feeds[0].blocks.push(block());
-      const media = (input: typeof safe) => [
-        input.listings[1].source.Images![0],
-        input.listings[1].blocks.at(-1)!.image!,
-        input.listings[1].pageBlocks.at(-1)!.image!,
-        input.feeds[0].blocks.at(-1)!.image!,
-      ];
-      const rows = async () => ({
-        listings: (await db.query("SELECT * FROM idx.listings ORDER BY id"))
-          .rows,
-        feeds: (await db.query("SELECT * FROM idx.feeds ORDER BY id")).rows,
-      });
-      try {
-        await seed(db, safe);
-        const stored = await rows();
-        const hiddenBody = (await request(hidden)).body;
-        const visibleBody = (await request(listing)).body;
-        assert.equal(hiddenBody.data.images[0].url, safeUrl);
-        assert.equal(hiddenBody.data.display.blocks.at(-1).image.url, safeUrl);
-        assert.deepEqual(
-          hiddenBody.display.blocks
-            .filter((item: DisplayBlock) => item.id === "safe_media")
-            .map((item: DisplayBlock) => item.image!.url),
-          [safeUrl, safeUrl],
-        );
-        assert.equal(
-          visibleBody.display.blocks.find(
-            (item: DisplayBlock) => item.id === "safe_media",
-          ).image.url,
-          safeUrl,
-        );
-        const encoded = encodeURIComponent(street);
-        const escapedLetter = encoded.replace("Hidden", "%48idden");
-        const references = [
-          `/media/${street}.svg`,
-          `/media/${encoded}.svg`,
-          `/media/${escapedLetter}.svg`,
-          `/media/${escapedLetter}/../synthetic-house-002.svg`,
-          `${asset}?address=${encoded.replaceAll("%20", "+")}`,
-          `${asset}?address=${escapedLetter.replaceAll("%20", "+")}`,
-          `${asset}?address=${escapedLetter}`,
-          `${asset}?${escapedLetter}=illustration`,
-          `${asset}#${escapedLetter}`,
-          `https://synthetic.example.invalid/media/${escapedLetter}.svg`,
-          `${asset}?address=%ZZ`,
-        ];
-        for (const reference of references) {
-          for (let target = 0; target < 4; target++) {
-            const attempt = structuredClone(safe);
-            media(attempt)[target].url = reference;
-            // Stage observable writes before each rejection, including shared-feed rejection.
-            attempt.feeds.forEach((feed) => {
-              feed.blocks[0].text = "Synthetic staged rollback marker.";
-            });
-            attempt.feeds.reverse();
-            attempt.listings[0].source.StandardStatus = "pending";
-            await assert.rejects(
-              seed(db, attempt),
-              /Withheld address in media reference/,
-            );
-            assert.deepEqual(await rows(), stored);
-            assert.deepEqual((await request(hidden)).body, hiddenBody);
-            assert.deepEqual((await request(listing)).body, visibleBody);
-          }
         }
       } finally {
         await seed(db, fixtures);

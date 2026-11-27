@@ -153,7 +153,9 @@ required rules version, placement, or prominence is unfamiliar.
 Each listing includes `status`, `price`, `address`, `bedrooms`, and `images`.
 A null named in `withheldFields` is withheld. Other null facts are unknown.
 Render either as unavailable and keep withheld facts out of descriptions,
-media, and metadata. Handle any number of images or display blocks.
+media, and metadata. Search and detail return an empty `images` array for a
+listing with a withheld address, or `null` if `images` is also withheld.
+Handle any number of images or display blocks.
 
 The engine omits withdrawn and unlicensed listings from search and returns the
 same generic 404 for their detail as for a missing listing. Feed expiration

@@ -113,6 +113,8 @@ test.describe.serial("SSR property pages through the public engine", () => {
     expect(html).not.toContain(hidden.line1);
     expect(html).not.toContain("Hidden Stardust");
     await page.goto("/properties/lst_demo_0002");
+    await expect(page.locator("[data-images] > img")).toHaveCount(0);
+    await expect(page.locator("[data-images] > p")).toHaveText("Not available");
     for (const fact of ["address", "bedrooms"])
       await expect(page.locator(`[data-fact="${fact}"]`)).toHaveText(
         "Not available",
@@ -590,6 +592,13 @@ test.describe.serial("SSR property pages through the public engine", () => {
     ])
       expect(body).not.toContain(text);
     await page.goto("/search");
+    const hiddenImages = page.locator(
+      '[data-listing="lst_demo_0002"] [data-images]',
+    );
+    await expect(hiddenImages.locator(":scope > img")).toHaveCount(0);
+    await expect(hiddenImages.locator(":scope > p")).toHaveText(
+      "Not available",
+    );
     await expect(
       page.locator('[data-listing="lst_demo_0002"] [data-fact="address"]'),
     ).toHaveText("Not available");

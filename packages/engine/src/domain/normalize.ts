@@ -21,7 +21,7 @@ const mediaUrl = imageFields.shape.url.refine((value) => {
   return url?.protocol === "https:" && !url.username && !url.password;
 });
 const imageSchema = imageFields.extend({ url: mediaUrl });
-export const genericPhotoAlt = "Property photo";
+const genericPhotoAlt = "Property photo";
 const photoInput = imageSchema.extend({
   alt: z
     .string()
@@ -29,9 +29,6 @@ const photoInput = imageSchema.extend({
     .transform((value) => (value?.trim() ? value : genericPhotoAlt))
     .pipe(boundedText),
 });
-const hiddenPhotoInput = imageSchema
-  .pick({ url: true })
-  .transform(({ url }) => ({ url, alt: genericPhotoAlt }));
 const shownStatuses = new Set([
   "active",
   "active under contract",
@@ -54,11 +51,10 @@ export function listingStatus(value: Listing["status"], fixture: boolean) {
 
 const photoLimit = 128;
 
-function feedPhotos(value: unknown, hideAddress: boolean): Listing["images"] {
+function feedPhotos(value: unknown): Listing["images"] {
   if (!Array.isArray(value)) return null;
-  const schema = hideAddress ? hiddenPhotoInput : photoInput;
   return value.slice(0, photoLimit).flatMap((photo) => {
-    const result = schema.safeParse(photo);
+    const result = photoInput.safeParse(photo);
     return result.success ? [result.data] : [];
   });
 }
@@ -73,7 +69,7 @@ const blockSchema = z.object({
   prominence: z.enum(["normal", "medianListingText", "largestListingText"]),
   image: imageSchema.optional(),
 });
-export const addressSchema = z.object({
+const addressSchema = z.object({
   line1: boundedText,
   city: boundedText,
   region: boundedText,
@@ -84,7 +80,6 @@ export const disclosureSchema = z.array(blockSchema).max(32);
 export const disclosureIds = z
   .array(z.object({ id: blockSchema.shape.id }))
   .max(32);
-const fixturePhotoInput = z.array(imageFields).max(photoLimit).nullable();
 const imagesSchema = z.array(imageSchema).max(photoLimit).nullable();
 const fieldsSchema = z
   .array(z.enum(["status", "price", "address", "bedrooms", "images"]))
@@ -173,10 +168,8 @@ export function normalize(
   const blocks = (values: DisplayBlock[]) =>
     feedPage ? values : protection.blocks(values);
   const images = feedPage
-    ? feedPhotos(source.Images, hideAddress)
-    : imagesSchema.parse(
-        fixturePhotoInput.parse(source.Images)?.map(protection.image) ?? null,
-      );
+    ? feedPhotos(source.Images)
+    : imagesSchema.parse(source.Images);
   if (hideAddress) fields.add("address");
   const facts: Pick<
     Listing,

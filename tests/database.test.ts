@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      12,
+      13,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -71,6 +71,22 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
       0,
     );
   });
+  await t.test(
+    "migration clears photos already stored for withheld addresses",
+    async () => {
+      await seed(db, fixtures);
+      const expected = await snapshot();
+      await db.query("UPDATE idx.listings SET images=$1 WHERE id=$2", [
+        JSON.stringify(fixtures.listings[1].source.Images),
+        "lst_demo_0002",
+      ]);
+      await db.query("DELETE FROM public.schema_migrations WHERE name=$1", [
+        "013_withheld_address_photos.sql",
+      ]);
+      await migrate(db);
+      assert.deepEqual(await snapshot(), expected);
+    },
+  );
   await t.test(
     "migrations backfill revisions and freshness and remove legacy hidden facts",
     async () => {

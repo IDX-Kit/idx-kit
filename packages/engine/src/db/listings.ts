@@ -1,16 +1,13 @@
 import type pg from "pg";
-import type { DisplayBlock, Listing } from "@idx-kit/client";
+import type { DisplayBlock } from "@idx-kit/client";
 import {
-  addressSchema,
   disclosureIds,
   disclosureSchema,
-  genericPhotoAlt,
   listingStatus,
   normalize,
   sourceKeySchema,
   timestampSchema,
 } from "../domain/normalize.ts";
-import { addressProtection } from "../domain/withholding.ts";
 import type {
   FixtureRecord,
   ListingRecord,
@@ -67,7 +64,6 @@ interface Stored {
   source_key: string;
   revision: string | null;
   withheld: WithheldField[] | null;
-  address: Listing["address"];
 }
 
 interface Candidate extends PageRow {
@@ -234,7 +230,7 @@ async function readExisting(
   fixture = false,
 ) {
   const result = await client.query<Stored>(
-    `SELECT m.source_key, l.address,
+    `SELECT m.source_key,
       CASE WHEN m.source_revision = '${orderUnknown}'::timestamptz THEN '${orderUnknown}'
         ELSE to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
       END AS revision,
@@ -312,6 +308,7 @@ function selectChange(
     return difference || (a.text < b.text ? -1 : Number(a.text > b.text));
   });
   const { facts } = winner.listing;
+  if (fields.has("address")) facts.images = [];
   for (const field of fields) facts[field] = null;
   facts.withheldFields = [...fields].sort();
   return winner.row;
@@ -446,7 +443,6 @@ export async function applyListingPage(
           rejected.push({ index, code: "invalid_key" });
         continue;
       }
-      const addresses = [stored?.address ?? null];
       const candidates: Candidate[] = [];
       for (const { change, index } of group) {
         const timestamp = timestampSchema.safeParse(change.revision);
@@ -470,8 +466,6 @@ export async function applyListingPage(
         try {
           if (change.kind === "upsert") {
             const source = change.listing.source;
-            const address = addressSchema.safeParse(source.Address);
-            if (address.success) addresses.push(address.data);
             if (revision === null) throw new Error("Invalid revision");
             if (!isRemoved(source, false)) {
               listing = normalize(
@@ -508,18 +502,6 @@ export async function applyListingPage(
         authoritativeSnapshot === true ? "snapshot" : "stream",
       );
       if (!selected) continue;
-      const facts = selected.listing?.facts;
-      if (facts?.images && facts.withheldFields.includes("address")) {
-        const checks = addresses.map(addressProtection);
-        facts.images = facts.images.flatMap(({ url }) => {
-          try {
-            for (const { checkReference } of checks) checkReference(url);
-            return [{ url, alt: genericPhotoAlt }];
-          } catch {
-            return [];
-          }
-        });
-      }
       rows.push(selected);
     }
     const priorCounts =

@@ -480,6 +480,7 @@ test(
         );
         assert.equal(hidden.address, null);
         assert.deepEqual(hidden.withheldFields, ["address"]);
+        assert.deepEqual(hidden.images, []);
         assert.ok(
           !result.text.includes(fixtures.listings[1].source.Address!.line1),
         );
@@ -1026,6 +1027,10 @@ test(
             validateResponse(path + "/{listingId}", response, detail);
             assert.equal(detail.data[field], null);
             assert.deepEqual(detail.data.withheldFields, [field]);
+            if (field === "address") {
+              assert.deepEqual(stored[index].images, []);
+              assert.deepEqual(detail.data.images, []);
+            }
           }
           assert.ok(
             !ids((await request("minPrice=0&limit=50")).body).includes(
@@ -1073,6 +1078,7 @@ test(
               const field = record.withheldFields![0];
               assert.equal(item[field], null);
               assert.deepEqual(item.withheldFields, [field]);
+              if (field === "address") assert.deepEqual(item.images, []);
             }
           }
         } finally {
