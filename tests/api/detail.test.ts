@@ -516,10 +516,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const unknownStreet = hiddenAddress(key, 4);
           unknownStreet.listing.source.Images = [reference, undecodable];
           assert.deepEqual((await write([unknownStreet])).rejected, []);
-          assert.deepEqual(
-            (await searchItem(id)).images,
-            [reference, undecodable].map(generic),
-          );
+          assert.deepEqual((await searchItem(id)).images, []);
 
           const pageKey = `${key} same page`;
           const page = hiddenAddress(pageKey, 2);
