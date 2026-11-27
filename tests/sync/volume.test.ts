@@ -280,14 +280,7 @@ test(
     // The final incremental page renews the feed window after recomputing.
     const loadRecomputeMs = finalTimes.splice(0).at(-3)!;
     const loadReads = checkPageReads(pageReads.splice(0));
-    assertStatements(
-      offsets.splice(0),
-      statements,
-      pages - midpoint,
-      1,
-      0,
-      3,
-    );
+    assertStatements(offsets.splice(0), statements, pages - midpoint, 1, 0, 3);
     const loadStatements = firstStatements + statements;
     assert.equal(loadStatements, pages * 7 + 6);
     assert.deepEqual(await readFeedCheckpoint(db, feedId), {

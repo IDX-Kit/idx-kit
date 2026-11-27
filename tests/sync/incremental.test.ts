@@ -227,6 +227,15 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       await assertFresh(state);
       const freshness = await state.freshness();
       const peer = await connectWriter(t);
+      const newer = await standIn(t, () => page([bad]));
+      assertRun(await state.run(newer, peer), {
+        code: "complete",
+        counts: {
+          accepted: 0,
+          rejected: 1,
+          rejectedByCode: { invalid_change: 1 },
+        },
+      });
       assert.deepEqual(await state.run(feed, peer, 1, stepId), {
         code: "complete",
         counts: {

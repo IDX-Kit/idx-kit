@@ -94,30 +94,26 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
     let pagesApplied = 0;
     do {
       const name = `apply page ${pagesApplied + 1}`;
-      last = await step.do(
-        name,
-        pageStep,
-        async () => {
-          const result = await withWriter(this.env, async (client) => {
-            const connector = new ResoConnector(
-              feed.propertyUrl.href,
-              token,
-              undefined,
-              feed.pageSize,
-            );
-            return syncIncrementally(
-              client,
-              { ...feed, connector },
-              1,
-              `${event.instanceId}:${name}`,
-            );
-          });
-          const output = reportSyncStep(result);
-          if ("outcomeSaved" in result && result.outcomeSaved === false)
-            throw new NonRetryableError("Could not save sync outcome");
-          return output;
-        },
-      );
+      last = await step.do(name, pageStep, async () => {
+        const result = await withWriter(this.env, async (client) => {
+          const connector = new ResoConnector(
+            feed.propertyUrl.href,
+            token,
+            undefined,
+            feed.pageSize,
+          );
+          return syncIncrementally(
+            client,
+            { ...feed, connector },
+            1,
+            `${event.instanceId}:${name}`,
+          );
+        });
+        const output = reportSyncStep(result);
+        if ("outcomeSaved" in result && result.outcomeSaved === false)
+          throw new NonRetryableError("Could not save sync outcome");
+        return output;
+      });
       if (last.code === "page_limit" || last.code === "complete")
         pagesApplied++;
     } while (last.code === "page_limit" && pagesApplied < pages);
