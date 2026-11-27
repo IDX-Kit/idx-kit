@@ -658,7 +658,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       );
       assert.deepEqual(rejected, [
         { index: 0, code: "invalid_key", hidden: false },
-        { index: 1, code: "future_revision", hidden: true },
+        { index: 1, code: "future_revision", hidden: false },
       ]);
       assert.deepEqual(await state.freshness(), freshness);
       for (let poll = 0; poll < 2; poll += 1) {
@@ -790,6 +790,90 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         ["", ...Array(3).fill(filter(thirdMark))],
+      );
+    },
+  );
+
+  await t.test(
+    "an accepted restoration wins over a future withdrawal on the same page",
+    async (t) => {
+      const state = await setup(t, "future_and_restoration");
+      const future = {
+        ...first,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: futureMark,
+      };
+      const restored = { ...first, ModificationTimestamp: secondMark };
+      const responses = [
+        [first],
+        [future],
+        [future, restored],
+        [restored],
+        [restored, future],
+      ];
+      const feed = await standIn(t, (_url, n) => page(responses[n - 1]));
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.equal((await state.listings())[0].revision, null);
+      for (let n = 3; n <= responses.length; n += 1) {
+        assert.deepEqual(await state.run(feed), { code: "complete" });
+        assert.equal((await state.listings())[0].revision, secondMark);
+        assert.deepEqual(
+          (await state.checkpoint()).position,
+          complete(secondMark),
+        );
+      }
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        [
+          "",
+          filter(firstMark),
+          filter(firstMark),
+          filter(secondMark),
+          filter(secondMark),
+        ],
+      );
+    },
+  );
+
+  await t.test(
+    "accepts a revision at five minutes and rejects the next microsecond",
+    async (t) => {
+      t.mock.timers.enable({
+        apis: ["Date"],
+        now: Date.parse("2026-11-03T00:00:00Z"),
+      });
+      const state = await setup(t, "clock_allowance");
+      const boundary = "2026-11-03T00:05:00.000000Z";
+      const atBoundary = record("at boundary", boundary);
+      const pastBoundary = record(
+        "past boundary",
+        "2026-11-03T00:05:00.000001Z",
+      );
+      const feed = await standIn(t, (_url, n) =>
+        page(n === 1 ? [atBoundary] : [pastBoundary]),
+      );
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(boundary),
+      );
+      await assertFresh(state);
+      await state.setOldFreshness();
+      const freshness = await state.freshness();
+      assert.deepEqual(await state.run(feed), { code: "complete" });
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(boundary),
+      );
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [boundary],
+      );
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", filter(boundary)],
       );
     },
   );

@@ -90,8 +90,9 @@ or missing status, withdraws the listing when the record is processed.
 renews freshness after an empty traversal or a complete poll with at least one
 accepted record. Unreadable identities and revisions more than five minutes
 ahead of the sync clock are rejected, and only eligible revisions move the
-saved mark forward. A future-dated removal still hides the listing using its
-last trusted revision.
+saved mark forward. A future-dated removal hides a listing only if its page has
+no trusted record for the same listing. The stored revision stays in place.
+A traversal in progress during the upgrade restarts at its last completed mark.
 
 ```json
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"}}

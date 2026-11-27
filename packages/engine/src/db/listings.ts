@@ -430,6 +430,7 @@ export async function applyListingPage(
     );
     const existing = await readExisting(client, feedId, keys);
     const rows: Candidate[] = [];
+    const futureRemovals = new Map<string, number>();
     for (const [key, group] of groups) {
       const stored = existing.get(key);
       if (
@@ -442,23 +443,20 @@ export async function applyListingPage(
       }
       const addresses = [stored?.address ?? null];
       const candidates: Candidate[] = [];
-      let futureRemoval: number | undefined;
       for (const { change, index } of group) {
         const timestamp = timestampSchema.safeParse(change.revision);
         const revision = timestamp.success ? revisionKey(timestamp.data) : null;
-        if (revision !== null && latestAllowed !== null) {
-          if (revision > latestAllowed) {
-            rejected.push({ index, code: "future_revision" });
-            if (
-              change.kind === "withdrawn" ||
-              change.kind === "deleted" ||
-              (change.kind === "upsert" &&
-                isRemoved(change.listing.source, false))
-            ) {
-              futureRemoval ??= index;
-            }
-            continue;
+        if (latestAllowed && revision && revision > latestAllowed) {
+          rejected.push({ index, code: "future_revision" });
+          if (
+            change.kind !== "upsert" ||
+            isRemoved(change.listing.source, false)
+          ) {
+            futureRemovals.set(key, index);
           }
+          continue;
+        }
+        if (latestAllowed && revision) {
           pendingMark ??= completedMark;
           if (pendingMark === null || revision > pendingMark)
             pendingMark = revision;
@@ -498,22 +496,12 @@ export async function applyListingPage(
           listing,
         });
       }
+      if (candidates.length) futureRemovals.delete(key);
       const selected = selectChange(
         candidates,
         stored,
         authoritativeSnapshot === true ? "snapshot" : "stream",
       );
-      if (futureRemoval !== undefined) {
-        // Hide the listing at its last trusted revision.
-        rows.push({
-          index: futureRemoval,
-          source_key: key,
-          revision: selected?.revision ?? stored?.revision ?? null,
-          candidate: `lst_${crypto.randomUUID()}`,
-          listing: null,
-        });
-        continue;
-      }
       if (!selected) continue;
       const facts = selected.listing?.facts;
       if (facts?.images && facts.withheldFields.includes("address")) {
@@ -566,6 +554,18 @@ export async function applyListingPage(
       rows,
       incrementalContinues ? feedBlocks : undefined,
     );
+    const applied = new Set(rows.map(({ index }) => index));
+    if (futureRemovals.size) {
+      const { rows: hidden } = await client.query<{ source_key: string }>(
+        `DELETE FROM idx.listings l USING idx.source_mappings m
+        WHERE l.id = m.listing_id AND m.feed_id = $1
+          AND m.source_key = ANY($2::text[])
+        RETURNING m.source_key`,
+        [feedId, [...futureRemovals.keys()]],
+      );
+      for (const { source_key } of hidden)
+        applied.add(futureRemovals.get(source_key)!);
+    }
     await stampScanKeys(client, feedId, keys, scan !== undefined);
     const removal =
       scan &&
@@ -591,7 +591,6 @@ export async function applyListingPage(
     if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }
-    const applied = new Set(rows.map((row) => row.index));
     return {
       ...(savedPosition && { savedPosition }),
       ...(scanCheckpoint && { scanCheckpoint }),

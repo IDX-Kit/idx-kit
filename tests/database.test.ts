@@ -162,6 +162,32 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
     },
   );
   await t.test(
+    "the record state migration restarts sync at the completed mark",
+    async () => {
+      await db.query(
+        "ALTER TABLE idx.feed_sync_positions DROP COLUMN record_state",
+      );
+      await db.query("DELETE FROM public.schema_migrations WHERE name = $1", [
+        "011_feed_sync_record_presence.sql",
+      ]);
+      await migrate(db);
+      const { rows } = await db.query(
+        `SELECT version::int, completed_mark, next_link, pending_mark, record_state
+        FROM idx.feed_sync_positions WHERE feed_id = $1`,
+        [fixtures.feeds[0].id],
+      );
+      assert.deepEqual(rows, [
+        {
+          version: 5,
+          completed_mark: new Date("2026-11-03T00:00:00Z"),
+          next_link: null,
+          pending_mark: null,
+          record_state: "empty",
+        },
+      ]);
+    },
+  );
+  await t.test(
     "the scan migration preserves listings, mappings, positions and outcomes",
     async () => {
       await db.query(
