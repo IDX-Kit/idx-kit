@@ -128,12 +128,7 @@ test("the stand-in enforces access, page size and no-store", async (t) => {
       401,
       "Unauthorized",
     ],
-    [
-      propertyUrl,
-      { headers: { Authorization: "Basic wrong-token" } },
-      401,
-      "",
-    ],
+    [propertyUrl, { headers: { Authorization: "Basic wrong-token" } }, 401, ""],
     [`${base}/other`, { headers }, 404, "404 Not Found"],
     [propertyUrl, { method: "POST", headers }, 405, ""],
     [propertyUrl, { method: "HEAD", headers }, 405, ""],

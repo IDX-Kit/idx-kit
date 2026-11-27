@@ -97,7 +97,8 @@ export async function standIn(
         return;
       }
       response.setHeader("Content-Type", "application/json");
-      const body = "slice" in result ? pageRecords(result, url, prefer) : result;
+      const body =
+        "slice" in result ? pageRecords(result, url, prefer) : result;
       response.end(JSON.stringify(body));
     }
     void reply().catch(() => response.destroy());

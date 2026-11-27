@@ -13,7 +13,11 @@ import { validateResponse } from "../api/contract.ts";
 import { fixtureDisclosures } from "../api/listing-page.ts";
 import { keyCommand, startEngine } from "../api/runtime.ts";
 import { connectWriter, feedToken, page, standIn } from "./feed.ts";
-import { heavyRecords, initialRevision, sourceKey } from "./stand-in-records.ts";
+import {
+  heavyRecords,
+  initialRevision,
+  sourceKey,
+} from "./stand-in-records.ts";
 
 const volume = 100_000;
 const pageSize = 200;
