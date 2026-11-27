@@ -1,7 +1,10 @@
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import { migrate } from "../db/migrate.ts";
-import { feedSettings } from "./sync-feed-settings.ts";
+import {
+  LegacyDisclosuresError,
+  parseFeedSettings,
+} from "./sync-feed-settings.ts";
 
 class PrepareError extends Error {}
 
@@ -17,10 +20,12 @@ async function prepare() {
     );
   let feed;
   try {
-    feed = feedSettings.parse(JSON.parse(process.env.IDX_SYNC_FEED_JSON ?? ""));
-  } catch {
+    feed = parseFeedSettings(JSON.parse(process.env.IDX_SYNC_FEED_JSON ?? ""));
+  } catch (error) {
     throw new PrepareError(
-      "IDX_SYNC_FEED_JSON must contain valid feed settings.",
+      error instanceof LegacyDisclosuresError
+        ? error.message
+        : "IDX_SYNC_FEED_JSON must contain valid feed settings.",
     );
   }
 

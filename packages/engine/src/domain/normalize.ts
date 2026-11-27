@@ -77,9 +77,6 @@ const addressSchema = z.object({
   country: z.string().regex(/^[A-Z]{2}$/),
 });
 export const disclosureSchema = z.array(blockSchema).max(32);
-export const disclosureIds = z
-  .array(z.object({ id: blockSchema.shape.id }))
-  .max(32);
 const imagesSchema = z.array(imageSchema).max(photoLimit).nullable();
 const fieldsSchema = z
   .array(z.enum(["status", "price", "address", "bedrooms", "images"]))

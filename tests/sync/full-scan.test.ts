@@ -208,7 +208,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         recordsSeen: 2,
         listingsRemoved: 1,
       });
-      assert.deepEqual([...offsets, statements()], [5, 12, 21]);
+      assert.deepEqual([...offsets, statements()], [5, 12, 22]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },

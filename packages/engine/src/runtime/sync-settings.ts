@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { parse } from "yaml";
 import { z } from "zod";
-import { feedSettings, feedTokenSchema } from "./sync-feed-settings.ts";
+import { feedTokenSchema, parseFeedSettings } from "./sync-feed-settings.ts";
 
 const path = z.string().min(1);
 const database = z
@@ -17,6 +17,6 @@ export async function readSyncSettings(statusOnly: boolean) {
     ? undefined
     : feedTokenSchema.parse(process.env.IDX_SYNC_FEED_TOKEN);
   const file = path.parse(process.env.IDX_SYNC_FEED_FILE);
-  const feed = feedSettings.parse(parse(await readFile(file, "utf8")));
+  const feed = parseFeedSettings(parse(await readFile(file, "utf8")));
   return { connectionString, feedToken, feed };
 }

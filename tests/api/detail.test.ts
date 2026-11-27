@@ -835,49 +835,28 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
-        "missing or insufficient disclosures fail closed in each context",
+        "listing writes require valid configured disclosures",
         async () => {
-          const sold = feed.approvedPageBlocks.find(
-            ({ id }) => id === "closed_information",
-          )!;
-          const requiredPage = {
-            ...sold,
-            id: "synthetic_page_notice",
-            text: "Synthetic property information.",
-          };
-          const policy = {
-            ...feed,
-            approvedListingBlocks: [...feed.approvedListingBlocks, sold],
-            approvedPageBlocks: [...feed.approvedPageBlocks, requiredPage],
-            requiredPageBlockIds: [requiredPage.id],
-          };
+          const key = "Synthetic writer invalid disclosure";
+          const change = upsert(key, 2);
           const cases = [
-            { blocks: [], pageBlocks: [requiredPage] },
-            { blocks: [sold], pageBlocks: [requiredPage] },
-            { blocks: feed.approvedListingBlocks, pageBlocks: [sold] },
+            { approvedFeedBlocks: [] },
+            { approvedListingBlocks: [] },
             {
-              blocks: feed.approvedListingBlocks,
-              pageBlocks: [requiredPage, ...feed.approvedListingBlocks],
+              approvedPageBlocks: [{ ...feed.approvedFeedBlocks[0], text: "" }],
             },
           ];
-          for (const [index, blocks] of cases.entries()) {
-            const key = `Synthetic writer insufficient disclosure ${index}`;
-            const live = upsert(key, 1);
-            live.listing.pageBlocks = [requiredPage];
-            assert.deepEqual(
-              (await applyListingPage(writer, primary, [live], policy))
-                .rejected,
-              [],
+          await write([upsert(key, 1)]);
+          const id = await identity(primary, key);
+          const before = await stored(id);
+          for (const blocks of cases) {
+            await assert.rejects(
+              applyListingPage(writer, primary, [change], {
+                ...feed,
+                ...blocks,
+              }),
             );
-            const id = await identity(primary, key);
-            await publicDetail(id);
-            const bad = upsert(key, 2);
-            Object.assign(bad.listing, blocks);
-            assert.deepEqual(
-              (await applyListingPage(writer, primary, [bad], policy)).rejected,
-              [{ index: 0, code: "invalid_change", hidden: true }],
-            );
-            await absent(id);
+            assert.deepEqual(await stored(id), before);
           }
         },
       );

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import pg from "pg";
 import { parse, stringify } from "yaml";
+import type { Listing } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { createApp } from "@idx-kit/engine/src/http/app.ts";
@@ -45,7 +46,7 @@ test(
     );
     const app = createApp(repository(runtime), contract, "test", () => {});
     const search = "/api/v1/listings";
-    async function api(path = search, status = 200) {
+    async function request(path = search, status = 200) {
       const response = await app.request(path, {
         headers: { Authorization: `Bearer ${secret}` },
       });
@@ -56,6 +57,10 @@ test(
         response,
         body,
       );
+      return body;
+    }
+    async function api(path = search, status = 200) {
+      const body = await request(path, status);
       return status === 200 ? body.data : body;
     }
 
@@ -69,7 +74,10 @@ test(
     });
     const first = record("first", 1, "100.00");
     const second = record("second", 2, "200.00");
-    const third = record("third", 4, "300.00");
+    const third = {
+      ...record("third", 4, "300.00"),
+      InternetAddressDisplayYN: false,
+    };
     const edited = record("first", 3, "125.00");
     const invalid = { ...record("invalid", 1, "125.00"), ListPrice: 125 };
     let respond: Parameters<typeof standIn>[1] = (url) => {
@@ -295,14 +303,65 @@ test(
     );
 
     await t.test(
-      "scan repairs a missed edit and removes only within the explicit limit",
+      "scan repairs notices and missed edits and removes only within the explicit limit",
       async () => {
-        const missing = (await api()).find(
-          (listing: { price: { amount: string } }) =>
-            listing.price.amount === "200.00",
-        );
+        const before = await request();
+        const [original, missing, withheld] = before.data as Listing[];
         assert.ok(missing);
-        respond = () => page([edited, third, invalid]);
+        assert.deepEqual(
+          original.display.blocks,
+          config.disclosures.approvedListingBlocks,
+        );
+        assert.deepEqual(
+          (await request(`${search}/${withheld.id}`)).display.blocks,
+          config.disclosures.approvedFeedBlocks,
+        );
+        const feedBlocks = [
+          {
+            ...config.disclosures.approvedFeedBlocks[0],
+            text: "Updated invented feed notice",
+          },
+        ];
+        const listingBlocks = [
+          {
+            id: "notice_z",
+            text: "Updated invented listing notice",
+            placement: "afterListing",
+            prominence: "largestListingText",
+          },
+          {
+            id: "notice_a",
+            text: "Additional invented listing notice",
+            placement: "adjacent",
+            prominence: "medianListingText",
+          },
+        ];
+        const pageBlocks = [
+          {
+            id: "notice_page_z",
+            text: "Invented listing page notice",
+            placement: "pageFooter",
+            prominence: "medianListingText",
+          },
+          {
+            id: "notice_page_a",
+            text: "Additional invented page notice",
+            placement: "pageFooter",
+            prominence: "normal",
+          },
+        ];
+        const disclosures = {
+          approvedFeedBlocks: feedBlocks,
+          approvedListingBlocks: listingBlocks,
+          approvedPageBlocks: pageBlocks,
+        };
+        await writeFile(feedFile, stringify({ ...config, disclosures }));
+        const sameRevision = {
+          ...third,
+          ListPrice: "999.00",
+          InternetAddressDisplayYN: true,
+        };
+        respond = () => page([edited, sameRevision, invalid]);
         const repaired = await run(["scan"]);
         const counts = {
           accepted: 2,
@@ -325,10 +384,26 @@ test(
         assert.equal(scanned.unreadableRecords, 0);
         assert.equal(scanned.lastRun.kind, "scan");
         assert.deepEqual(scanned.lastRun.counts, counts);
+        const after = await request();
+        const listings = after.data as Listing[];
         assert.deepEqual(
-          (await api()).map((listing: typeof missing) => listing.price.amount),
+          listings.map((listing) => listing.price?.amount),
           ["125.00", "200.00", "300.00"],
         );
+        const expectedPage = [...feedBlocks, ...pageBlocks];
+        assert.deepEqual(after.display.blocks, expectedPage);
+        for (const item of listings) {
+          const detail = await request(`${search}/${item.id}`);
+          assert.deepEqual(item.display.blocks, listingBlocks);
+          assert.deepEqual(detail.data, item);
+          assert.deepEqual(detail.display.blocks, expectedPage);
+        }
+        const updated = listings.find(({ id }) => id === withheld.id);
+        assert.ok(updated);
+        assert.deepEqual(updated.withheldFields, ["address"]);
+        assert.equal(updated.address, null);
+        assert.deepEqual(updated.images, []);
+        assert.deepEqual(updated.display.freshness, withheld.display.freshness);
         const blocked = await run(
           ["scan", "--remove-missing", "--max-removals", "0"],
           4,
@@ -439,6 +514,23 @@ test(
         );
         await writeFile(feedFile, stringify({ ...config, synthetic: "true" }));
         await run(["status"], 1);
+        const legacy = {
+          ...config.disclosures,
+          approvedPageBlocks: [],
+          requiredListingBlockIds: ["example_listing"],
+          requiredPageBlockIds: [],
+        };
+        await writeFile(
+          feedFile,
+          stringify({ ...config, disclosures: legacy }),
+        );
+        const obsolete = await start(["status"]).done;
+        assert.equal(obsolete.code, 1);
+        assert.equal(obsolete.stdout, "");
+        assert.match(
+          obsolete.stderr,
+          /Remove disclosures\.requiredListingBlockIds and disclosures\.requiredPageBlockIds/,
+        );
         for (const pageSize of [0, 201, 1.5, "2"]) {
           await writeFile(feedFile, stringify({ ...config, pageSize }));
           await run(["incremental"], 1);

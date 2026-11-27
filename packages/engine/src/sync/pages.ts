@@ -30,18 +30,11 @@ export function nextStepFor(outcome: StoppedRun): FeedNextStep {
   return { kind: "retry" };
 }
 
-export function listingChangesFor({ synthetic, disclosures }: SyncFeed) {
-  const blocks = disclosures.approvedListingBlocks.filter(({ id }) =>
-    disclosures.requiredListingBlockIds.includes(id),
-  );
-  const pageBlocks = disclosures.approvedPageBlocks.filter(({ id }) =>
-    disclosures.requiredPageBlockIds.includes(id),
-  );
-  return (records: unknown[]) => {
-    // PostgreSQL supplies the ingest time when the page is written.
-    const metadata = { synthetic, ingestedAt: null, blocks, pageBlocks };
-    return records.map((record) => mapResoRecord(record, metadata));
-  };
+export function listingChangesFor({ synthetic }: SyncFeed) {
+  // PostgreSQL supplies the ingest time when the page is written.
+  const metadata = { synthetic, ingestedAt: null };
+  return (records: unknown[]) =>
+    records.map((record) => mapResoRecord(record, metadata));
 }
 
 type FeedRun = StoppedRun | { code: "complete"; status?: number };

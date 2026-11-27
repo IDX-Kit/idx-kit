@@ -1,7 +1,6 @@
 import type pg from "pg";
 import type { DisplayBlock } from "@idx-kit/client";
 import {
-  disclosureIds,
   disclosureSchema,
   listingStatus,
   normalize,
@@ -36,7 +35,10 @@ export type ListingChange = {
   | { kind: "withdrawn" | "deleted" }
   | {
       kind: "upsert";
-      listing: Omit<ListingRecord, "source" | "ingestedAt"> & {
+      listing: Omit<
+        ListingRecord,
+        "source" | "ingestedAt" | "blocks" | "pageBlocks"
+      > & {
         ingestedAt: string | null;
         source: ListingChangeSource;
       };
@@ -48,9 +50,7 @@ export type ListingChange = {
 export interface ListingPageDisclosures {
   approvedFeedBlocks: DisplayBlock[];
   approvedListingBlocks: DisplayBlock[];
-  approvedPageBlocks: DisplayBlock[];
-  requiredListingBlockIds: string[];
-  requiredPageBlockIds: string[];
+  approvedPageBlocks?: DisplayBlock[];
 }
 
 interface PageRow {
@@ -359,24 +359,6 @@ export async function writeFixturePages(
   }
 }
 
-function disclosureResolver(blocks: DisplayBlock[], required: string[]) {
-  const approved = new Map(
-    disclosureSchema.parse(blocks).map((block) => [block.id, block]),
-  );
-  if (required.some((id) => !approved.has(id)))
-    throw new Error("Required disclosure is not approved for this context");
-  return (blocks: DisplayBlock[]) => {
-    const ids = disclosureIds.parse(blocks).map(({ id }) => id);
-    if (required.some((id) => !ids.includes(id)))
-      throw new Error("Missing required disclosure");
-    return ids.map((id) => {
-      const block = approved.get(id);
-      if (!block) throw new Error("Unapproved disclosure");
-      return block;
-    });
-  };
-}
-
 type PageOptions = { authoritativeSnapshot?: boolean } & (
   | {
       incremental?: {
@@ -403,15 +385,11 @@ export async function applyListingPage(
   const feedBlocks = disclosureSchema
     .min(1)
     .parse(disclosures.approvedFeedBlocks);
-  if (!disclosures.requiredListingBlockIds.length)
-    throw new Error("Required listing disclosures must be configured");
-  const listingBlocks = disclosureResolver(
-    disclosures.approvedListingBlocks,
-    disclosures.requiredListingBlockIds,
-  );
-  const pageBlocks = disclosureResolver(
-    disclosures.approvedPageBlocks,
-    disclosures.requiredPageBlockIds,
+  const blocks = disclosureSchema
+    .min(1)
+    .parse(disclosures.approvedListingBlocks);
+  const pageBlocks = disclosureSchema.parse(
+    disclosures.approvedPageBlocks ?? [],
   );
 
   const rejected: {
@@ -472,8 +450,8 @@ export async function applyListingPage(
                 {
                   ...change.listing,
                   source: { ...source, ListingKey: key },
-                  blocks: listingBlocks(change.listing.blocks),
-                  pageBlocks: pageBlocks(change.listing.pageBlocks),
+                  blocks,
+                  pageBlocks,
                 },
                 true,
               );
@@ -576,14 +554,21 @@ export async function applyListingPage(
             scanCheckpoint.recordsSeen > 0 ? scan.maxRemovals : null,
           )
         : undefined;
+    if (scanCheckpoint && !scanCheckpoint.active) {
+      // Apply the current notices even to listings absent from the scan or
+      // encountered in an earlier invocation. Only change the notice columns.
+      await client.query(
+        `UPDATE idx.listings l SET display_blocks = $2::jsonb, page_blocks = $3::jsonb
+        FROM idx.source_mappings m
+        WHERE m.feed_id = $1 AND m.listing_id = l.id
+          AND (l.display_blocks, l.page_blocks) IS DISTINCT FROM ($2::jsonb, $3::jsonb)`,
+        [feedId, JSON.stringify(blocks), JSON.stringify(pageBlocks)],
+      );
+    }
     // Sync pages use database ingest times. Writers that supply their own
     // ingest times recompute freshness before they finish.
     if (!incrementalContinues && !scanCheckpoint?.active)
-      await updateListingFreshness(
-        client,
-        [feedId],
-        scan ? undefined : feedBlocks,
-      );
+      await updateListingFreshness(client, [feedId], feedBlocks);
     if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }

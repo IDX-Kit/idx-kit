@@ -75,10 +75,13 @@ disclosures:
       text: Invented listing attribution
       placement: adjacent
       prominence: normal
-  approvedPageBlocks: []
-  requiredListingBlockIds: [example_listing]
-  requiredPageBlockIds: []
 ```
+
+List only the blocks to display, in display order, with their placement and
+prominence. Add `disclosures.approvedPageBlocks` with the same block shape for
+page notices associated with listings. Omit it when there are none. If your
+file uses `requiredListingBlockIds` and `requiredPageBlockIds`, keep only the
+selected blocks in the approved arrays and remove both ID lists.
 
 ## Run and check the feed
 
@@ -92,6 +95,9 @@ accepted record. Unreadable identities and revisions more than five minutes
 ahead of the sync clock are rejected, and only eligible revisions move the
 saved mark forward. A future-dated removal hides a listing only if its page has
 no trusted record for the same listing. The stored revision stays in place.
+Incremental polls apply the configured feed-wide blocks and use the configured
+listing and page blocks when they write a listing. To update notices on
+listings that the poll leaves as-is, run a scan.
 An upgrade to rejection reporting replays a partial poll with earlier records
 from its last completed mark and restarts an unfinished scan.
 
@@ -99,9 +105,13 @@ from its last completed mark and restarts an unfinished scan.
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
 ```
 
-`npm run --silent sync -- scan` repairs missed edits across the feed. It can
-apply explicit withdrawals and preserves listings that are merely absent.
-Incremental sync renews the feed freshness window.
+`npm run --silent sync -- scan` repairs missed edits across the feed. After
+editing approved disclosures, run the scan through its final page to apply
+them to every stored listing, including listings at the same revision and
+listings absent from the scan. Use the same disclosure settings for any
+scheduled Worker on that feed. A scan can apply explicit withdrawals and
+preserves listings that are merely absent unless removal by absence is
+enabled. Incremental sync renews the feed freshness window.
 
 ```json
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"pagesRead":3,"recordsSeen":24,"listingsRemoved":0,"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}

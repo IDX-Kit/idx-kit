@@ -42,12 +42,13 @@ function integer(value, min, max) {
 async function syncOverrides(config) {
   const json = process.env.IDX_SYNC_FEED_JSON;
   if (!json) throw new Error("Missing IDX_SYNC_FEED_JSON.");
-  const { feedSettings } =
+  const { LegacyDisclosuresError, parseFeedSettings } =
     await import("@idx-kit/engine/src/runtime/sync-feed-settings.ts");
   let feed;
   try {
-    feed = feedSettings.parse(JSON.parse(json));
-  } catch {
+    feed = parseFeedSettings(JSON.parse(json));
+  } catch (error) {
+    if (error instanceof LegacyDisclosuresError) throw error;
     throw new Error("IDX_SYNC_FEED_JSON must contain valid feed settings.");
   }
   config.vars = { IDX_SYNC_FEED_JSON: JSON.stringify(feed) };

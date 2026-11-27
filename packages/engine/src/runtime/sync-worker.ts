@@ -11,7 +11,11 @@ import {
 } from "../db/feed-sync-outcomes.ts";
 import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { reportSyncStep, syncIncrementally } from "../sync/incremental.ts";
-import { feedSettings, feedTokenSchema } from "./sync-feed-settings.ts";
+import {
+  feedTokenSchema,
+  LegacyDisclosuresError,
+  parseFeedSettings,
+} from "./sync-feed-settings.ts";
 
 interface SyncEnv {
   IDX_SYNC_FEED_JSON?: string;
@@ -41,11 +45,12 @@ function settings(env: SyncEnv) {
   try {
     const json = z.string().parse(env.IDX_SYNC_FEED_JSON);
     return {
-      feed: feedSettings.parse(JSON.parse(json)),
+      feed: parseFeedSettings(JSON.parse(json)),
       token: feedTokenSchema.parse(env.IDX_SYNC_FEED_TOKEN),
       pages: pageCount.parse(env.IDX_SYNC_PAGES_PER_RUN ?? "10"),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof LegacyDisclosuresError) throw error;
     throw new Error("Invalid sync settings");
   }
 }

@@ -5,6 +5,7 @@ import { ResoConnector } from "../connectors/reso.ts";
 import { emptyCounts, readFeedState } from "../db/feed-sync-outcomes.ts";
 import { syncFullScan } from "../sync/full-scan.ts";
 import { syncIncrementally } from "../sync/incremental.ts";
+import { LegacyDisclosuresError } from "./sync-feed-settings.ts";
 import { readSyncSettings } from "./sync-settings.ts";
 
 const limit = z.string().regex(/^\d+$/).transform(Number).pipe(z.int());
@@ -61,10 +62,12 @@ async function run() {
       connectionString: settings.connectionString,
       connectionTimeoutMillis: 1500,
     });
-  } catch {
+  } catch (error) {
     return fail(
       1,
-      "Invalid sync settings. Check the feed file, writer database URL, and token requirements.",
+      error instanceof LegacyDisclosuresError
+        ? error.message
+        : "Invalid sync settings. Check the feed file, writer database URL, and token requirements.",
     );
   }
   const { feed, feedToken } = settings;
