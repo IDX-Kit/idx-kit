@@ -5,60 +5,51 @@ from the repository root on your Node host.
 
 ## Set up the database
 
-On an empty PostgreSQL server, create a migration login and a database it owns.
-As a PostgreSQL role that can create logins, create the HTTP runtime login
-before running the migrations.
+Create a PostgreSQL database owned by a login that can create roles. Set
+`DATABASE_URL` to that owner's direct connection string, `IDX_SYNC_FEED_FILE`
+to the YAML file described below, and `IDX_SYNC_FRESHNESS_SECONDS` to the
+positive whole number of seconds approved for the feed in your MLS agreement.
+Then run:
 
-```sql runtime-role
-CREATE ROLE idx_runtime LOGIN;
+```sh
+npm run setup
 ```
 
-Set its password interactively with `\password idx_runtime` in `psql`.
+Setup runs migrations, applies writer grants, and registers the feed by its
+stable ID. A new feed starts expired until its first successful renewal by
+incremental sync. On an existing feed, changing the window takes effect on
+the next successful renewal. Setup preserves the current expiration, saved
+sync position, applied notices, and listings.
 
-Run `npm run demo:db:migrate` with `DATABASE_URL` set to the migration role's
-connection string. As a PostgreSQL role that can create logins, create the
-separate writer login and set its password interactively in `psql`.
+For new logins, connect as the owner in `psql` and set the passwords
+interactively. The client hashes the passwords before sending them to PostgreSQL.
 
-```sql
-CREATE ROLE idx_listing_writer LOGIN NOINHERIT;
+```text
+\password idx_runtime
 \password idx_listing_writer
 ```
 
-Apply the writer grants as the database owner after migrations. Run this again
-after upgrading an existing writer setup.
+Use a feed of your own for real sync. After sync has been applied to the demo
+feed, reseeding leaves synced notices on any listings it skips.
+
+For an upgrade, run setup first, then replace every sync instance, including
+Workers. Wait for old runs to finish before editing notices, since old
+instances still write their own copy. If old and new runs overlapped or you
+are unsure, run `npm run --silent sync -- scan` once on Node after the old runs
+finish. Old runs do not track listing changes for freshness, and a completed
+scan recomputes the oldest listing ingest time.
+
+## Authorize a site
+
+With `DATABASE_URL` still set to the owner's connection, name the site and feed
+it can display. Add `--new-site` when deliberately creating a site, and keep
+using the site's existing key if it already has one. For a new key, choose the
+scopes it needs and a protected path where the file does not already exist.
 
 ```sh
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
+npm run demo:key -- authorize site_example feed_example --new-site
+npm run demo:key -- create site_example listings:read /path/to/private/site.secret
 ```
-
-When upgrading sync, apply the migrations and reapply the writer grants first,
-then replace every sync instance, including Workers. Wait for runs from the old
-instances to finish before editing notices. An older sync instance still writes
-its own copy of the notices. A run from an old sync instance that is still in
-flight when the new instances start does not record its listing changes for
-the new freshness check. If old and new runs overlapped or you are unsure, run
-`npm run --silent sync -- scan` once on Node after the old runs finish, since a
-completed scan always recomputes the feed's oldest ingest time.
-
-As the migration role, add the feed and authorize the site that may display it.
-Use a feed of your own for real sync. After a sync file has been applied to the
-demo feed, reseeding leaves synced notices on any listings it skips.
-Use a stable feed ID and the freshness window and disclosures approved for
-that feed. This invented example uses a one-hour window and starts expired.
-The API serves none of the feed until the first complete incremental run.
-For an existing site, use its ID and add only the license row.
-
-```sql ci
-INSERT INTO idx.feeds (id, refreshed_at, expires_at, display_blocks, rules_version)
-VALUES ('feed_example', statement_timestamp() - interval '2 hours',
-  statement_timestamp() - interval '1 hour',
-  '[{"id":"example_feed","text":"Invented listing feed","placement":"pageFooter","prominence":"normal"}]', '1');
-INSERT INTO idx.sites (id) VALUES ('site_example');
-INSERT INTO idx.data_licenses (site_id, feed_id) VALUES ('site_example', 'feed_example');
-```
-
-See the [demo quick start](demo-setup.md#create-the-database-load-listings-and-make-a-site-key)
-for creating a site key. Use your site ID and the scopes your site needs.
 
 ## Set the environment
 
@@ -226,8 +217,8 @@ Set the build command to `npm run sync:prepare` and the deploy command to
 
 | Setting | Where it belongs | Value |
 | --- | --- | --- |
-| `MIGRATION_DATABASE_URL` | Build secret | Direct PostgreSQL connection for the schema owner, with the required TLS settings. The owner must be able to create roles and manage `idx_listing_writer`. |
-| `LISTING_WRITER_DATABASE_PASSWORD` | Build secret | Random password of at least 32 characters. Use the same password in Hyperdrive. |
+| `MIGRATION_DATABASE_URL` | Build secret | Direct PostgreSQL connection for the schema owner, with the required TLS settings. The owner must be able to create the runtime and writer roles. |
+| `IDX_SYNC_FRESHNESS_SECONDS` | Build variable | The approved window in whole seconds, as used by `npm run setup`. |
 | `IDX_SYNC_FEED_JSON` | Build variable | JSON equivalent of the YAML above. Use a feed URL without credentials. |
 | `SYNC_HYPERDRIVE_ID` | Build variable | ID of the writer's Hyperdrive configuration. |
 | `IDX_SYNC_PAGES_PER_RUN` | Optional build variable | Whole number from 1 to 20. Defaults to 10. |
@@ -235,19 +226,12 @@ Set the build command to `npm run sync:prepare` and the deploy command to
 | `IDX_SYNC_CPU_MS` | Optional build variable | Whole number from 10 to 300000. Use a limit supported by your plan. |
 | `IDX_SYNC_FEED_TOKEN` | Worker runtime secret | Feed bearer token. Add it as a **Secret** under the Worker's Variables and Secrets settings, outside the build. |
 
-Cloudflare validates the cron expression at deploy time.
-If your database server logs every statement, follow the manual database setup
-and Worker deployment steps above. Skip `sync:prepare` because it sends the
-writer's password to the database in a SQL statement.
-
-For the first build, leave `SYNC_HYPERDRIVE_ID` unset. Preparation migrates the
-database, sets up the writer login and registers a new feed expired with a
-one-hour freshness window. A repeat build preserves saved feed state. The
-deploy step stops at the missing ID. Use the printed host, port and database,
-the direct connection's TLS settings, the user `idx_listing_writer` and its
-password to create the writer's pooled connection in Hyperdrive. Turn query
-caching off. Set `SYNC_HYPERDRIVE_ID`, add the Worker runtime secret, and retry
-the build. Authorize each site that can display the feed as described above.
+Cloudflare validates the cron expression at deploy time. The build uses the
+same database setup as `npm run setup`. Run setup locally first, then set the
+new login passwords with `psql` as described above. Create the writer's
+Hyperdrive configuration with its direct connection settings and query caching
+off. Set `SYNC_HYPERDRIVE_ID` and the Worker runtime secret before deploying.
+Authorize each site separately.
 
 ### Monitor and pause sync
 

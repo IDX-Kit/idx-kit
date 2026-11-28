@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { parse } from "yaml";
 import { migrate } from "../db/migrate.ts";
 import {
   LegacyDisclosuresError,
@@ -8,106 +10,129 @@ import {
 
 class PrepareError extends Error {}
 
-let stage = "configuration";
-async function prepare() {
-  const connectionString = process.env.MIGRATION_DATABASE_URL;
-  if (!connectionString || !/^postgres(?:ql)?:\/\//.test(connectionString))
-    throw new PrepareError("MIGRATION_DATABASE_URL must be a PostgreSQL URL.");
-  const password = process.env.LISTING_WRITER_DATABASE_PASSWORD;
-  if (!password || password.length < 32)
-    throw new PrepareError(
-      "LISTING_WRITER_DATABASE_PASSWORD must have at least 32 characters.",
-    );
-  let feed;
-  try {
-    feed = parseFeedSettings(JSON.parse(process.env.IDX_SYNC_FEED_JSON ?? ""));
-  } catch (error) {
-    throw new PrepareError(
-      error instanceof LegacyDisclosuresError
-        ? error.message
-        : "IDX_SYNC_FEED_JSON must contain valid feed settings.",
-    );
-  }
-
-  stage = "database connection";
-  const db = new pg.Client({ connectionString, connectionTimeoutMillis: 5000 });
-  db.on("error", () => {});
-  try {
-    await db.connect();
-    // Serialize builds for this database across the migration transaction.
-    await db.query("SELECT pg_advisory_lock(711003)");
-    stage = "runtime role";
-    const runtime = await db.query(
-      "SELECT 1 FROM pg_roles WHERE rolname='idx_runtime'",
-    );
-    if (!runtime.rowCount)
-      await db.query(
-        "CREATE ROLE idx_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION",
-      );
-
-    stage = "migrations";
-    await migrate(db);
-
-    stage = "writer role";
-    await db.query("BEGIN");
-    const writer = await db.query(`
-      SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit
-        OR rolbypassrls OR rolreplication AS unsafe,
-        EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) AS member
-      FROM pg_roles WHERE rolname='idx_listing_writer'
-    `);
-    if (writer.rows[0]?.unsafe)
-      throw new PrepareError(
-        "idx_listing_writer must have no elevated privileges and NOINHERIT.",
-      );
-    if (writer.rows[0]?.member)
-      throw new PrepareError(
-        "idx_listing_writer must not be granted another role.",
-      );
-    if (!writer.rowCount)
-      await db.query(
-        "CREATE ROLE idx_listing_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION",
-      );
+async function prepareRole(
+  db: pg.Client,
+  name: "idx_runtime" | "idx_listing_writer",
+) {
+  const { rows } = await db.query(
+    `SELECT rolcanlogin, rolinherit,
+       rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication
+         OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) AS unsafe
+     FROM pg_roles WHERE rolname=$1`,
+    [name],
+  );
+  const role = rows[0];
+  if (!role) {
     await db.query(
-      `ALTER ROLE idx_listing_writer LOGIN PASSWORD ${pg.escapeLiteral(password)}`,
+      `CREATE ROLE ${name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION`,
     );
-    stage = "writer grants";
+  } else {
+    if (role.unsafe || (name === "idx_listing_writer" && role.rolinherit))
+      throw new PrepareError(
+        `${name} must be a restricted login with no role memberships.`,
+      );
+    if (!role.rolcanlogin) await db.query(`ALTER ROLE ${name} LOGIN`);
+  }
+}
+
+export async function prepareDatabase(
+  db: pg.Client,
+  feed: ReturnType<typeof parseFeedSettings>,
+  freshnessSeconds: number,
+) {
+  // Hold the lock across the migration transaction and feed registration.
+  await db.query("SELECT pg_advisory_lock(711003)");
+  try {
+    await prepareRole(db, "idx_runtime");
+    await prepareRole(db, "idx_listing_writer");
+    await migrate(db);
     await db.query(
       await readFile(
         new URL("../../setup/listing-writer.sql", import.meta.url),
         "utf8",
       ),
     );
-
-    stage = "feed registration";
     await db.query(
-      `INSERT INTO idx.feeds (id, refreshed_at, expires_at, display_blocks, rules_version)
-       VALUES ($1, statement_timestamp() - interval '2 hours',
-         statement_timestamp() - interval '1 hour', $2, '1')
-       ON CONFLICT (id) DO NOTHING`,
-      [feed.feedId, JSON.stringify(feed.disclosures.approvedFeedBlocks)],
+      `INSERT INTO idx.feeds
+         (id, refreshed_at, expires_at, display_blocks, rules_version, freshness_seconds)
+       VALUES ($1, statement_timestamp() - interval '1 second' - $3::integer * interval '1 second',
+         statement_timestamp() - interval '1 second', $2, '1', $3)
+       ON CONFLICT (id) DO UPDATE SET freshness_seconds = EXCLUDED.freshness_seconds
+       WHERE idx.feeds.freshness_seconds IS DISTINCT FROM EXCLUDED.freshness_seconds`,
+      [
+        feed.feedId,
+        JSON.stringify(feed.disclosures.approvedFeedBlocks),
+        freshnessSeconds,
+      ],
     );
-    await db.query("COMMIT");
+  } finally {
+    await db.query("SELECT pg_advisory_unlock(711003)");
+  }
+}
+
+async function prepare(fromFile: boolean) {
+  const owner = fromFile ? "DATABASE_URL" : "MIGRATION_DATABASE_URL";
+  const connectionString = process.env[owner];
+  if (
+    !connectionString ||
+    !/^postgres(?:ql)?:\/\//.test(connectionString) ||
+    !URL.canParse(connectionString)
+  )
+    throw new PrepareError(`${owner} must be a PostgreSQL URL.`);
+
+  const seconds = process.env.IDX_SYNC_FRESHNESS_SECONDS ?? "";
+  const freshnessSeconds = Number(seconds);
+  if (
+    !/^\d+$/.test(seconds) ||
+    freshnessSeconds < 1 ||
+    freshnessSeconds > 2_147_483_647
+  )
+    throw new PrepareError(
+      "Set IDX_SYNC_FRESHNESS_SECONDS to the approved window in whole seconds (1 to 2147483647).",
+    );
+
+  const input = fromFile ? "IDX_SYNC_FEED_FILE" : "IDX_SYNC_FEED_JSON";
+  let feed;
+  try {
+    const value = process.env[input] ?? "";
+    feed = parseFeedSettings(
+      fromFile ? parse(await readFile(value, "utf8")) : JSON.parse(value),
+    );
+  } catch (error) {
+    throw new PrepareError(
+      error instanceof LegacyDisclosuresError
+        ? error.message
+        : `Check the feed settings in ${input}.`,
+    );
+  }
+
+  const db = new pg.Client({ connectionString, connectionTimeoutMillis: 5000 });
+  db.on("error", () => {});
+  try {
+    await db.connect();
+    await prepareDatabase(db, feed, freshnessSeconds);
   } finally {
     await db.end();
   }
-  console.log("Sync preparation passed.");
+  console.log("Database migrations and writer grants are current.");
+  console.log("Feed registered with the approved freshness window.");
   console.log(
-    JSON.stringify({ host: db.host, port: db.port, database: db.database }),
+    "For new logins, use psql \\password for idx_runtime and idx_listing_writer.",
   );
 }
 
-try {
-  await prepare();
-} catch (error) {
-  console.error(
-    JSON.stringify({
-      operation: stage,
-      message:
-        error instanceof PrepareError
-          ? error.message
-          : "Sync preparation failed. Check the database connection and permissions.",
-    }),
-  );
-  process.exitCode = 1;
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = process.argv.slice(2);
+  try {
+    if (args.length && !(args.length === 1 && args[0] === "file"))
+      throw new PrepareError("Set the setup inputs in the environment.");
+    await prepare(args[0] === "file");
+  } catch (error) {
+    console.error(
+      error instanceof PrepareError
+        ? error.message
+        : "Database setup failed. Check the database connection and permissions.",
+    );
+    process.exitCode = 1;
+  }
 }

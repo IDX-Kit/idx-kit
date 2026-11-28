@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,7 +25,6 @@ test(
       connectionString: process.env.RUNTIME_DATABASE_URL,
     });
     await db.connect();
-    await runtime.connect();
     t.after(async () => {
       await runtime.end();
       await db.end();
@@ -34,36 +33,8 @@ test(
       new URL("../../docs/feed-sync.md", import.meta.url),
       "utf8",
     );
-    const provision = runbook.match(/```sql ci\n([\s\S]+?)```/)?.[1];
-    assert.ok(provision);
-    await db.query(provision);
     const directory = await mkdtemp(join(tmpdir(), "idx-sync-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
-    const { secret } = await keyCommand(
-      directory,
-      "create",
-      "site_example",
-      "listings:read",
-    );
-    const app = createApp(repository(runtime), contract, "test", () => {});
-    const search = "/api/v1/listings";
-    async function request(path = search, status = 200) {
-      const response = await app.request(path, {
-        headers: { Authorization: `Bearer ${secret}` },
-      });
-      assert.equal(response.status, status);
-      const body = await response.json();
-      validateResponse(
-        path === search ? search : `${search}/{listingId}`,
-        response,
-        body,
-      );
-      return body;
-    }
-    async function api(path = search, status = 200) {
-      const body = await request(path, status);
-      return status === 200 ? body.data : body;
-    }
 
     const { listings } = await new FixtureConnector().read();
     const revision = (n: number) => `2026-11-03T00:00:00.00000${n}Z`;
@@ -103,6 +74,59 @@ test(
     config.disclosures.approvedFeedBlocks[0].text = "Invented feed file notice";
     config.disclosures.approvedPageBlocks = [movedNotice];
     await writeFile(feedFile, stringify(config));
+
+    const setup = spawnSync("npm", ["run", "--silent", "setup"], {
+      env: {
+        ...process.env,
+        IDX_SYNC_FEED_FILE: feedFile,
+        IDX_SYNC_FRESHNESS_SECONDS: "2700",
+      },
+      encoding: "utf8",
+    });
+    assert.equal(setup.status, 0, setup.stderr);
+    await runtime.connect();
+    const authorize = (site: string, id: string, ...flags: string[]) =>
+      spawnSync(
+        "npm",
+        ["run", "--silent", "demo:key", "--", "authorize", site, id, ...flags],
+        { encoding: "utf8" },
+      );
+    const deniedSite = authorize("site_example", config.feedId);
+    assert.equal(deniedSite.status, 1);
+    assert.match(deniedSite.stderr, /Unknown site or feed/);
+    const deniedFeed = authorize("site_example", "unknown_feed", "--new-site");
+    assert.equal(deniedFeed.status, 1);
+    assert.match(deniedFeed.stderr, /Unknown site or feed/);
+    assert.equal((await db.query("SELECT id FROM idx.sites")).rowCount, 0);
+    const authorized = authorize("site_example", config.feedId, "--new-site");
+    assert.equal(authorized.status, 0, authorized.stderr);
+    const repeated = authorize("site_example", config.feedId);
+    assert.equal(repeated.status, 0, repeated.stderr);
+    const { secret } = await keyCommand(
+      directory,
+      "create",
+      "site_example",
+      "listings:read",
+    );
+    const app = createApp(repository(runtime), contract, "test", () => {});
+    const search = "/api/v1/listings";
+    async function request(path = search, status = 200) {
+      const response = await app.request(path, {
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+      assert.equal(response.status, status);
+      const body = await response.json();
+      validateResponse(
+        path === search ? search : `${search}/{listingId}`,
+        response,
+        body,
+      );
+      return body;
+    }
+    async function api(path = search, status = 200) {
+      const body = await request(path, status);
+      return status === 200 ? body.data : body;
+    }
 
     async function assertDisplay(disclosures: ListingPageDisclosures) {
       const {

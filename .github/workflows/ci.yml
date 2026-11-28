@@ -313,25 +313,21 @@ jobs:
       - *create-cluster
       - name: Prove hosted sync preparation on an empty database
         run: |
-          sed -i '1i host idx_sync_online idx_listing_writer 127.0.0.1/32 scram-sha-256' "$RUNNER_TEMP/idx11-pg/pg_hba.conf"
+          sed -i '1i host idx_sync_online idx_listing_writer,idx_runtime 127.0.0.1/32 scram-sha-256' "$RUNNER_TEMP/idx11-pg/pg_hba.conf"
           /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" reload
           psql 'postgresql://postgres@127.0.0.1:55432/postgres' -v ON_ERROR_STOP=1 \
             -c 'CREATE DATABASE idx_sync_online OWNER idx_migration'
           export DATABASE_URL="${DATABASE_URL%/*}/idx_sync_online"
           node --test tests/setup/sync-online.test.ts
           psql 'postgresql://postgres@127.0.0.1:55432/postgres' -v ON_ERROR_STOP=1 \
-            -c 'DROP DATABASE idx_sync_online' -c 'DROP ROLE idx_runtime'
-      - name: Prove the feed operator commands from a fresh cluster
+            -c 'DROP DATABASE idx_sync_online' -c 'DROP ROLE idx_runtime, idx_listing_writer'
+      - name: Set up a clean database, sync the feed, and serve listings
         run: |
-          awk '/^```sql runtime-role$/{copy=1; next} /^```$/{copy=0} copy' docs/feed-sync.md |
-            psql 'postgresql://postgres@127.0.0.1:55432/postgres' -v ON_ERROR_STOP=1
           psql 'postgresql://postgres@127.0.0.1:55432/postgres' -v ON_ERROR_STOP=1 \
             -c 'CREATE DATABASE idx_sync_commands OWNER idx_migration'
           export DATABASE_URL="${DATABASE_URL%/*}/idx_sync_commands"
           export RUNTIME_DATABASE_URL="${RUNTIME_DATABASE_URL%/*}/idx_sync_commands"
           export LISTING_WRITER_DATABASE_URL="${LISTING_WRITER_DATABASE_URL%/*}/idx_sync_commands"
-          npm run demo:db:migrate
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
           node --test tests/sync/commands.test.ts
       - name: Prepare the empty listings database
         run: |

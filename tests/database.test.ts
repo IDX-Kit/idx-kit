@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      16,
+      17,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
@@ -87,7 +87,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
             REFERENCES idx.listings;
       `);
       await db.query(
-        "ALTER TABLE idx.feeds DROP COLUMN oldest_listing_ingested_at",
+        "ALTER TABLE idx.feeds DROP COLUMN oldest_listing_ingested_at, DROP COLUMN freshness_seconds",
       );
       await db.query(
         "DELETE FROM public.schema_migrations WHERE name = ANY($1)",
@@ -98,6 +98,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
             "007_feed_sync_positions.sql",
             "011_feed_sync_record_presence.sql",
             "012_feed_sync_reports.sql",
+            "017_feed_freshness_window.sql",
           ],
         ],
       );

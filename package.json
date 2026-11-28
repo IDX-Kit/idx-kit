@@ -26,6 +26,7 @@
     "demo:site:build": "npm run build --workspace @idx-kit/demo-site",
     "demo:site": "npm run start --workspace @idx-kit/demo-site",
     "demo:engine": "node packages/engine/src/runtime/node.ts",
+    "setup": "node packages/engine/src/runtime/sync-prepare.ts file",
     "sync": "node --no-warnings packages/engine/src/runtime/sync.ts",
     "sync:prepare": "node packages/engine/src/runtime/sync-prepare.ts",
     "sync:deploy": "node scripts/demo-deploy.mjs sync",

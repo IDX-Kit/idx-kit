@@ -9,11 +9,13 @@ import { promisify } from "node:util";
 import pg from "pg";
 import { parse } from "yaml";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import { parseFeedSettings } from "@idx-kit/engine/src/runtime/sync-feed-settings.ts";
+import { prepareDatabase } from "@idx-kit/engine/src/runtime/sync-prepare.ts";
 import { feedToken, page, standIn } from "../sync/feed.ts";
 
-test("hosted preparation, writer password and grants, and repeat builds", async (t) => {
+test("shared setup and hosted builds preserve feed state and logins", async (t) => {
   const owner = process.env.DATABASE_URL!;
-  const password = randomBytes(32).toString("base64url") + "'\\%";
+  const password = randomBytes(32).toString("base64url");
   const { listings } = await new FixtureConnector().read();
   const revision = "2026-11-03T00:00:00.000001Z";
   const feed = await standIn(t, () =>
@@ -29,140 +31,157 @@ test("hosted preparation, writer password and grants, and repeat builds", async 
     ...process.env,
     MIGRATION_DATABASE_URL: owner,
     LISTING_WRITER_DATABASE_PASSWORD: password,
+    IDX_SYNC_FRESHNESS_SECONDS: "2700",
     IDX_SYNC_FEED_JSON: JSON.stringify(settings),
     IDX_SYNC_FEED_TOKEN: feedToken,
   };
-  function prepare(overrides = {}, status = 0, privateValue = "") {
+  function prepare(overrides: NodeJS.ProcessEnv = {}, status = 0) {
     const result = spawnSync("npm", ["run", "--silent", "sync:prepare"], {
       env: { ...env, ...overrides },
       encoding: "utf8",
     });
     const log = result.stdout + result.stderr;
-    for (const secret of [owner, password, feedToken, privateValue].filter(
-      Boolean,
-    ))
+    for (const secret of [owner, password, feedToken])
       assert.ok(!log.includes(secret), "Preparation exposed a credential");
     assert.equal(result.status, status, log);
     return log;
   }
-  const badConnection = new URL(owner);
-  badConnection.port = "1";
   assert.match(
-    prepare(
-      { MIGRATION_DATABASE_URL: badConnection.href },
-      1,
-      badConnection.href,
-    ),
-    /"operation":"database connection"/,
-  );
-  const shortPassword = "short-password-marker";
-  assert.match(
-    prepare(
-      { LISTING_WRITER_DATABASE_PASSWORD: shortPassword },
-      1,
-      shortPassword,
-    ),
-    /LISTING_WRITER_DATABASE_PASSWORD/,
+    prepare({ IDX_SYNC_FRESHNESS_SECONDS: "" }, 1),
+    /IDX_SYNC_FRESHNESS_SECONDS/,
   );
   assert.match(
-    prepare({ IDX_SYNC_FEED_JSON: `{"token":"${feedToken}"` }, 1),
+    prepare({ IDX_SYNC_FEED_JSON: `{"token":"${feedToken}"}` }, 1),
     /IDX_SYNC_FEED_JSON/,
   );
-
+  const badConnection = new URL(owner);
+  badConnection.port = "1";
+  const failed = prepare({ MIGRATION_DATABASE_URL: badConnection.href }, 1);
+  assert.match(failed, /Check the database connection and permissions/);
+  assert.ok(!failed.includes(badConnection.href));
   const db = new pg.Client({ connectionString: owner });
   await db.connect();
   t.after(() => db.end());
-  const runtimes = () =>
+  const roles = () =>
     db.query(`
-      SELECT rolcanlogin, rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit
-        OR rolbypassrls OR rolreplication AS unsafe
-      FROM pg_roles WHERE rolname='idx_runtime'
+      SELECT rolname, rolcanlogin, rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit
+        OR rolbypassrls OR rolreplication AS unsafe,
+        EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) AS member
+      FROM pg_roles WHERE rolname IN ('idx_runtime', 'idx_listing_writer') ORDER BY rolname
     `);
-  assert.equal((await runtimes()).rowCount, 0);
-  assert.equal(
-    (
-      await db.query(
-        "SELECT 1 FROM pg_roles WHERE rolname='idx_listing_writer'",
-      )
-    ).rowCount,
-    0,
-  );
-  const [status, location] = prepare().trim().split("\n");
-  assert.equal(status, "Sync preparation passed.");
-  assert.deepEqual(JSON.parse(location), {
-    host: "127.0.0.1",
-    port: 55432,
-    database: "idx_sync_online",
-  });
-  assert.deepEqual((await runtimes()).rows, [
-    { rolcanlogin: false, unsafe: false },
+  assert.deepEqual((await roles()).rows, []);
+  const query = t.mock.method(db, "query");
+  await prepareDatabase(db, parseFeedSettings(settings), 2700);
+  for (const call of query.mock.calls)
+    assert.doesNotMatch(
+      JSON.stringify(call.arguments),
+      /password|postgres(?:ql)?:\/\//i,
+    );
+  query.mock.restore();
+  assert.deepEqual((await roles()).rows, [
+    {
+      rolname: "idx_listing_writer",
+      rolcanlogin: true,
+      unsafe: false,
+      member: false,
+    },
+    { rolname: "idx_runtime", rolcanlogin: true, unsafe: false, member: false },
   ]);
-  const original = await db.query(
-    "SELECT display_blocks, expires_at < now() AS expired FROM idx.feeds",
+  const feeds = () => db.query("SELECT xmin::text, * FROM idx.feeds");
+  const original = (await feeds()).rows;
+  assert.equal(original.length, 1);
+  assert.equal(original[0].id, settings.feedId);
+  assert.equal(original[0].freshness_seconds, 2700);
+  assert.equal(original[0].rules_version, "1");
+  assert.ok(original[0].expires_at.getTime() < Date.now());
+  assert.deepEqual(
+    original[0].display_blocks,
+    settings.disclosures.approvedFeedBlocks,
   );
-  assert.deepEqual(original.rows, [
-    { display_blocks: settings.disclosures.approvedFeedBlocks, expired: true },
-  ]);
 
-  const writer = new URL(owner);
-  writer.username = "idx_listing_writer";
-  writer.password = encodeURIComponent(password);
+  // Upgrade the role created by earlier hosted preparation.
+  await db.query("ALTER ROLE idx_runtime NOLOGIN");
+  prepare();
+  assert.ok((await roles()).rows[1].rolcanlogin);
+  assert.deepEqual((await feeds()).rows, original);
+
+  const urls = new Map<string, string>();
+  for (const name of ["idx_runtime", "idx_listing_writer"]) {
+    const result = spawnSync(
+      "psql",
+      ["-X", owner, "-v", "ON_ERROR_STOP=1", "-c", `\\password ${name}`],
+      { input: `${password}\n${password}\n` },
+    );
+    assert.equal(result.status, 0, "psql could not set the login password");
+    const url = new URL(owner);
+    url.username = name;
+    url.password = password;
+    urls.set(name, url.href);
+  }
   const directory = await mkdtemp(join(tmpdir(), "idx-sync-online-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, "feed.json");
   await writeFile(file, env.IDX_SYNC_FEED_JSON);
-  const { stdout } = await promisify(execFile)(
-    "npm",
-    ["run", "--silent", "sync", "--", "incremental"],
-    {
-      env: {
-        ...env,
-        LISTING_WRITER_DATABASE_URL: writer.href,
-        IDX_SYNC_FEED_FILE: file,
+  async function sync() {
+    const { stdout } = await promisify(execFile)(
+      "npm",
+      ["run", "--silent", "sync", "--", "incremental"],
+      {
+        env: {
+          ...env,
+          LISTING_WRITER_DATABASE_URL: urls.get("idx_listing_writer"),
+          IDX_SYNC_FEED_FILE: file,
+        },
       },
-    },
-  );
-  assert.equal(JSON.parse(stdout).code, "complete");
+    );
+    assert.equal(JSON.parse(stdout).code, "complete");
+  }
+  await sync();
   assert.deepEqual(
     feed.calls.map(({ authorized }) => authorized),
     [true],
   );
   const snapshot = async () => {
     const { rows } = await db.query(`
-      SELECT to_jsonb(f) AS feed, to_jsonb(p) AS position, f.expires_at > now() AS fresh
+      SELECT to_jsonb(f) - 'freshness_seconds' AS feed, to_jsonb(p) AS position,
+        (SELECT jsonb_agg(l ORDER BY l.id) FROM idx.listings l) AS listings
       FROM idx.feeds f JOIN idx.feed_sync_positions p ON p.feed_id=f.id
     `);
     return rows;
   };
   const first = await snapshot();
   assert.equal(first.length, 1);
-  assert.ok(first[0].fresh);
+  assert.equal(first[0].listings.length, 1);
   assert.equal(
     Date.parse(first[0].position.completed_mark),
     Date.parse(revision),
   );
-  await db.query("ALTER ROLE idx_runtime LOGIN");
-  prepare();
-  assert.deepEqual((await runtimes()).rows, [
-    { rolcanlogin: true, unsafe: false },
-  ]);
-  assert.equal((await db.query("SELECT id FROM idx.feeds")).rowCount, 1);
+  assert.ok(first[0].feed.applied_disclosures);
+  const active = (await feeds()).rows[0];
+  assert.ok(active.expires_at.getTime() > Date.now());
+  assert.equal(active.expires_at - active.refreshed_at, 2_700_000);
+  settings.disclosures.approvedFeedBlocks[0].text = "Invented unapplied notice";
+  await db.query("REVOKE SELECT ON idx.listings FROM idx_listing_writer");
+  prepare({
+    IDX_SYNC_FRESHNESS_SECONDS: "1800",
+    IDX_SYNC_FEED_JSON: JSON.stringify(settings),
+  });
+  assert.equal((await feeds()).rows[0].freshness_seconds, 1800);
   assert.deepEqual(await snapshot(), first);
 
-  const roles = await db.query(`
-    SELECT rolcanlogin, rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit
-      OR rolbypassrls OR rolreplication AS unsafe,
-      EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) AS member
-    FROM pg_roles WHERE rolname='idx_listing_writer'
-  `);
-  assert.deepEqual(roles.rows, [
-    { rolcanlogin: true, unsafe: false, member: false },
-  ]);
-  const login = new pg.Client({ connectionString: writer.href });
-  await login.connect();
-  t.after(() => login.end());
-  assert.equal((await login.query("SELECT * FROM idx.listings")).rowCount, 1);
-  await assert.rejects(login.query("SELECT * FROM idx.site_secret_keys"), {
-    code: "42501",
-  });
+  // A successful renewal uses the new window.
+  await sync();
+  const renewed = (await feeds()).rows[0];
+  assert.equal(renewed.expires_at - renewed.refreshed_at, 1_800_000);
+
+  for (const name of urls.keys()) {
+    const login = new pg.Client({ connectionString: urls.get(name) });
+    await login.connect();
+    t.after(() => login.end());
+    assert.equal((await login.query("SELECT * FROM idx.listings")).rowCount, 1);
+    if (name === "idx_listing_writer")
+      await assert.rejects(login.query("SELECT * FROM idx.site_secret_keys"), {
+        code: "42501",
+      });
+  }
 });

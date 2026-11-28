@@ -7,6 +7,8 @@ import { logFailure } from "../log.ts";
 const [action, subject, grants, path, ...extra] = process.argv.slice(2);
 const requested = grants?.split(",") ?? [];
 const creating = action === "create" || action === "rotate";
+const authorizing = action === "authorize";
+const newSite = path === "--new-site";
 if (action === "sync-demo") {
   const { runDemo } = await import("./demo.ts");
   await runDemo("key");
@@ -14,7 +16,9 @@ if (action === "sync-demo") {
   !process.env.DATABASE_URL ||
   !subject ||
   extra.length ||
-  (!creating && (action !== "revoke" || grants || path)) ||
+  (authorizing &&
+    (!subject.trim() || !grants?.trim() || (path !== undefined && !newSite))) ||
+  (!creating && !authorizing && (action !== "revoke" || grants || path)) ||
   (creating &&
     (!path ||
       !requested.length ||
@@ -23,7 +27,7 @@ if (action === "sync-demo") {
   logFailure(
     "key.input",
     new Error(
-      "Invalid arguments or missing DATABASE_URL. Usage: demo:key create <site> <scopes> <new-file> | rotate <key-id> <scopes> <new-file> | revoke <key-id>",
+      "Usage: demo:key create <site> <scopes> <new-file> | rotate <key-id> <scopes> <new-file> | revoke <key-id> | authorize <site> <feed> [--new-site]. DATABASE_URL is required.",
     ),
   );
   process.exitCode = 1;
@@ -35,7 +39,22 @@ if (action === "sync-demo") {
     await db.query("BEGIN");
     let site = subject;
     let listingRequestLimit: number | undefined;
-    if (action !== "create") {
+    if (authorizing) {
+      if (newSite)
+        await db.query(
+          "INSERT INTO idx.sites (id) VALUES ($1) ON CONFLICT DO NOTHING",
+          [site],
+        );
+      const target = await db.query(
+        "SELECT 1 FROM idx.sites s CROSS JOIN idx.feeds f WHERE s.id=$1 AND f.id=$2",
+        [site, grants],
+      );
+      if (!target.rowCount) throw new Error("Unknown site or feed");
+      await db.query(
+        "INSERT INTO idx.data_licenses (site_id, feed_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        [site, grants],
+      );
+    } else if (action !== "create") {
       const old = (
         await db.query<{ site_id: string; listing_request_limit: number }>(
           "SELECT site_id, listing_request_limit FROM idx.site_secret_keys WHERE id = $1 AND revoked_at IS NULL FOR UPDATE",
@@ -80,7 +99,7 @@ if (action === "sync-demo") {
       }
     }
     await db.query("COMMIT");
-    process.stdout.write(id + "\n");
+    process.stdout.write(authorizing ? "Site authorized.\n" : id + "\n");
   } catch (error) {
     logFailure("key.operation", error);
     await db
