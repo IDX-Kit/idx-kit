@@ -737,7 +737,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       });
       assertRun(failed, { code: "http_error", pagesRead: 0 });
       assertRun(await state.lastRun(), { kind: "scan", counts });
-      const { feed: [stored] } = await state.incrementalState();
+      const {
+        feed: [stored],
+      } = await state.incrementalState();
       assert.deepEqual(stored.display_blocks, notices.approvedFeedBlocks);
       const listings = await state.listings();
       assert.deepEqual(
