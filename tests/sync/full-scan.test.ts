@@ -168,7 +168,10 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   }
 
   async function interruptScan(t: TestContext, status: 410 | 503) {
-    const withdrawn = { ...record("withdrawn", 3), StandardStatus: "Withdrawn" };
+    const withdrawn = {
+      ...record("withdrawn", 3),
+      StandardStatus: "Withdrawn",
+    };
     const state = await setup(t, `interrupted_${status}`, [withdrawn]);
     assert.equal(
       (await state.incrementalState()).position.position.completedMark,
@@ -190,17 +193,23 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     return { state, feed, actual };
   }
 
-  await t.test("an empty poll publishes ingest time after an interrupted scan", async (t) => {
-    const { state, actual } = await interruptScan(t, 503);
-    await state.poll([]);
-    assert.equal((await state.oldestIngest()).stored, actual);
-  });
+  await t.test(
+    "an empty poll publishes ingest time after an interrupted scan",
+    async (t) => {
+      const { state, actual } = await interruptScan(t, 503);
+      await state.poll([]);
+      assert.equal((await state.oldestIngest()).stored, actual);
+    },
+  );
 
-  await t.test("an empty scan restart publishes ingest time after a refused continuation", async (t) => {
-    const { state, feed, actual } = await interruptScan(t, 410);
-    assertRun(await state.scan(feed), { code: "empty_scan", recordsSeen: 0 });
-    assert.equal((await state.oldestIngest()).stored, actual);
-  });
+  await t.test(
+    "an empty scan restart publishes ingest time after a refused continuation",
+    async (t) => {
+      const { state, feed, actual } = await interruptScan(t, 410);
+      assertRun(await state.scan(feed), { code: "empty_scan", recordsSeen: 0 });
+      assert.equal((await state.oldestIngest()).stored, actual);
+    },
+  );
 
   await t.test(
     "repairs a missed edit and withdraws a missing listing from the API and storage",
