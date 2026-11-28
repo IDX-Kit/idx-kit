@@ -94,7 +94,10 @@ test("shared setup and hosted builds preserve feed state and logins", async (t) 
   assert.equal(original[0].id, settings.feedId);
   assert.equal(original[0].freshness_seconds, 2700);
   assert.equal(original[0].rules_version, "1");
-  assert.equal(original[0].expires_at.toISOString(), "1900-01-01T00:00:00.000Z");
+  assert.equal(
+    original[0].expires_at.toISOString(),
+    "1900-01-01T00:00:00.000Z",
+  );
   assert.deepEqual(
     original[0].display_blocks,
     settings.disclosures.approvedFeedBlocks,
