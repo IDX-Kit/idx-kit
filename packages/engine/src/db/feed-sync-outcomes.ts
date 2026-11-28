@@ -32,10 +32,13 @@ export function hasUnplaceableRecords({ rejectedByCode }: RecordCounts) {
   return invalid_key + invalid_revision + future_revision > 0;
 }
 
-export const unplaceableOutcome = {
+export const unplaceableOutcome: {
+  code: "unplaceable_records";
+  nextStep: FeedNextStep;
+} = {
   code: "unplaceable_records",
   nextStep: { kind: "retry" },
-} as const;
+};
 
 export async function readFeedState(
   client: pg.Client,
