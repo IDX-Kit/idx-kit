@@ -93,9 +93,8 @@ For a faster first load, [temporarily shorten the schedule](#monitor-and-pause-s
 
 Save the feed settings in a protected YAML file. Set the feed ID, the
 [Property endpoint](#check-the-feed-format), the `synthetic` flag and the approved notices.
-An invalid `propertyUrl` makes Node sync exit `1` with `Invalid sync settings`
-and the sync Worker's Workflow fail with the same message before either
-fetches a page.
+An invalid `propertyUrl` is refused as invalid sync settings before any
+page is fetched: Node sync exits `1`, and the sync Worker's Workflow fails.
 
 ```yaml
 feedId: feed_example
