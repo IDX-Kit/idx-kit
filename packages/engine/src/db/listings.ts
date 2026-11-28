@@ -164,8 +164,8 @@ export async function updateListingFreshness(
 
 // The page supplies the timestamps it wrote or replaced. Keep the previous
 // minimum if it is still valid. Recalculate only if it might have disappeared.
-const trackFreshness = `tracked AS (
-  UPDATE idx.feeds f SET pending_listing_ingested_at = next.ingested_at
+const trackFreshness = `UPDATE idx.feeds f
+  SET pending_listing_ingested_at = next.ingested_at
   FROM (
     SELECT cached.ingested_at AS previous, CASE
       WHEN delta.replaced_at IS NOT NULL AND (cached.ingested_at IS NULL OR
@@ -181,8 +181,7 @@ const trackFreshness = `tracked AS (
       SELECT min(written_at) AS written_at, min(replaced_at) AS replaced_at FROM freshness
     ) delta
   ) next
-  WHERE f.id = $1 AND next.ingested_at IS DISTINCT FROM next.previous
-)`;
+  WHERE f.id = $1 AND next.ingested_at IS DISTINCT FROM next.previous`;
 
 async function finishListingFreshness(client: pg.Client, feedId: string) {
   await client.query(
@@ -245,8 +244,7 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
     ), freshness AS (
       SELECT written_at, replaced_at FROM stored
       UNION ALL SELECT NULL, replaced_at FROM removed
-    ), ${trackFreshness}
-    SELECT count(*) FROM freshness`,
+    ) ${trackFreshness}`,
     [feedId, JSON.stringify(rows)],
   );
 }
@@ -276,7 +274,7 @@ async function removeMissingListings(
       ${deleteListings}
     ), freshness AS (
       SELECT NULL::timestamptz AS written_at, replaced_at FROM removed
-    ), ${trackFreshness}
+    ), tracked AS (${trackFreshness})
     SELECT total.count AS missing, (SELECT count(*) FROM removed) AS removed
     FROM total`,
     [feedId, scanNumber.toString(), maxRemovals],
@@ -647,7 +645,7 @@ export async function applyListingPage(
             CASE WHEN l.entire_listing_display THEN l.ingested_at END AS replaced_at
         ), freshness AS (
           SELECT NULL::timestamptz AS written_at, replaced_at FROM removed
-        ), ${trackFreshness}
+        ), tracked AS (${trackFreshness})
         SELECT source_key FROM removed`,
         [feedId, [...futureRemovals.keys()]],
       );
