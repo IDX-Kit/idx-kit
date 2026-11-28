@@ -54,7 +54,7 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
   await t.test("non-ASCII passwords are rejected before connecting", () => {
     const unavailable = new URL(owner);
     unavailable.pathname = "/idx_missing";
-    const invalidPassword = `${password}\u00a0`;
+    const invalidPassword = `${randomBytes(32).toString("base64url")}\u00a0`;
     registerSecret(invalidPassword);
     const variables = {
       ...env,
@@ -62,9 +62,13 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
       RUNTIME_DATABASE_PASSWORD: invalidPassword,
     };
     const log = command("demo:prepare", [], variables, false);
-    assert.ok(log.includes('"operation":"configuration"'));
-    assert.ok(/RUNTIME_DATABASE_PASSWORD.*printable ASCII/.test(log));
     assert.ok(!log.includes(invalidPassword), "The password must stay private");
+    const { operation, message } = JSON.parse(log);
+    assert.equal(operation, "configuration");
+    assert.equal(
+      message,
+      "RUNTIME_DATABASE_PASSWORD must contain only printable ASCII (U+0020 through U+007E).",
+    );
   });
   const db = new pg.Client({ connectionString: owner });
   await db.connect();
