@@ -1769,14 +1769,17 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(before.price, first.ListPrice);
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      assertRun(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), {
+        code: "unplaceable_records",
+        nextStep: retry,
+      });
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(await state.listings(), [
         { key: before.key, id: before.id, price: null, revision: null },
       ]);
       assert.deepEqual(
         (await state.checkpoint()).position,
-        complete(secondMark),
+        complete(firstMark),
       );
     },
   );
