@@ -7,6 +7,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
 import type { SearchResponse } from "@idx-kit/client";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
+import {
+  searchCursor,
+  searchQuery,
+  searchSchema,
+} from "@idx-kit/engine/src/domain/search-query.ts";
 import { createApp } from "@idx-kit/engine/src/http/app.ts";
 import { startWorker, workerRuntime } from "../workers/runtime.ts";
 import { contract, validateResponse } from "./contract.ts";
@@ -358,4 +363,34 @@ test("detail admission uses two SQL statements and refusal uses one", async (t) 
     assert.equal(response.status, 429);
     assert.ok(Number(response.headers.get("Retry-After")) >= 55);
   });
+
+  await t.test(
+    "search takes five SQL statements regardless of price ranges",
+    async () => {
+      await setListingRequestLimit(db, key.id, 20);
+      const { context } = searchQuery(searchSchema.parse({ limit: "50" }), site);
+      const after = searchCursor(context, {
+        price: "425000",
+        id: "lst_demo_0002",
+      });
+      const headers = requestHeaders(key.secret);
+      for (const [query, unpriced] of [
+        ["limit=50", true],
+        ["limit=50&minPrice=9999999", false],
+        ["limit=50&maxPrice=0", false],
+        ["limit=50&minBedrooms=0", true],
+        [`limit=50&after=${after}`, true],
+      ] as const) {
+        counter.mock.resetCalls();
+        const response = await app.request(`${search}?${query}`, { headers });
+        const { body } = await check(response, search);
+        assert.equal(response.status, 200);
+        assert.equal(
+          (body as SearchResponse).data.some((row) => row.price === null),
+          unpriced,
+        );
+        assert.equal(counter.mock.callCount(), 5, query);
+      }
+    },
+  );
 });

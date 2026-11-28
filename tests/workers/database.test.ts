@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import pg from "pg";
+import { SmartRouter } from "hono/router/smart-router";
 import { configs, readConfig } from "../../scripts/check-worker-config.mjs";
 import { keyCommand, preserveKeys } from "../api/runtime.ts";
 import { validateResponse } from "../api/contract.ts";
@@ -21,6 +22,32 @@ import {
   turnstileSettings,
 } from "../api/turnstile-stub.ts";
 import { startWorker } from "./runtime.ts";
+
+test("the HTTP Worker reuses routes and creates no database client for discovery", async (t) => {
+  const registrations = t.mock.method(SmartRouter.prototype, "add");
+  const { default: worker } =
+    await import("@idx-kit/engine/src/runtime/worker.ts");
+  const env = {
+    get HYPERDRIVE(): never {
+      throw new Error("Discovery must skip the database client");
+    },
+  };
+  const context = { waitUntil() {} };
+  const request = async (path: string) => {
+    const response = await worker.fetch(
+      new Request(`https://engine.example.invalid${path}`),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    validateResponse(path, response, await response.json());
+  };
+  await request("/api");
+  const routeCount = registrations.mock.callCount();
+  assert.ok(routeCount > 0);
+  await request("/api/v1/openapi.json");
+  assert.equal(registrations.mock.callCount(), routeCount);
+});
 
 test("Hyperdrive uses idx_runtime and logs the correlated database denial", async () => {
   const directory = await mkdtemp(`${tmpdir()}/idx-worker-db-`);

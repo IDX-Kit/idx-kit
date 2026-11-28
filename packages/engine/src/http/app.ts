@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { Buffer } from "node:buffer";
 import { bodyLimit } from "hono/body-limit";
 import { bearerAuth } from "hono/bearer-auth";
@@ -31,7 +32,19 @@ import { hashSecret } from "../domain/keys.ts";
 import { failureFields, logLine } from "../log.ts";
 import { HttpProblem, problemResponse } from "./problem.ts";
 
+type InquiryOptions = {
+  email?: {
+    settings: InquiryEmailSettings;
+    waitUntil?: (task: Promise<void>) => void;
+  };
+  turnstileSecret?: unknown;
+};
+
 type AppEnv = {
+  Bindings: {
+    db: Repository;
+    inquiryOptions: () => InquiryOptions;
+  };
   Variables: {
     requestId: string;
     code: string;
@@ -43,22 +56,15 @@ type AppEnv = {
 };
 
 export function createApp(
-  db: Repository,
+  db: Repository | undefined,
   contract: unknown,
   release: string,
   log: (line: string) => void = console.error,
-  {
-    email,
-    turnstileSecret,
-  }: {
-    email?: {
-      settings: InquiryEmailSettings;
-      waitUntil?: (task: Promise<void>) => void;
-    };
-    turnstileSecret?: unknown;
-  } = {},
+  options: InquiryOptions = {},
 ) {
   const app = new Hono<AppEnv>();
+  const database = (c: Context<AppEnv>) => db ?? c.env.db;
+  const contractJson = JSON.stringify(contract);
   // A zero limit rejects every supplied ID, so the middleware always generates one.
   app.use(requestId({ headerName: "Request-Id", limitLength: 0 }));
   app.use("*", async (c, next) => {
@@ -220,7 +226,13 @@ export function createApp(
     };
     return Response.json(body);
   });
-  app.get("/api/v1/openapi.json", () => Response.json(contract));
+  app.get(
+    "/api/v1/openapi.json",
+    () =>
+      new Response(contractJson, {
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
   const authorize = (scope: string) =>
     bearerAuth<AppEnv>({
       // Malformed bearer headers have the same 401 problem as missing or invalid keys.
@@ -228,7 +240,7 @@ export function createApp(
         message: new Response(null, { status: 401 }),
       },
       async verifyToken(token, c) {
-        const key = await db.key(await hashSecret(token), scope);
+        const key = await database(c).key(await hashSecret(token), scope);
         if (!key) return false;
         if (!key.scopes.includes(scope))
           throw new HttpProblem(
@@ -267,7 +279,10 @@ export function createApp(
     }),
     async (c) => {
       const query = searchQuery(c.req.valid("query"), c.get("site"));
-      const body = listingSearch(await db.search(query), query.context);
+      const body = listingSearch(
+        await database(c).search(query),
+        query.context,
+      );
       return Response.json(body, {
         headers: { "Cache-Control": "private, no-store" },
       });
@@ -279,7 +294,7 @@ export function createApp(
     async (c) => {
       const id = c.req.param("listingId");
       const row = /^[A-Za-z0-9_-]+$/.test(id)
-        ? await db.listing(c.get("site"), id)
+        ? await database(c).listing(c.get("site"), id)
         : undefined;
       if (!row)
         throw new HttpProblem(404, "not_found", "The resource was not found.");
@@ -333,14 +348,20 @@ export function createApp(
       const input = c.req.valid("json");
       const key = c.req.valid("header")["idempotency-key"];
       const requestId = c.get("requestId");
-      const creation = createInquiry(db, c.get("site"), key, input, () =>
-        checkInquirySpam(
-          turnstileSecret,
-          c.req.header("Turnstile-Token"),
-          key,
-          requestId,
-          log,
-        ),
+      const { email, turnstileSecret } = db ? options : c.env.inquiryOptions();
+      const creation = createInquiry(
+        database(c),
+        c.get("site"),
+        key,
+        input,
+        () =>
+          checkInquirySpam(
+            turnstileSecret,
+            c.req.header("Turnstile-Token"),
+            key,
+            requestId,
+            log,
+          ),
       );
       if (email && email.settings.mode !== "off") {
         const task = creation.then(
@@ -373,7 +394,7 @@ export function createApp(
     "/api/v1/inquiries/:inquiryId",
     authorize("inquiries:read"),
     async (c) => {
-      const row = await db.inquiryReceipt(
+      const row = await database(c).inquiryReceipt(
         c.get("site"),
         c.req.param("inquiryId"),
       );

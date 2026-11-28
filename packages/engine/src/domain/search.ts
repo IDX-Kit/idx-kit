@@ -1,6 +1,6 @@
 import type { SearchResponse } from "@idx-kit/client";
 import type { searchListings } from "../db/search.ts";
-import { listingDetail } from "./detail.ts";
+import { listingData } from "./detail.ts";
 import { searchCursor } from "./search-query.ts";
 import type { SearchContext } from "./search-query.ts";
 import { HttpProblem } from "../http/problem.ts";
@@ -9,46 +9,44 @@ export function listingSearch(
   { feeds, rows }: Awaited<ReturnType<typeof searchListings>>,
   context: SearchContext,
 ): SearchResponse {
-  if ([...feeds, ...rows].some((row) => row.expires_at.getTime() <= Date.now()))
+  if (feeds.some((feed) => feed.expires_at.getTime() <= Date.now()))
     throw new HttpProblem(
       503,
       "feed_expired",
       "Listing data is temporarily unavailable.",
     );
-  if (
-    !feeds.length ||
-    [...feeds, ...rows].some((row) => row.rules_version !== "1")
-  )
+  if (!feeds.length || feeds.some((feed) => feed.rules_version !== "1"))
     throw new HttpProblem(
       503,
       "display_rules_unavailable",
       "Listing display rules are temporarily unavailable.",
     );
-  const listings = rows.slice(0, context.limit).map(listingDetail);
-  const last = rows[Math.min(rows.length, context.limit) - 1];
+  const page = rows.slice(0, context.limit);
+  const last = page.at(-1);
   const hasMore = rows.length > context.limit;
   // Feed notices apply even to empty pages; listing page notices retain their order.
   const blocks = [
     ...feeds.flatMap((feed) => feed.display_blocks),
-    ...listings.flatMap((item) => item.display.blocks),
+    ...page.flatMap((row) => row.page_blocks),
   ];
-  const unique = blocks.filter(
-    (block, index) =>
-      blocks.findIndex(
-        (value) => JSON.stringify(value) === JSON.stringify(block),
-      ) === index,
-  );
+  const seen = new Set<string>();
+  const unique = blocks.filter((block) => {
+    const key = JSON.stringify(block);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   const earliest = (name: "ingested_at" | "refreshed_at" | "expires_at") =>
     new Date(
       Math.min(...feeds.map((feed) => feed[name].getTime())),
     ).toISOString();
   return {
-    data: listings.map((item) => item.data),
+    data: page.map(listingData),
     meta: {
       page: {
         limit: context.limit,
         hasMore,
-        nextCursor: hasMore
+        nextCursor: hasMore && last
           ? searchCursor(context, { price: last.price, id: last.id })
           : null,
       },

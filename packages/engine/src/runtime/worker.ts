@@ -8,6 +8,8 @@ import type { InquiryEmailEnv } from "../domain/inquiry-email.ts";
 import { createApp } from "../http/app.ts";
 import { failureFields, logLine } from "../log.ts";
 
+const app = createApp(undefined, contract, metadata.version);
+
 export default {
   async fetch(
     request: Request,
@@ -17,16 +19,17 @@ export default {
     },
     context: { waitUntil(task: Promise<void>): void },
   ) {
-    const client = new pg.Client({
-      connectionString: env.HYPERDRIVE.connectionString,
-      connectionTimeoutMillis: 1500,
-      query_timeout: 2000,
-      statement_timeout: 2000,
-    });
+    let client: pg.Client | undefined;
     let connection: Promise<void> | undefined;
-    // Connect lazily so discovery and the contract still work during an outage.
+    // Create the client only for database requests and keep it within this request.
     const db: Database = {
       async query(sql, values) {
+        client ??= new pg.Client({
+          connectionString: env.HYPERDRIVE.connectionString,
+          connectionTimeoutMillis: 1500,
+          query_timeout: 2000,
+          statement_timeout: 2000,
+        });
         connection ??= client.connect();
         await connection;
         return client.query(sql, values);
@@ -34,23 +37,19 @@ export default {
     };
     let response: Response | undefined;
     try {
-      const app = createApp(
-        repository(db),
-        contract,
-        metadata.version,
-        console.error,
-        {
+      response = await app.fetch(request, {
+        db: repository(db),
+        inquiryOptions: () => ({
           email: {
             settings: inquiryEmailSettings(env),
             waitUntil: (task) => context.waitUntil(task),
           },
           turnstileSecret: env.TURNSTILE_SECRET_KEY,
-        },
-      );
-      response = await app.fetch(request);
+        }),
+      });
       return response;
     } finally {
-      await client.end().catch((error: unknown) => {
+      await client?.end().catch((error: unknown) => {
         console.error(
           logLine({
             operation: "database.close",

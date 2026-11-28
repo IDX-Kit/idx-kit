@@ -11,6 +11,9 @@ export interface FeedRow {
   expires_at: Date;
   rules_version: string;
 }
+
+type SearchListingRow = Omit<ListingRow, "feed_blocks">;
+
 export async function searchListings(
   pool: Database,
   { context: c, last }: SearchQuery,
@@ -24,36 +27,33 @@ export async function searchListings(
     [c.site],
     "search.feeds",
   );
-  // Give the planner the licensed feed IDs so it can start with a small feed.
-  // The query's license join still rechecks authorization for each range.
-  const feedIds = feeds.map((feed) => feed.id);
-  const rows: ListingRow[] = [];
+  const bounded = c.minPrice !== null || c.maxPrice !== null;
   // Separate equality, strict price and null ranges keep each continuation seekable.
   const ranges =
-    last?.price === null
-      ? ["null"]
-      : last
-        ? ["tie", "price", "null"]
-        : ["price", "null"];
-  for (const range of ranges) {
-    if (rows.length === c.limit + 1) break;
-    const values: unknown[] = [c.site, feedIds];
-    const bind = (value: unknown) => {
-      values.push(value);
-      return `$${values.length}`;
-    };
-    const where = ["l.entire_listing_display", "m.feed_id = ANY($2::text[])"];
-    if (c.city !== null)
-      where.push(`lower(l.address->>'city') = ${bind(c.city)}`);
-    if (c.minBedrooms !== null)
-      where.push(`l.bedrooms >= ${bind(c.minBedrooms)}::bigint`);
-    if (c.minPrice !== null || c.maxPrice !== null)
-      where.push("l.currency = 'USD'");
-    if (c.minPrice !== null)
-      where.push(`l.price >= ${bind(c.minPrice)}::numeric`);
-    if (c.maxPrice !== null)
-      where.push(`l.price <= ${bind(c.maxPrice)}::numeric`);
-    if (range === "null") {
+    last?.price === null ? [] : last ? ["tie", "price"] : ["price"];
+  if (!bounded) ranges.push("unpriced");
+  if (!feeds.length || !ranges.length) return { feeds, rows: [] };
+
+  // Give the planner the licensed feed IDs so it can start with a small feed.
+  const values: unknown[] = [c.site, feeds.map((feed) => feed.id)];
+  const bind = (value: unknown) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  const filters = ["l.entire_listing_display", "m.feed_id = ANY($2::text[])"];
+  if (c.city !== null)
+    filters.push(`lower(l.address->>'city') = ${bind(c.city)}`);
+  if (c.minBedrooms !== null)
+    filters.push(`l.bedrooms >= ${bind(c.minBedrooms)}::bigint`);
+  if (bounded) filters.push("l.currency = 'USD'");
+  if (c.minPrice !== null)
+    filters.push(`l.price >= ${bind(c.minPrice)}::numeric`);
+  if (c.maxPrice !== null)
+    filters.push(`l.price <= ${bind(c.maxPrice)}::numeric`);
+  const limit = `${bind(c.limit + 1)}::int`;
+  const queries = ranges.map((range, index) => {
+    const where = [...filters];
+    if (range === "unpriced") {
       where.push("l.price IS NULL");
       if (last?.price === null) where.push(`l.id > ${bind(last.id)}`);
     } else {
@@ -70,17 +70,38 @@ export async function searchListings(
     let direction = "ASC NULLS LAST";
     if (c.sort === "-price") {
       direction =
-        c.minBedrooms !== null && range !== "null" ? "DESC" : "DESC NULLS LAST";
+        c.minBedrooms !== null && range !== "unpriced"
+          ? "DESC"
+          : "DESC NULLS LAST";
     }
-    rows.push(
-      ...(await readQuery<ListingRow>(
-        pool,
-        `${licensedListing} WHERE ${where.join(" AND ")}
-      ORDER BY l.price ${direction}, l.id ASC LIMIT ${bind(c.limit + 1 - rows.length)}`,
-        values,
-        `search.${range}`,
-      )),
+    const seek = `${licensedListing} WHERE ${where.join(" AND ")}
+      ORDER BY l.price ${direction}, l.id ASC LIMIT ${limit}`;
+    if (index === 0) return seek;
+    // The inner limit gives the planner the page size. The outer limit skips
+    // the seek entirely when earlier ranges have already filled the page.
+    const previous = ranges
+      .slice(0, index)
+      .map((name) => `(SELECT count(*) FROM ${name})`);
+    return `SELECT * FROM (${seek}) AS candidates
+      LIMIT (${limit} - ${previous.join(" - ")})`;
+  });
+  let sql = queries[0];
+  if (queries.length > 1) {
+    const ctes = ranges.map(
+      (range, index) => `${range} AS MATERIALIZED (${queries[index]})`,
     );
+    const parts = ranges.map(
+      (range, index) => `SELECT ${index} AS range_order, * FROM ${range}`,
+    );
+    sql = `WITH ${ctes.join(", ")}
+      SELECT * FROM (${parts.join(" UNION ALL ")}) AS page
+      ORDER BY range_order, price::numeric ${c.sort === "price" ? "ASC" : "DESC"}, id`;
   }
+  const rows = await readQuery<SearchListingRow>(
+    pool,
+    sql,
+    values,
+    "search.listings",
+  );
   return { feeds, rows };
 }

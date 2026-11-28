@@ -6,7 +6,7 @@ import pg from "pg";
 import type { DisplayBlock, Listing, SearchResponse } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { searchListings } from "@idx-kit/engine/src/db/search.ts";
-import { listingSelect } from "@idx-kit/engine/src/db/read.ts";
+import { licensedListing } from "@idx-kit/engine/src/db/read.ts";
 import {
   searchQuery,
   searchSchema,
@@ -523,6 +523,41 @@ test(
         }
       },
     );
+    await t.test("repeated notices across feeds retain their first position", async () => {
+      const { body: original } = await request("limit=50");
+      const shared = original.display.blocks[0];
+      const distinct = { ...shared, text: "Second synthetic feed notice." };
+      const pageNotice = { ...shared, text: "Synthetic listing page notice." };
+      await db.query(
+        "UPDATE idx.feeds SET expires_at = '2099-11-01T12:00:00Z', display_blocks = $1 WHERE id = 'feed_demo_expired'",
+        [JSON.stringify([distinct, shared])],
+      );
+      await db.query(
+        "UPDATE idx.listings SET page_blocks = $1 WHERE id = 'lst_demo_0023'",
+        [JSON.stringify([shared, pageNotice, distinct, pageNotice])],
+      );
+      await db.query(
+        "INSERT INTO idx.data_licenses VALUES ('site_demo_primary', 'feed_demo_expired')",
+      );
+      try {
+        const { body } = await request("limit=50");
+        assert.ok(ids(body).includes("lst_demo_0023"));
+        const expected = [
+          distinct,
+          shared,
+          ...original.display.blocks.slice(1),
+          pageNotice,
+        ];
+        assert.equal(
+          JSON.stringify(body.display.blocks),
+          JSON.stringify(expected),
+        );
+      } finally {
+        await db.query(
+          "DELETE FROM idx.data_licenses WHERE site_id = 'site_demo_primary' AND feed_id = 'feed_demo_expired'",
+        );
+      }
+    });
     await t.test(
       "price changes shift live results and withdrawals disappear between requests",
       async () => {
@@ -711,29 +746,26 @@ test(
                   (node) => node["Relation Name"] === "listings",
                 );
                 const diagnostic = JSON.stringify({ sql, plan });
-                if (!sql.startsWith(listingSelect)) {
-                  assert.equal(nodes.length, 0, diagnostic);
-                  continue;
-                }
-                assert.equal(nodes.length, 1, diagnostic);
-                const [node] = nodes;
-                const index =
-                  node["Node Type"] === "Bitmap Heap Scan"
-                    ? node.Plans?.[0]
-                    : node;
-                assert.ok(index, diagnostic);
-                assert.match(
-                  index["Node Type"],
-                  /^(Index (Only )?|Bitmap Index )Scan$/,
-                  diagnostic,
-                );
-                const visited =
-                  index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0);
-                assert.ok(visited <= 128, diagnostic);
-                const condition = index["Index Cond"] ?? "";
-                assert.match(condition, /price|id/, diagnostic);
-                if (last?.price === null)
-                  assert.match(condition, /id > /, diagnostic);
+                const seeks = sql.split(licensedListing).slice(1);
+                assert.equal(nodes.length, seeks.length, diagnostic);
+                const conditions = nodes.map((node) => {
+                  const index =
+                    node["Node Type"] === "Bitmap Heap Scan"
+                      ? node.Plans?.[0]
+                      : node;
+                  assert.ok(index, diagnostic);
+                  assert.match(
+                    index["Node Type"],
+                    /^(Index (Only )?|Bitmap Index )Scan$/,
+                    diagnostic,
+                  );
+                  const visited =
+                    index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0);
+                  assert.ok(visited <= 128, diagnostic);
+                  const condition = index["Index Cond"] ?? "";
+                  assert.match(condition, /price|id/, diagnostic);
+                  return condition;
+                });
                 for (const operator of [
                   "price >",
                   "price <",
@@ -741,7 +773,12 @@ test(
                   "id >",
                 ]) {
                   if (sql.includes(`l.${operator}`))
-                    assert.ok(condition.includes(operator), diagnostic);
+                    assert.ok(
+                      conditions.some((condition) =>
+                        condition.includes(operator),
+                      ),
+                      diagnostic,
+                    );
                 }
               }
             },

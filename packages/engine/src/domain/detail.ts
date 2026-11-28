@@ -2,7 +2,13 @@ import type { Display, DisplayBlock, ListingResponse } from "@idx-kit/client";
 import type { ListingRow } from "../db/read.ts";
 import { HttpProblem } from "../http/problem.ts";
 
-export function listingDetail(row: ListingRow): ListingResponse {
+type ListingDataRow = Omit<ListingRow, "feed_blocks">;
+
+function listingDisplay(
+  row: ListingDataRow,
+  blocks: DisplayBlock[],
+  sourceUpdatedAt: string | null,
+): Display {
   const rulesVersion = row.rules_version;
   if (rulesVersion !== "1")
     throw new HttpProblem(
@@ -10,10 +16,7 @@ export function listingDetail(row: ListingRow): ListingResponse {
       "display_rules_unavailable",
       "Listing display rules are temporarily unavailable.",
     );
-  const display = (
-    blocks: DisplayBlock[],
-    sourceUpdatedAt: string | null,
-  ): Display => ({
+  return {
     blocks,
     rulesVersion,
     siteChromeOutsideListingBody: true,
@@ -23,31 +26,39 @@ export function listingDetail(row: ListingRow): ListingResponse {
       refreshedAt: row.refreshed_at.toISOString(),
       expiresAt: row.expires_at.toISOString(),
     },
-  });
+  };
+}
+
+export function listingData(row: ListingDataRow): ListingResponse["data"] {
   const withheldFields = row.withheld_fields;
   let images = row.images;
   if (withheldFields.includes("address")) {
     images = withheldFields.includes("images") ? null : [];
   }
   return {
-    data: {
-      id: row.id,
-      synthetic: row.synthetic,
-      status: row.status,
-      price:
-        row.price === null
-          ? null
-          : { amount: row.price, currency: row.currency! },
-      address: row.address,
-      bedrooms: row.bedrooms === null ? null : Number(row.bedrooms),
-      images,
-      withheldFields,
-      display: display(
-        row.display_blocks,
-        row.source_updated_at?.toISOString() ?? null,
-      ),
-    },
+    id: row.id,
+    synthetic: row.synthetic,
+    status: row.status,
+    price:
+      row.price === null
+        ? null
+        : { amount: row.price, currency: row.currency! },
+    address: row.address,
+    bedrooms: row.bedrooms === null ? null : Number(row.bedrooms),
+    images,
+    withheldFields,
+    display: listingDisplay(
+      row,
+      row.display_blocks,
+      row.source_updated_at?.toISOString() ?? null,
+    ),
+  };
+}
+
+export function listingDetail(row: ListingRow): ListingResponse {
+  return {
+    data: listingData(row),
     meta: {},
-    display: display([...row.feed_blocks, ...row.page_blocks], null),
+    display: listingDisplay(row, [...row.feed_blocks, ...row.page_blocks], null),
   };
 }
