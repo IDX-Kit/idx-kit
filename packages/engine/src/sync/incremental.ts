@@ -78,8 +78,10 @@ export async function syncIncrementally(
           client,
           feedId,
           mapChanges(records),
-          disclosures,
-          { incremental: { checkpoint: current, nextLink } },
+          {
+            initialDisclosures: disclosures,
+            incremental: { checkpoint: current, nextLink },
+          },
         );
         if (!page.savedPosition) throw new Error("Missing saved feed position");
         counts = page.counts;

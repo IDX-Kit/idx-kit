@@ -9,6 +9,7 @@ import pg from "pg";
 import { parse, stringify } from "yaml";
 import type { Listing } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import type { ListingPageDisclosures } from "@idx-kit/engine/src/db/listings.ts";
 import { repository } from "@idx-kit/engine/src/db/read.ts";
 import { createApp } from "@idx-kit/engine/src/http/app.ts";
 import { contract, validateResponse } from "../api/contract.ts";
@@ -94,7 +95,33 @@ test(
     const feedFile = join(directory, "feed.yaml");
     const config = parse(runbook.match(/```yaml\n([\s\S]+?)```/)![1]);
     config.propertyUrl = `${feed.propertyUrl}?marker=${feedToken}`;
+    const movedNotice = {
+      ...config.disclosures.approvedFeedBlocks[0],
+      id: "moved_notice",
+      text: "Invented notice shared by every listing",
+    };
+    config.disclosures.approvedFeedBlocks[0].text = "Invented feed file notice";
+    config.disclosures.approvedPageBlocks = [movedNotice];
     await writeFile(feedFile, stringify(config));
+
+    async function assertDisplay(disclosures: ListingPageDisclosures) {
+      const {
+        approvedFeedBlocks,
+        approvedListingBlocks,
+        approvedPageBlocks = [],
+      } = disclosures;
+      const expected = [...approvedFeedBlocks, ...approvedPageBlocks];
+      const result = await request();
+      const items = result.data as Listing[];
+      assert.deepEqual(result.display.blocks, expected);
+      for (const item of items) {
+        const detail = await request(`${search}/${item.id}`);
+        assert.deepEqual(item.display.blocks, approvedListingBlocks);
+        assert.deepEqual(detail.data, item);
+        assert.deepEqual(detail.display.blocks, expected);
+      }
+      return items;
+    }
 
     function start(args: string[], overrides: NodeJS.ProcessEnv = {}) {
       const env: NodeJS.ProcessEnv = {
@@ -190,7 +217,7 @@ test(
         assert.equal(feed.calls.length, 3);
         assert.ok(feed.calls.every(({ authorized }) => authorized));
         assert.deepEqual(feed.preferences, [undefined, undefined, undefined]);
-        assert.equal((await api()).length, 3);
+        assert.equal((await assertDisplay(config.disclosures)).length, 3);
         const after = await run(["status"]);
         assert.ok(
           Date.parse(after.refreshedAt) > Date.parse(before.refreshedAt),
@@ -305,21 +332,9 @@ test(
     await t.test(
       "scan repairs notices and missed edits and removes only within the explicit limit",
       async () => {
-        const before = await request();
-        const [original, missing, withheld] = before.data as Listing[];
-        assert.deepEqual(
-          original.display.blocks,
-          config.disclosures.approvedListingBlocks,
+        const [original, missing, withheld] = await assertDisplay(
+          config.disclosures,
         );
-        assert.deepEqual(
-          (await request(`${search}/${withheld.id}`)).display.blocks,
-          config.disclosures.approvedFeedBlocks,
-        );
-        const movedNotice = {
-          ...config.disclosures.approvedFeedBlocks[0],
-          id: "moved_notice",
-          text: "Invented notice shared by every listing",
-        };
         const newer = record("newer", 5, "400.00");
         const withdrawn = record("withdrawn", 5, "500.00");
         const withdrawal = {
@@ -327,23 +342,12 @@ test(
           ModificationTimestamp: revision(6),
           StandardStatus: "Withdrawn",
         };
-        const previous = {
-          ...config.disclosures,
-          approvedPageBlocks: [movedNotice],
-        };
-        await writeFile(
-          feedFile,
-          stringify({ ...config, disclosures: previous }),
+        respond = () => page([newer, withdrawn]);
+        await run(["incremental"]);
+        const [, , , current, formerlyLive] = await assertDisplay(
+          config.disclosures,
         );
-        respond = () => page([first, second, third, newer, withdrawn]);
-        await run(["scan"]);
-        const old = await request();
-        const [, , , current, formerlyLive] = old.data as Listing[];
         const withdrawnPath = `${search}/${formerlyLive.id}`;
-        assert.deepEqual((await request(withdrawnPath)).display.blocks, [
-          ...previous.approvedFeedBlocks,
-          movedNotice,
-        ]);
         respond = () => page([withdrawal]);
         await run(["incremental"]);
         assert.equal((await api(withdrawnPath, 404)).code, "not_found");
@@ -389,6 +393,18 @@ test(
           approvedPageBlocks: pageBlocks,
         };
         await writeFile(feedFile, stringify({ ...config, disclosures }));
+        respond = () => page([]);
+        assert.equal((await run(["incremental"])).counts.accepted, 0);
+        await assertDisplay(config.disclosures);
+        respond = () => page([record("first", 2, "110.00")]);
+        assert.equal((await run(["incremental"])).counts.accepted, 1);
+        const [polled, untouched] = await assertDisplay(config.disclosures);
+        assert.equal(polled.id, original.id);
+        assert.equal(polled.price?.amount, "110.00");
+        assert.equal(untouched.id, missing.id);
+        assert.equal(untouched.price?.amount, "200.00");
+        assert.equal((await run(["status"])).scanNumber, null);
+
         const sameRevision = {
           ...third,
           ListPrice: "999.00",
@@ -401,21 +417,12 @@ test(
         };
         const replay = { ...withdrawn, ModificationTimestamp: revision(6) };
         const remaining = [sameRevision, older, replay, invalid];
-        const expectedPage = [...feedBlocks, ...pageBlocks];
-        async function assertNotices() {
-          const after = await request();
-          const listings = after.data as Listing[];
+        async function assertNotices(secondPrice: string) {
+          const listings = await assertDisplay(disclosures);
           assert.deepEqual(
             listings.map((listing) => listing.price?.amount),
-            ["125.00", "200.00", "300.00", "400.00"],
+            ["125.00", secondPrice, "300.00", "400.00"],
           );
-          assert.deepEqual(after.display.blocks, expectedPage);
-          for (const item of listings) {
-            const detail = await request(`${search}/${item.id}`);
-            assert.deepEqual(item.display.blocks, listingBlocks);
-            assert.deepEqual(detail.data, item);
-            assert.deepEqual(detail.display.blocks, expectedPage);
-          }
           assert.equal(listings[0].id, original.id);
           const updated = listings.find(({ id }) => id === withheld.id);
           assert.ok(updated);
@@ -438,15 +445,38 @@ test(
           );
           assert.equal((await api(withdrawnPath, 404)).code, "not_found");
         }
-        respond = (url) =>
-          url.searchParams.has("cursor")
-            ? { status: 503 }
-            : page([edited], "?cursor=notices");
-        const interrupted = await run(["scan"], 3);
-        assert.equal(interrupted.code, "http_error");
-        assert.equal(interrupted.pagesRead, 1);
-        assert.equal((await run(["status"])).scanInProgress, true);
-        await assertNotices();
+        await writeFile(feedFile, stringify(config));
+        const waiting = new EventEmitter();
+        const requested = once(waiting, "requested");
+        const { promise: release, resolve } = Promise.withResolvers<void>();
+        respond = async () => {
+          waiting.emit("requested");
+          await release;
+          return page([record("second", 2, "210.00")]);
+        };
+        const oldPoll = start(["incremental"]);
+        try {
+          await Promise.race([
+            requested,
+            oldPoll.done.then(() => assert.fail("Poll exited before fetching")),
+          ]);
+          await writeFile(feedFile, stringify({ ...config, disclosures }));
+          respond = (url) =>
+            url.searchParams.has("cursor")
+              ? { status: 503 }
+              : page([edited], "?cursor=notices");
+          const interrupted = await run(["scan"], 3);
+          assert.equal(interrupted.code, "http_error");
+          assert.equal(interrupted.pagesRead, 1);
+          assert.equal((await run(["status"])).scanInProgress, true);
+          await assertNotices("200.00");
+        } finally {
+          resolve();
+        }
+        const completedPoll = await oldPoll.done;
+        assert.equal(completedPoll.code, 0);
+        assert.equal(JSON.parse(completedPoll.stdout).counts.accepted, 1);
+        await assertNotices("210.00");
 
         respond = (url) => {
           assert.equal(url.searchParams.get("cursor"), "notices");
@@ -468,13 +498,13 @@ test(
           counts,
         });
         const scanned = await run(["status"]);
-        assert.equal(scanned.scanNumber, "2");
+        assert.equal(scanned.scanNumber, "1");
         assert.equal(scanned.scanInProgress, false);
         assert.equal(scanned.recordsSeen, 5);
         assert.equal(scanned.unreadableRecords, 0);
         assert.equal(scanned.lastRun.kind, "scan");
         assert.deepEqual(scanned.lastRun.counts, counts);
-        await assertNotices();
+        await assertNotices("210.00");
         respond = () => page([edited, ...remaining]);
         const blocked = await run(
           ["scan", "--remove-missing", "--max-removals", "0"],

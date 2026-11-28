@@ -9,6 +9,7 @@ import canonicalize from "canonicalize";
 import type { InquiryInput } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { applyListingPage } from "@idx-kit/engine/src/db/listings.ts";
+import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { registerSecret } from "../logs.ts";
 import { workerRuntime } from "../workers/runtime.ts";
 import {
@@ -292,7 +293,9 @@ test(
                 revision: "2026-11-02T00:00:00Z",
               },
             ],
-            fixtureDisclosures(fixtures, original.feed_id),
+            {
+              initialDisclosures: fixtureDisclosures(fixtures, original.feed_id),
+            },
           );
           assert.equal(
             (
@@ -342,6 +345,11 @@ test(
             "UPDATE idx.source_mappings SET source_revision=$2 WHERE listing_id=$1",
             [input.listingId, original.revision],
           );
+          await db.query(
+            "UPDATE idx.feeds SET applied_disclosures=NULL WHERE id=$1",
+            [original.feed_id],
+          );
+          await seed(db, fixtures);
         }
         for (const listingId of ["lst_missing_synthetic", "lst_demo_0006"])
           await request(path, post(actionKey(), { ...input, listingId }), 404);

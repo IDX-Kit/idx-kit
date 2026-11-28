@@ -42,19 +42,23 @@ function assertStatements(
   setup: number,
   completion: number,
   finalPageExtra: number,
+  firstPageExtra = 0,
 ) {
   assert.equal(offsets.length, pageCount + Number(finalPageExtra === 0));
   assert.equal(offsets[0], setup, "statements before the first fetch");
   const bounds = [...offsets, total - completion];
   for (let index = 0; index < pageCount; index++) {
-    const expected = index === pageCount - 1 ? 7 + finalPageExtra : 7;
+    const expected =
+      7 +
+      (index === 0 ? firstPageExtra : 0) +
+      (index === pageCount - 1 ? finalPageExtra : 0);
     assert.equal(
       bounds[index + 1] - bounds[index],
       expected,
       `SQL statements on page ${index + 1} of this invocation`,
     );
   }
-  const pageStatements = pageCount * 7 + finalPageExtra;
+  const pageStatements = pageCount * 7 + finalPageExtra + firstPageExtra;
   assert.equal(total, setup + pageStatements + completion);
 }
 
@@ -176,6 +180,9 @@ test(
       writer,
       "query",
       async (sql: string, values: unknown[] = []) => {
+        if (scanning) {
+          assert.doesNotMatch(sql, /UPDATE idx\.listings l SET display_blocks/);
+        }
         statements += 1;
         if (sql === "COMMIT" && pageIndex !== undefined) {
           pageReads.push((await readRows()) - startReads);
@@ -254,7 +261,7 @@ test(
       },
     });
     await assertExpired(unfinished);
-    assertStatements(offsets.splice(0), statements, midpoint, 1, 1, 0);
+    assertStatements(offsets.splice(0), statements, midpoint, 1, 1, 0, 1);
     const firstStatements = statements;
     const saved = await readFeedCheckpoint(db, feedId);
     assert.equal(saved.version, BigInt(midpoint));
@@ -282,7 +289,7 @@ test(
     const loadReads = checkPageReads(pageReads.splice(0));
     assertStatements(offsets.splice(0), statements, pages - midpoint, 1, 0, 3);
     const loadStatements = firstStatements + statements;
-    assert.equal(loadStatements, pages * 7 + 6);
+    assert.equal(loadStatements, pages * 7 + 7);
     assert.deepEqual(await readFeedCheckpoint(db, feedId), {
       version: BigInt(pages),
       position: {

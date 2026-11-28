@@ -8,6 +8,8 @@ import type { DisplayBlock, Listing } from "@idx-kit/client";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import {
   applyListingPage,
+  applyScanDisclosures,
+  listingFeedTransaction,
   listingPageLimit,
 } from "@idx-kit/engine/src/db/listings.ts";
 import type { ListingChange } from "@idx-kit/engine/src/db/listings.ts";
@@ -121,6 +123,8 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         connectionString: process.env.LISTING_WRITER_DATABASE_URL,
       });
       await writer.connect();
+      const primary = "feed_demo_primary";
+      const secondary = "feed_demo_expired";
       t.after(async () => {
         await writer.end();
         await db.query(`
@@ -128,12 +132,18 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           WHERE l.id = m.listing_id AND m.source_key LIKE 'Synthetic writer %';
         DELETE FROM idx.source_mappings WHERE source_key LIKE 'Synthetic writer %';
       `);
+        await db.query(
+          "UPDATE idx.feeds SET applied_disclosures=NULL WHERE id=ANY($1::text[])",
+          [[primary, secondary]],
+        );
       });
-      const primary = "feed_demo_primary";
-      const secondary = "feed_demo_expired";
       const feed = fixtureDisclosures(fixtures, primary);
+      const applyNotices = (disclosures = feed) =>
+        listingFeedTransaction(writer, primary, () =>
+          applyScanDisclosures(writer, primary, disclosures),
+        );
       const write = (changes: ListingChange[]) =>
-        applyListingPage(writer, primary, changes, feed);
+        applyListingPage(writer, primary, changes, { initialDisclosures: feed });
       const sourceKey = "Synthetic writer shared key";
       const otherKey = "Synthetic writer companion key";
       const oldStreet = "999 Synthetic Writer Way";
@@ -167,7 +177,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
         writer,
         secondary,
         [upsert(sourceKey, 1)],
-        fixtureDisclosures(fixtures, secondary),
+        { initialDisclosures: fixtureDisclosures(fixtures, secondary) },
       );
       const id = await identity(primary, sourceKey);
       const second = await identity(secondary, sourceKey);
@@ -577,13 +587,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           };
           replacement.listing.blocks = [stale];
           replacement.listing.pageBlocks = [{ ...stale, id: notice.id }];
+          await applyNotices({ ...feed, approvedPageBlocks: [notice] });
           assert.deepEqual(
-            (
-              await applyListingPage(writer, primary, [replacement], {
-                ...feed,
-                approvedPageBlocks: [notice],
-              })
-            ).rejected,
+            (await write([replacement])).rejected,
             [],
           );
           const feedRow = await db.query(
@@ -654,14 +660,12 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
               ...feed.approvedFeedBlocks[0],
               text: `${oldStreet} ${oldPhoto}`,
             };
-            await db.query(
-              "UPDATE idx.feeds SET display_blocks=$2 WHERE id=$1",
-              [primary, JSON.stringify([stale])],
-            );
+            await applyNotices({ ...feed, approvedFeedBlocks: [stale] });
             afterFeeds = async () => {
               const change = empty ? upsert(key, 2) : hiddenAddress(key, 2);
               if (empty)
                 change.listing.source.Address!.city = "Imaginary Snapshot City";
+              await applyNotices();
               await write([change]);
             };
             const path = empty
@@ -787,11 +791,10 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             peer,
             primary,
             [remove(key, 3)],
-            feed,
             snapshot,
           );
           for (const replay of [older, newer]) {
-            await applyListingPage(peer, primary, [replay], feed);
+            await applyListingPage(peer, primary, [replay]);
             await absent(id);
           }
           assert.deepEqual(
@@ -800,17 +803,16 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
                 peer,
                 primary,
                 [{ ...older, revision: "unreadable" }],
-                feed,
                 snapshot,
               )
             ).rejected,
             [{ index: 0, code: "invalid_change", hidden: true }],
           );
           await absent(id);
-          await applyListingPage(peer, primary, [older], feed, snapshot);
+          await applyListingPage(peer, primary, [older], snapshot);
           assert.equal((await publicDetail(id)).body.data.id, id);
           assert.equal((await searchItem(id)).id, id);
-          await applyListingPage(peer, primary, [remove(key, 4)], feed);
+          await applyListingPage(peer, primary, [remove(key, 4)]);
           await absent(id);
         },
       );
@@ -835,10 +837,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       );
 
       await t.test(
-        "listing writes require valid configured disclosures",
+        "applying invalid configured disclosures preserves stored listings",
         async () => {
           const key = "Synthetic writer invalid disclosure";
-          const change = upsert(key, 2);
           const cases = [
             { approvedFeedBlocks: [] },
             { approvedListingBlocks: [] },
@@ -851,10 +852,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const before = await stored(id);
           for (const blocks of cases) {
             await assert.rejects(
-              applyListingPage(writer, primary, [change], {
-                ...feed,
-                ...blocks,
-              }),
+              applyNotices({ ...feed, ...blocks }),
             );
             assert.deepEqual(await stored(id), before);
           }
@@ -937,7 +935,6 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
             peer,
             primary,
             [upsert(key, 2)],
-            feed,
           );
           try {
             let waiting = false;

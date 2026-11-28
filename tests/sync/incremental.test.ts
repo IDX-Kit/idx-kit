@@ -346,7 +346,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
             });
             assert.equal(
               statements() - before,
-              1 + (end - start) * 7 + (final ? 3 : 0),
+              1 + (end - start) * 7 + (start === 0 ? 1 : 0) + (final ? 3 : 0),
             );
             assert.deepEqual(
               feed.calls.map(({ query }) => query),
@@ -439,7 +439,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         return page([second]);
       });
       assertRun(await state.run(feed), { code: "complete" });
-      assert.deepEqual([...offsets, statements()], [1, 8, 15, 25]);
+      assert.deepEqual([...offsets, statements()], [1, 9, 16, 26]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
@@ -784,7 +784,6 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
             revision: futureMark,
           },
         ],
-        disclosures,
         { incremental: { checkpoint, nextLink: null } },
       );
       assert.deepEqual(rejected, [

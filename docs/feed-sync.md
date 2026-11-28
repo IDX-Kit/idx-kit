@@ -95,9 +95,9 @@ accepted record. Unreadable identities and revisions more than five minutes
 ahead of the sync clock are rejected, and only eligible revisions move the
 saved mark forward. A future-dated removal hides a listing only if its page has
 no trusted record for the same listing. The stored revision stays in place.
-Incremental polls apply the configured feed-wide blocks and use the configured
-listing and page blocks when they write a listing. Apply disclosure changes
-with a scan before using the edited settings in an incremental poll.
+The first poll or scan records the approved disclosures for the feed.
+Incremental polls use those applied disclosures, even if the file has changed
+or a poll was already running when a scan applied new ones.
 An upgrade to rejection reporting replays a partial poll with earlier records
 from its last completed mark and restarts an unfinished scan.
 
@@ -106,10 +106,9 @@ from its last completed mark and restarts an unfinished scan.
 ```
 
 `npm run --silent sync -- scan` repairs missed edits across the feed. At the
-start of the scan, all approved disclosures change together for the feed and
-every stored listing, even if the scan is interrupted. For a scheduled Worker,
-pause polling and let active runs finish before the scan. Resume polling with
-the same disclosures.
+start of the scan, edited disclosures take effect together for the feed and
+every stored listing, even if the scan is interrupted. Scheduled polls can
+continue while the scan applies the change.
 A scan can apply explicit withdrawals and preserves listings that are merely
 absent unless removal by absence is enabled. Incremental sync renews the feed
 freshness window.

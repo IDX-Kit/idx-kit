@@ -92,8 +92,7 @@ export async function syncFullScan(
         start.unreadableRecords = 0;
         start.counts = emptyCounts;
       }
-      // A previous invocation must lose its checkpoint before writing any page
-      // with an earlier notice configuration.
+      // Claim the continuation and apply the notices in the same transaction.
       await saveScanCheckpoint(client, feedId, start);
       await applyScanDisclosures(client, feedId, disclosures);
       return { ...start, version: start.version + 1n };
@@ -114,7 +113,6 @@ export async function syncFullScan(
           client,
           feedId,
           changes,
-          disclosures,
           {
             authoritativeSnapshot: true,
             scan: { checkpoint: next, maxRemovals },

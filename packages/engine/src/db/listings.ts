@@ -109,41 +109,53 @@ export async function applyScanDisclosures(
   feedId: string,
   disclosures: ListingPageDisclosures,
 ) {
-  const {
-    approvedFeedBlocks,
-    approvedListingBlocks,
-    approvedPageBlocks = [],
-  } = listingDisclosures.parse(disclosures);
+  const applied = validatedDisclosures(disclosures);
+  const { rows } = await client.query<{ changed: boolean }>(
+    `SELECT applied_disclosures IS DISTINCT FROM $2::jsonb AS changed
+    FROM idx.feeds WHERE id = $1`,
+    [feedId, JSON.stringify(applied)],
+  );
+  if (!rows.length) throw new Error("Missing feed");
+  if (rows[0].changed) await writeAppliedDisclosures(client, feedId, applied);
+}
+
+function validatedDisclosures(disclosures: ListingPageDisclosures) {
+  const { approvedPageBlocks = [], ...blocks } =
+    listingDisclosures.parse(disclosures);
+  return { ...blocks, approvedPageBlocks };
+}
+
+// The caller holds the feed lock. Update the public copies with the configuration.
+async function writeAppliedDisclosures(
+  client: pg.Client,
+  feedId: string,
+  disclosures: Required<ListingPageDisclosures>,
+) {
   await client.query(
     `WITH feed_notice AS (
-      UPDATE idx.feeds SET display_blocks = $2::jsonb WHERE id = $1
+      UPDATE idx.feeds SET applied_disclosures = $2::jsonb,
+        display_blocks = $2::jsonb->'approvedFeedBlocks' WHERE id = $1
     )
-    UPDATE idx.listings l SET display_blocks = $3::jsonb, page_blocks = $4::jsonb
+    UPDATE idx.listings l SET display_blocks = $2::jsonb->'approvedListingBlocks',
+      page_blocks = $2::jsonb->'approvedPageBlocks'
     FROM idx.source_mappings m
-    WHERE m.feed_id = $1 AND m.listing_id = l.id
-      AND (l.display_blocks, l.page_blocks) IS DISTINCT FROM ($3::jsonb, $4::jsonb)`,
-    [
-      feedId,
-      JSON.stringify(approvedFeedBlocks),
-      JSON.stringify(approvedListingBlocks),
-      JSON.stringify(approvedPageBlocks),
-    ],
+    WHERE m.feed_id = $1 AND m.listing_id = l.id`,
+    [feedId, JSON.stringify(disclosures)],
   );
 }
 
 export async function updateListingFreshness(
   client: pg.Client,
   feedIds: string[],
-  blocks?: DisplayBlock[],
 ) {
   await client.query(
     `UPDATE idx.feeds f SET oldest_listing_ingested_at = (
       SELECT min(l.ingested_at) FROM idx.source_mappings m
       JOIN idx.listings l ON l.id = m.listing_id
       WHERE m.feed_id = f.id AND l.entire_listing_display
-    )${blocks ? ", display_blocks = $2::jsonb" : ""}
+    )
     WHERE f.id = ANY($1::text[])`,
-    blocks ? [feedIds, JSON.stringify(blocks)] : [feedIds],
+    [feedIds],
   );
 }
 
@@ -154,20 +166,14 @@ async function writePage(
   client: pg.Client,
   feedId: string,
   rows: PageRow[],
-  feedBlocks?: DisplayBlock[],
 ) {
-  const updateDisclosures = feedBlocks
-    ? `, disclosures AS (
-      UPDATE idx.feeds SET display_blocks = $3::jsonb WHERE id = $1
-    )`
-    : "";
   // Claim identities before touching facts. The feed lock holds the selected state.
   await client.query(
     `WITH incoming AS MATERIALIZED (
       SELECT source_key, revision, candidate, listing
       FROM jsonb_to_recordset($2::jsonb)
         AS (source_key text, revision timestamptz, candidate text, listing jsonb)
-    )${updateDisclosures}, accepted AS (
+    ), accepted AS (
       INSERT INTO idx.source_mappings (feed_id, source_key, listing_id, source_revision)
       SELECT $1, source_key, candidate, revision FROM incoming
       ON CONFLICT (feed_id, source_key) DO UPDATE
@@ -202,9 +208,7 @@ async function writePage(
         source_updated_at=EXCLUDED.source_updated_at, ingested_at=EXCLUDED.ingested_at
     )
     SELECT count(*) FROM accepted`,
-    feedBlocks
-      ? [feedId, JSON.stringify(rows), JSON.stringify(feedBlocks)]
-      : [feedId, JSON.stringify(rows)],
+    [feedId, JSON.stringify(rows)],
   );
 }
 
@@ -256,17 +260,32 @@ async function readExisting(
   keys: string[],
   fixture = false,
 ) {
-  const result = await client.query<Stored>(
+  const { rows } = await client.query<
+    | Stored
+    | {
+        source_key: null;
+        applied_disclosures: Required<ListingPageDisclosures> | null;
+      }
+  >(
     `SELECT m.source_key,
       CASE WHEN m.source_revision = '${orderUnknown}'::timestamptz THEN '${orderUnknown}'
         ELSE to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
       END AS revision,
-      CASE WHEN $3 OR l.entire_listing_display THEN l.withheld_fields END AS withheld
+      CASE WHEN $3 OR l.entire_listing_display THEN l.withheld_fields END AS withheld,
+      NULL::jsonb AS applied_disclosures
     FROM idx.source_mappings m LEFT JOIN idx.listings l ON l.id = m.listing_id
-    WHERE m.feed_id = $1 AND m.source_key = ANY($2::text[])`,
+    WHERE m.feed_id = $1 AND m.source_key = ANY($2::text[])
+    UNION ALL
+    SELECT NULL, NULL, NULL, applied_disclosures FROM idx.feeds WHERE id = $1`,
     [feedId, keys, fixture],
   );
-  return new Map(result.rows.map((row) => [row.source_key, row]));
+  const existing = new Map<string, Stored>();
+  let applied = null;
+  for (const row of rows) {
+    if (row.source_key === null) applied = row.applied_disclosures;
+    else existing.set(row.source_key, row);
+  }
+  return { existing, applied };
 }
 
 function groupPage<T>(rows: readonly T[], sourceKey: (row: T) => string) {
@@ -368,7 +387,7 @@ export async function writeFixturePages(
         };
       });
     const groups = groupPage(candidates, (row) => row.source_key);
-    const existing = await readExisting(
+    const { existing, applied } = await readExisting(
       client,
       feedId,
       [...groups.keys()],
@@ -380,13 +399,21 @@ export async function writeFixturePages(
       if (!validateNewKey(feedId, key, stored))
         throw new Error("Invalid source key");
       const selected = selectChange(changes, stored, "fixture");
-      if (selected) rows.push(selected);
+      if (!selected) continue;
+      if (applied && selected.listing) {
+        selected.listing.blocks = applied.approvedListingBlocks;
+        selected.listing.pageBlocks = applied.approvedPageBlocks;
+      }
+      rows.push(selected);
     }
     await writePage(client, feedId, rows);
   }
 }
 
-type PageOptions = { authoritativeSnapshot?: boolean } & (
+type PageOptions = {
+  authoritativeSnapshot?: boolean;
+  initialDisclosures?: ListingPageDisclosures;
+} & (
   | {
       incremental?: {
         checkpoint: FeedCheckpoint;
@@ -404,17 +431,15 @@ export async function applyListingPage(
   client: pg.Client,
   feedId: string,
   changes: readonly ListingChange[],
-  disclosures: ListingPageDisclosures,
-  { authoritativeSnapshot = false, incremental, scan }: PageOptions = {},
+  {
+    authoritativeSnapshot = false,
+    initialDisclosures,
+    incremental,
+    scan,
+  }: PageOptions = {},
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
-  const {
-    approvedFeedBlocks: feedBlocks,
-    approvedListingBlocks: blocks,
-    approvedPageBlocks: pageBlocks = [],
-  } = listingDisclosures.parse(disclosures);
-
   const rejected: {
     index: number;
     code: RejectionCode;
@@ -431,7 +456,15 @@ export async function applyListingPage(
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
-    const existing = await readExisting(client, feedId, keys);
+    const { existing, applied } = await readExisting(client, feedId, keys);
+    let disclosures = applied;
+    if (!disclosures) {
+      if (!initialDisclosures) throw new Error("Missing applied disclosures");
+      disclosures = validatedDisclosures(initialDisclosures);
+      await writeAppliedDisclosures(client, feedId, disclosures);
+    }
+    const { approvedListingBlocks: blocks, approvedPageBlocks: pageBlocks } =
+      disclosures;
     const rows: Candidate[] = [];
     const futureRemovals = new Map<string, number>();
     for (const [key, group] of groups) {
@@ -545,12 +578,7 @@ export async function applyListingPage(
       });
       renewFreshness = !incrementalContinues && recordState !== "rejected";
     }
-    await writePage(
-      client,
-      feedId,
-      rows,
-      incrementalContinues ? feedBlocks : undefined,
-    );
+    await writePage(client, feedId, rows);
     const applied = new Set(rows.map(({ index }) => index));
     if (futureRemovals.size) {
       const { rows: hidden } = await client.query<{ source_key: string }>(
@@ -580,11 +608,7 @@ export async function applyListingPage(
     // Sync pages use database ingest times. Writers that supply their own
     // ingest times recompute freshness before they finish.
     if (!incrementalContinues && !scanCheckpoint?.active)
-      await updateListingFreshness(
-        client,
-        [feedId],
-        scan ? undefined : feedBlocks,
-      );
+      await updateListingFreshness(client, [feedId]);
     if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }
