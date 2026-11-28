@@ -47,9 +47,11 @@ export type ListingChange = {
 
 // Approved separately from records. These blocks contain feed or broker
 // notices and assets and never incorporate facts or photos from a property.
-export type ListingPageDisclosures = ReturnType<
-  typeof listingDisclosures.parse
->;
+export interface ListingPageDisclosures {
+  approvedFeedBlocks: DisplayBlock[];
+  approvedListingBlocks: DisplayBlock[];
+  approvedPageBlocks?: DisplayBlock[];
+}
 
 interface PageRow {
   source_key: string;
