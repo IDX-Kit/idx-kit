@@ -1,10 +1,4 @@
-import {
-  createHash,
-  createHmac,
-  pbkdf2Sync,
-  randomBytes,
-  randomUUID,
-} from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { FixtureConnector } from "../connectors/fixture.ts";
@@ -21,19 +15,6 @@ function required(name: string) {
   const value = process.env[name];
   if (!value) throw new DemoError(`Missing ${name}.`);
   return value;
-}
-
-function scramVerifier(password: string) {
-  const salt = randomBytes(16);
-  const iterations = 4096;
-  // SASLprep leaves the printable ASCII accepted by preparation unchanged.
-  const salted = pbkdf2Sync(password, salt, iterations, 32, "sha256");
-  const clientKey = createHmac("sha256", salted).update("Client Key").digest();
-  const storedKey = createHash("sha256").update(clientKey).digest("base64");
-  const serverKey = createHmac("sha256", salted)
-    .update("Server Key")
-    .digest("base64");
-  return `SCRAM-SHA-256$${iterations}:${salt.toString("base64")}$${storedKey}:${serverKey}`;
 }
 
 export async function demoKey(db: pg.Client, secret: string) {
@@ -110,20 +91,11 @@ export async function runDemo(action: string) {
       throw new DemoError(
         "IDX_SECRET_KEY must use the documented prefix and base64url of 32 random bytes.",
       );
-    const password = required("RUNTIME_DATABASE_PASSWORD");
-    if (action === "prepare") {
-      if (/[^\u0020-\u007e]/.test(password))
-        throw new DemoError(
-          "RUNTIME_DATABASE_PASSWORD must contain only printable ASCII (U+0020 through U+007E).",
-        );
-      if (password.length < 32)
-        throw new DemoError(
-          "RUNTIME_DATABASE_PASSWORD must have at least 32 characters.",
-        );
-    }
     const runtime = new URL(owner);
     runtime.username = "idx_runtime";
-    runtime.password = encodeURIComponent(password);
+    runtime.password = encodeURIComponent(
+      required("RUNTIME_DATABASE_PASSWORD"),
+    );
     if (action === "check") {
       stage = "demo:check";
       await checkListings(runtime.href, secret);
@@ -134,6 +106,11 @@ export async function runDemo(action: string) {
       stage = "database connection";
       await db.connect();
       if (action === "prepare") {
+        const password = required("RUNTIME_DATABASE_PASSWORD");
+        if (password.length < 32)
+          throw new DemoError(
+            "RUNTIME_DATABASE_PASSWORD must have at least 32 characters.",
+          );
         stage = "runtime role";
         if (
           !(
@@ -160,8 +137,9 @@ export async function runDemo(action: string) {
           throw new DemoError(
             "idx_runtime must have no elevated privileges and NOINHERIT.",
           );
+        // Some managed PostgreSQL services accept only a clear password here.
         await db.query(
-          `ALTER ROLE idx_runtime LOGIN PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
+          `ALTER ROLE idx_runtime LOGIN PASSWORD ${pg.escapeLiteral(password)}`,
         );
         stage = "migrations";
         await migrate(db);

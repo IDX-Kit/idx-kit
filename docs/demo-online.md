@@ -16,7 +16,7 @@ Keep the default dependency installation (`npm ci` with the committed lockfile).
 | Name | Where it belongs | Value |
 | --- | --- | --- |
 | `MIGRATION_DATABASE_URL` | Engine production build trigger, secret | The database owner's **direct** PostgreSQL connection string with TLS. This role owns the schema and must be able to create and manage roles, including `idx_runtime`. |
-| `RUNTIME_DATABASE_PASSWORD` | Engine production build trigger, secret | Use a password generator to create a random password of at least 32 printable ASCII characters (U+0020 through U+007E). Store the identical password in Hyperdrive. |
+| `RUNTIME_DATABASE_PASSWORD` | Engine production build trigger, secret | Random password, at least 32 characters; use a password generator. Store the identical password in Hyperdrive. |
 | `IDX_SECRET_KEY` | Engine production build trigger, secret; also site Worker runtime secret | `idx_secret_` followed by base64url encoding of 32 random bytes (43 characters without padding). Generate securely, for example with `node -e 'console.log("idx_secret_" + require("node:crypto").randomBytes(32).toString("base64url"))'` in the operator's secure environment. Never commit or log the value. |
 | `DEMO_HYPERDRIVE_ID` | Engine production build trigger, ordinary variable | Id returned when creating the Hyperdrive configuration. Keep this account-specific value out of the repository. |
 

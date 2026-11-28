@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import pg from "pg";
 import { captureLog, registerSecret } from "../logs.ts";
@@ -51,25 +50,6 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
     const missing = { ...env, [name]: "" };
     assert.ok(command("demo:prepare", [], missing, false).includes(name));
   }
-  await t.test("non-ASCII passwords are rejected before connecting", () => {
-    const unavailable = new URL(owner);
-    unavailable.pathname = "/idx_missing";
-    const invalidPassword = `${randomBytes(32).toString("base64url")}\u00a0`;
-    registerSecret(invalidPassword);
-    const variables = {
-      ...env,
-      MIGRATION_DATABASE_URL: unavailable.href,
-      RUNTIME_DATABASE_PASSWORD: invalidPassword,
-    };
-    const log = command("demo:prepare", [], variables, false);
-    assert.ok(!log.includes(invalidPassword), "The password must stay private");
-    const { operation, message } = JSON.parse(log);
-    assert.equal(operation, "configuration");
-    assert.equal(
-      message,
-      "RUNTIME_DATABASE_PASSWORD must contain only printable ASCII (U+0020 through U+007E).",
-    );
-  });
   const db = new pg.Client({ connectionString: owner });
   await db.connect();
   t.after(() => db.end());
@@ -79,22 +59,6 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
     0,
   );
   command("demo:prepare");
-  const databaseLog = await readFile(
-    `${process.env.IDX_TEST_PG_DIR}.log`,
-    "utf8",
-  );
-  const passwordStatements = databaseLog
-    .split("\n")
-    .filter((line) =>
-      line.includes("statement: ALTER ROLE idx_runtime LOGIN PASSWORD "),
-    );
-  assert.equal(passwordStatements.length, 1);
-  assert.ok(
-    /PASSWORD 'SCRAM-SHA-256\$4096:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}='$/.test(
-      passwordStatements[0],
-    ),
-    "PostgreSQL must receive only a SCRAM verifier in the password statement",
-  );
   const snapshot = async () => {
     const tables = [
       "schema_migrations",
