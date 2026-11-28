@@ -162,11 +162,7 @@ export async function updateListingFreshness(
 const deleteListings = `DELETE FROM idx.listings l USING changes c
   WHERE l.id = c.listing_id AND c.listing IS NULL`;
 
-async function writePage(
-  client: pg.Client,
-  feedId: string,
-  rows: PageRow[],
-) {
+async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
   // Claim identities before touching facts. The feed lock holds the selected state.
   await client.query(
     `WITH incoming AS MATERIALIZED (
@@ -456,8 +452,12 @@ export async function applyListingPage(
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
-    const { existing, applied } = await readExisting(client, feedId, keys);
-    let disclosures = applied;
+    const { existing, applied: storedDisclosures } = await readExisting(
+      client,
+      feedId,
+      keys,
+    );
+    let disclosures = storedDisclosures;
     if (!disclosures) {
       if (!initialDisclosures) throw new Error("Missing applied disclosures");
       disclosures = validatedDisclosures(initialDisclosures);

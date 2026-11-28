@@ -143,7 +143,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           applyScanDisclosures(writer, primary, disclosures),
         );
       const write = (changes: ListingChange[]) =>
-        applyListingPage(writer, primary, changes, { initialDisclosures: feed });
+        applyListingPage(writer, primary, changes, {
+          initialDisclosures: feed,
+        });
       const sourceKey = "Synthetic writer shared key";
       const otherKey = "Synthetic writer companion key";
       const oldStreet = "999 Synthetic Writer Way";
@@ -173,12 +175,9 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
       original.listing.source.Images = [{ url: oldPhoto, alt: oldStreet }];
       original.listing.ingestedAt = "2026-11-01T00:01:00Z";
       await write([original, upsert(otherKey, 1)]);
-      await applyListingPage(
-        writer,
-        secondary,
-        [upsert(sourceKey, 1)],
-        { initialDisclosures: fixtureDisclosures(fixtures, secondary) },
-      );
+      await applyListingPage(writer, secondary, [upsert(sourceKey, 1)], {
+        initialDisclosures: fixtureDisclosures(fixtures, secondary),
+      });
       const id = await identity(primary, sourceKey);
       const second = await identity(secondary, sourceKey);
       const companion = await identity(primary, otherKey);
@@ -588,10 +587,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           replacement.listing.blocks = [stale];
           replacement.listing.pageBlocks = [{ ...stale, id: notice.id }];
           await applyNotices({ ...feed, approvedPageBlocks: [notice] });
-          assert.deepEqual(
-            (await write([replacement])).rejected,
-            [],
-          );
+          assert.deepEqual((await write([replacement])).rejected, []);
           const feedRow = await db.query(
             "SELECT display_blocks FROM idx.feeds WHERE id=$1",
             [primary],
@@ -787,12 +783,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const older = { ...upsert(key, 1), revision: "2001-01-01T00:00:00Z" };
           const newer = { ...upsert(key, 2), revision: "9999-01-01T00:00:00Z" };
           const snapshot = { authoritativeSnapshot: true };
-          await applyListingPage(
-            peer,
-            primary,
-            [remove(key, 3)],
-            snapshot,
-          );
+          await applyListingPage(peer, primary, [remove(key, 3)], snapshot);
           for (const replay of [older, newer]) {
             await applyListingPage(peer, primary, [replay]);
             await absent(id);
@@ -851,9 +842,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const id = await identity(primary, key);
           const before = await stored(id);
           for (const blocks of cases) {
-            await assert.rejects(
-              applyNotices({ ...feed, ...blocks }),
-            );
+            await assert.rejects(applyNotices({ ...feed, ...blocks }));
             assert.deepEqual(await stored(id), before);
           }
         },
@@ -931,11 +920,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           );
           const first = write([remove(key, 3)]);
           await Promise.race([commit, first]);
-          const second = applyListingPage(
-            peer,
-            primary,
-            [upsert(key, 2)],
-          );
+          const second = applyListingPage(peer, primary, [upsert(key, 2)]);
           try {
             let waiting = false;
             for (let attempt = 0; attempt < 100; attempt++) {

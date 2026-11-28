@@ -294,7 +294,10 @@ test(
               },
             ],
             {
-              initialDisclosures: fixtureDisclosures(fixtures, original.feed_id),
+              initialDisclosures: fixtureDisclosures(
+                fixtures,
+                original.feed_id,
+              ),
             },
           );
           assert.equal(

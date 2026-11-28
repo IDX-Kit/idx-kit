@@ -109,15 +109,10 @@ export async function syncFullScan(
         progress.recordsSeen += records.length;
         const changes = mapChanges(records);
         const next = { ...checkpoint, active: nextLink !== null, nextLink };
-        const page = await applyListingPage(
-          client,
-          feedId,
-          changes,
-          {
-            authoritativeSnapshot: true,
-            scan: { checkpoint: next, maxRemovals },
-          },
-        );
+        const page = await applyListingPage(client, feedId, changes, {
+          authoritativeSnapshot: true,
+          scan: { checkpoint: next, maxRemovals },
+        });
         if (!page.scanCheckpoint)
           throw new Error("Missing saved scan checkpoint");
         checkpoint = { ...page.scanCheckpoint, version: next.version + 1n };
