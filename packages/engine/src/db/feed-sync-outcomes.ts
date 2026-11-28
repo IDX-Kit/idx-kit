@@ -6,7 +6,7 @@ export type FeedNextStep =
   { kind: "retry"; afterSeconds?: number } | { kind: "stop" };
 
 export type RejectionCode =
-  "invalid_key" | "invalid_change" | "future_revision";
+  "invalid_key" | "invalid_change" | "invalid_revision" | "future_revision";
 
 export type RecordCounts = {
   accepted: number;
@@ -22,6 +22,23 @@ export const emptyCounts: RecordCounts = {
 
 export const allRejectedMessage =
   "Feed freshness stayed unchanged because no feed record could be used. Check the rejection codes.";
+
+export function hasUnplaceableRecords({ rejectedByCode }: RecordCounts) {
+  const {
+    invalid_key = 0,
+    invalid_revision = 0,
+    future_revision = 0,
+  } = rejectedByCode;
+  return invalid_key + invalid_revision + future_revision > 0;
+}
+
+export const unplaceableOutcome: {
+  code: "unplaceable_records";
+  nextStep: FeedNextStep;
+} = {
+  code: "unplaceable_records",
+  nextStep: { kind: "retry" },
+};
 
 export async function readFeedState(
   client: pg.Client,

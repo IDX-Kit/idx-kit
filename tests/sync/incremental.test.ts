@@ -777,6 +777,70 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
+    "a mixed poll replays an unreadable withdrawal at its original timestamp",
+    async (t) => {
+      const state = await setup(t, "unreadable_withdrawal");
+      const withdrawal = {
+        ...first,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: secondMark,
+      };
+      const feed = await standIn(t, (url, number) => {
+        if (number === 1) return page([first]);
+        if (number === 2)
+          return page([{ ...withdrawal, ListingKey: null }, third]);
+        const mark = url.searchParams.get("$filter")?.split(" ").at(-1);
+        return page(
+          [withdrawal, third].filter(
+            ({ ModificationTimestamp }) =>
+              !mark || ModificationTimestamp >= mark,
+          ),
+        );
+      });
+      assertRun(await state.run(feed), { code: "complete" });
+      await state.setOldFreshness();
+      const freshness = await state.freshness();
+
+      assert.deepEqual(await state.run(feed), {
+        code: "unplaceable_records",
+        nextStep: retry,
+        counts: {
+          accepted: 1,
+          rejected: 1,
+          rejectedByCode: { invalid_key: 1 },
+        },
+      });
+      assertRun(await state.status(), {
+        lastOutcome: { code: "unplaceable_records", nextStep: "retry" },
+      });
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(firstMark),
+      );
+      assert.deepEqual(await state.freshness(), freshness);
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [firstMark, thirdMark],
+      );
+
+      assertRun(await state.run(feed), { code: "complete" });
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [null, thirdMark],
+      );
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(thirdMark),
+      );
+      await assertFresh(state);
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", filter(firstMark), filter(firstMark)],
+      );
+    },
+  );
+
+  await t.test(
     "a future-dated record cannot make the next poll skip a later withdrawal",
     async (t) => {
       const state = await setup(t, "future_revision");
@@ -788,7 +852,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       };
       const feed = await standIn(t, (url, number) => {
         const mark = url.searchParams.get("$filter")?.split(" ").at(-1);
-        const records = number === 1 ? [first, future] : [withdrawal, future];
+        const records = number === 1 ? [first, future] : [withdrawal];
         return page(
           records.filter(
             ({ ModificationTimestamp }) =>
@@ -797,27 +861,28 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         );
       });
 
-      assertRun(await state.run(feed), { code: "complete" });
+      const freshness = await state.freshness();
+      assertRun(await state.run(feed), { code: "unplaceable_records" });
       const position = (await state.checkpoint()).position;
       const live = await state.listings();
       assert.equal(live.length, 1);
       assert.equal(live[0].key, first.ListingKey);
       assert.equal(live[0].revision, firstMark);
-      await assertFresh(state);
+      assert.deepEqual(await state.freshness(), freshness);
       assertRun(await state.run(feed), { code: "complete" });
       assert.equal(
         (await state.listings()).find(({ key }) => key === first.ListingKey)
           ?.revision,
         null,
       );
-      assert.deepEqual(position, complete(firstMark));
+      assert.deepEqual(position, complete(null));
       assert.deepEqual(
         (await state.checkpoint()).position,
         complete(secondMark),
       );
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
-        ["", filter(firstMark)],
+        ["", ""],
       );
     },
   );
@@ -879,11 +944,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       );
       assert.deepEqual(rejected, [
         { index: 0, code: "invalid_key", hidden: false },
-        { index: 1, code: "future_revision", hidden: false },
+        { index: 1, code: "future_revision", hidden: true },
       ]);
       assert.deepEqual(await state.freshness(), freshness);
       for (let poll = 0; poll < 2; poll += 1) {
-        assertRun(await state.run(feed), { code: "complete" });
+        assertRun(await state.run(feed), { code: "unplaceable_records" });
         assert.deepEqual(
           (await state.checkpoint()).position,
           complete(firstMark),
@@ -897,7 +962,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(position.recordState, "rejected");
       assert.equal(new URL(position.nextLink!).search, "?cursor=empty");
 
-      assertRun(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "unplaceable_records" });
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(
         (await state.checkpoint()).position,
@@ -918,7 +983,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
-    "a rejected middle page still resumes at a valid withdrawal",
+    "a resumed poll applies later withdrawals, then replays from the completed mark",
     async (t) => {
       const state = await setup(t, "rejected_middle");
       const withdrawal = {
@@ -931,11 +996,11 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         if (number === 2) return page([second], "?cursor=rejected");
         if (number === 3)
           return page(
-            [record("future", futureMark), { ...third, ListingKey: null }],
+            [record("future", futureMark), { ...withdrawal, ListingKey: null }],
             "?cursor=withdrawal",
           );
         if (number === 4) return page([withdrawal]);
-        return page([]);
+        return page([second, withdrawal]);
       });
       assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
@@ -956,12 +1021,13 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         });
         const { position } = await state.checkpoint();
         assert.equal(position.completedMark, firstMark);
-        assert.equal(position.pendingMark, secondMark);
+        assert.equal(position.pendingMark, index === 0 ? secondMark : null);
         assert.equal(new URL(position.nextLink!).search, cursor);
         assert.deepEqual(await state.freshness(), freshness);
       }
       assert.deepEqual(await state.run(feed, writer, 1), {
-        code: "complete",
+        code: "unplaceable_records",
+        nextStep: retry,
         counts: {
           accepted: 2,
           rejected: 2,
@@ -970,13 +1036,14 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       });
       assert.deepEqual(
         (await state.checkpoint()).position,
-        complete(thirdMark),
+        complete(firstMark),
       );
       const [withdrawn] = await state.listings();
       assert.equal(withdrawn.key, first.ListingKey);
       assert.equal(withdrawn.revision, null);
-      await assertFresh(state);
+      assert.deepEqual(await state.freshness(), freshness);
       assertRun(await state.run(feed, writer, 1), { code: "complete" });
+      await assertFresh(state);
       assert.deepEqual(
         feed.calls.map(({ query }) => query),
         [
@@ -984,98 +1051,63 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
           filter(firstMark),
           "?cursor=rejected",
           "?cursor=withdrawal",
-          filter(thirdMark),
+          filter(firstMark),
         ],
       );
     },
   );
 
   await t.test(
-    "future-dated withdrawals take listings down at their last trusted revision",
+    "unordered withdrawals win against unchanged active records for the same key",
     async (t) => {
-      const state = await setup(t, "future_withdrawal");
-      const removals = [
-        { ...first, StandardStatus: "Withdrawn" },
-        { ...second, StandardStatus: "Unknown synthetic status" },
-        { ...third, InternetEntireListingDisplayYN: false },
-      ].map((record) => ({ ...record, ModificationTimestamp: futureMark }));
-      const restored = {
-        ...third,
-        ModificationTimestamp: "2026-11-04T00:00:00.000000Z",
+      const state = await setup(t, "unordered_withdrawals");
+      const future = {
+        ...first,
+        InternetEntireListingDisplayYN: false,
+        ModificationTimestamp: futureMark,
       };
-      const feed = await standIn(t, (_url, number) => {
-        if (number === 1) return page([first, second, third]);
-        if (number === 2) return page(removals);
-        if (number === 3) return page([third]);
-        return page([restored]);
+      const unreadable = {
+        ...second,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: "unreadable",
+      };
+      const newer = { ...first, ModificationTimestamp: thirdMark };
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) return page([first, second]);
+        if (n === 2) return page([first, future, unreadable, second, third]);
+        return page([newer, second, third]);
       });
-
       assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
       const freshness = await state.freshness();
+      assertRun(await state.run(feed), {
+        code: "unplaceable_records",
+        counts: {
+          accepted: 3,
+          rejected: 2,
+          rejectedByCode: { future_revision: 1, invalid_revision: 1 },
+        },
+      });
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [null, null, thirdMark],
+      );
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(secondMark),
+      );
+      assert.deepEqual(await state.freshness(), freshness);
+
       assertRun(await state.run(feed), { code: "complete" });
       assert.deepEqual(
         (await state.listings()).map(({ revision }) => revision),
-        [null, null, null],
+        [null, null, thirdMark],
       );
       assert.deepEqual(
         (await state.checkpoint()).position,
         complete(thirdMark),
       );
-      assert.deepEqual(await state.freshness(), freshness);
-      assertRun(await state.run(feed), { code: "complete" });
-      assert.equal((await state.listings())[2].revision, null);
-      assertRun(await state.run(feed), { code: "complete" });
-      assert.equal(
-        (await state.listings())[2].revision,
-        restored.ModificationTimestamp,
-      );
-      assert.deepEqual(
-        feed.calls.map(({ query }) => query),
-        ["", ...Array(3).fill(filter(thirdMark))],
-      );
-    },
-  );
-
-  await t.test(
-    "an accepted restoration wins over a future withdrawal on the same page",
-    async (t) => {
-      const state = await setup(t, "future_and_restoration");
-      const future = {
-        ...first,
-        StandardStatus: "Withdrawn",
-        ModificationTimestamp: futureMark,
-      };
-      const restored = { ...first, ModificationTimestamp: secondMark };
-      const responses = [
-        [first],
-        [future],
-        [future, restored],
-        [restored],
-        [restored, future],
-      ];
-      const feed = await standIn(t, (_url, n) => page(responses[n - 1]));
-      assertRun(await state.run(feed), { code: "complete" });
-      assertRun(await state.run(feed), { code: "complete" });
-      assert.equal((await state.listings())[0].revision, null);
-      for (let n = 3; n <= responses.length; n += 1) {
-        assertRun(await state.run(feed), { code: "complete" });
-        assert.equal((await state.listings())[0].revision, secondMark);
-        assert.deepEqual(
-          (await state.checkpoint()).position,
-          complete(secondMark),
-        );
-      }
-      assert.deepEqual(
-        feed.calls.map(({ query }) => query),
-        [
-          "",
-          filter(firstMark),
-          filter(firstMark),
-          filter(secondMark),
-          filter(secondMark),
-        ],
-      );
+      await assertFresh(state);
     },
   );
 
@@ -1101,7 +1133,7 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       await assertFresh(state);
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      assertRun(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), { code: "unplaceable_records" });
       assert.deepEqual((await state.checkpoint()).position, complete(boundary));
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(
@@ -1737,14 +1769,17 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(before.price, first.ListPrice);
       await state.setOldFreshness();
       const freshness = await state.freshness();
-      assertRun(await state.run(feed), { code: "complete" });
+      assertRun(await state.run(feed), {
+        code: "unplaceable_records",
+        nextStep: retry,
+      });
       assert.deepEqual(await state.freshness(), freshness);
       assert.deepEqual(await state.listings(), [
         { key: before.key, id: before.id, price: null, revision: null },
       ]);
       assert.deepEqual(
         (await state.checkpoint()).position,
-        complete(secondMark),
+        complete(firstMark),
       );
     },
   );

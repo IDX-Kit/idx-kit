@@ -754,7 +754,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const newer = upsert(key, 2);
           const bad = { ...remove(key, 0), revision: "unreadable" };
           assert.deepEqual((await write([newer, bad])).rejected, [
-            { index: 1, code: "invalid_change", hidden: true },
+            { index: 1, code: "invalid_revision", hidden: true },
           ]);
           await write([newer]);
           await absent(id);
@@ -777,7 +777,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           const key = "Synthetic writer unseen removal";
           const removal = { ...remove(key, 0), revision: "unreadable" };
           assert.deepEqual((await write([removal])).rejected, [
-            { index: 0, code: "invalid_change", hidden: true },
+            { index: 0, code: "invalid_revision", hidden: true },
           ]);
           const id = await identity(primary, key);
           const older = { ...upsert(key, 1), revision: "2001-01-01T00:00:00Z" };
@@ -797,7 +797,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
                 snapshot,
               )
             ).rejected,
-            [{ index: 0, code: "invalid_change", hidden: true }],
+            [{ index: 0, code: "invalid_revision", hidden: false }],
           );
           await absent(id);
           await applyListingPage(peer, primary, [older], snapshot);

@@ -136,7 +136,7 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
           throw new NonRetryableError("Could not save sync outcome");
         return output;
       });
-      if (last.code === "page_limit" || last.code === "complete")
+      if (["page_limit", "complete", "unplaceable_records"].includes(last.code))
         pagesApplied++;
     } while (last.code === "page_limit" && pagesApplied < pages);
     return { ...last, pagesApplied };

@@ -346,6 +346,52 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
   );
 
   await t.test(
+    "a future-dated active record in a resumed scan leaves the trusted revision in place",
+    async (t) => {
+      const state = await setup(t, "future_revision");
+      const before = await state.incrementalState();
+      const [kept, trusted] = await state.listings();
+      const future = {
+        ...second,
+        ModificationTimestamp: "2099-01-01T00:00:00Z",
+        ListPrice: "225.00",
+      };
+      const feed = await standIn(t, (_url, n) => {
+        if (n === 1) return page([future, record("third", 2)], "?cursor=2");
+        if (n === 2) return { status: 503 };
+        return page([second, record("third", 2)]);
+      });
+      assertRun(await state.scan(feed, 1), {
+        code: "http_error",
+        nextStep: { kind: "retry" },
+      });
+      assertRun(await state.scan(feed, 1), {
+        code: "unplaceable_records",
+        nextStep: { kind: "retry" },
+        listingsRemoved: 0,
+        counts: {
+          accepted: 3,
+          rejected: 1,
+          rejectedByCode: { future_revision: 1 },
+        },
+      });
+      const [absent, replayed, repaired] = await state.listings();
+      assert.deepEqual(absent, kept);
+      assert.deepEqual(replayed.facts, trusted.facts);
+      assert.equal(replayed.revision, trusted.revision);
+      assert.equal(repaired.revision, revision(2));
+      assert.deepEqual(await state.incrementalState(), before);
+
+      await state.poll([
+        { ...record("second", 3), StandardStatus: "Withdrawn" },
+      ]);
+      const [, withdrawn] = await state.listings();
+      assert.equal(withdrawn.facts, null);
+      assert.equal(withdrawn.revision, revision(3));
+    },
+  );
+
+  await t.test(
     "a resumed scan can withdraw after a nonempty first page and an empty final page",
     async (t) => {
       const state = await setup(t, "resume", [first]);
@@ -686,13 +732,20 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     async (t) => {
       const state = await setup(t, "unknown", [first]);
       const [before] = await state.listings();
-      await state.poll([
-        {
-          ...first,
-          StandardStatus: "Withdrawn",
-          ModificationTimestamp: "unreadable",
+      const withdrawal = {
+        ...first,
+        StandardStatus: "Withdrawn",
+        ModificationTimestamp: "unreadable",
+      };
+      const untrusted = await standIn(t, () => page([first, withdrawal]));
+      assertRun(await state.scan(untrusted), {
+        code: "unplaceable_records",
+        counts: {
+          accepted: 1,
+          rejected: 1,
+          rejectedByCode: { invalid_revision: 1 },
         },
-      ]);
+      });
       const [hidden] = await state.listings();
       assert.equal(hidden.facts, null);
       assert.equal(hidden.revision, "infinity");

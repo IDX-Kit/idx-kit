@@ -112,10 +112,14 @@ export interface FixtureRecord extends ListingRecord {
   synthetic: true;
 }
 
-export function normalize(
-  record: Omit<ListingRecord, "ingestedAt"> & { ingestedAt: string | null },
-  feedPage = false,
-) {
+type ListingFactsInput = Omit<
+  ListingRecord,
+  "blocks" | "pageBlocks" | "ingestedAt"
+> & {
+  ingestedAt: string | null;
+};
+
+export function normalizeFacts(record: ListingFactsInput, feedPage = false) {
   const source = record.source;
   for (const name of [
     "ListingKey",
@@ -164,11 +168,6 @@ export function normalize(
   const address = addressSchema.nullable().parse(source.Address);
   const fields = new Set(fieldsSchema.optional().parse(record.withheldFields));
   const hideAddress = !source.InternetAddressDisplayYN || fields.has("address");
-  const protection = addressProtection(
-    hideAddress && !feedPage ? address : null,
-  );
-  const blocks = (values: DisplayBlock[]) =>
-    feedPage ? values : protection.blocks(values);
   const images = feedPage
     ? feedPhotos(source.Images)
     : imagesSchema.parse(source.Images);
@@ -193,10 +192,23 @@ export function normalize(
   }
   return {
     facts,
-    blocks: disclosureSchema.min(1).parse(blocks(record.blocks)),
-    pageBlocks: disclosureSchema.parse(blocks(record.pageBlocks)),
     sourceUpdatedAt: record.sourceUpdatedAt,
     ingestedAt: record.ingestedAt,
+  };
+}
+export type NormalizedFacts = ReturnType<typeof normalizeFacts>;
+
+export function normalize(record: ListingRecord) {
+  const listing = normalizeFacts(record);
+  const protection = addressProtection(
+    listing.facts.withheldFields.includes("address")
+      ? record.source.Address
+      : null,
+  );
+  return {
+    ...listing,
+    blocks: disclosureSchema.min(1).parse(protection.blocks(record.blocks)),
+    pageBlocks: disclosureSchema.parse(protection.blocks(record.pageBlocks)),
   };
 }
 export type NormalizedListing = ReturnType<typeof normalize>;

@@ -2,7 +2,9 @@ import type pg from "pg";
 import {
   allRejectedMessage,
   emptyCounts,
+  hasUnplaceableRecords,
   saveFeedOutcome,
+  unplaceableOutcome,
 } from "../db/feed-sync-outcomes.ts";
 import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
 import {
@@ -40,6 +42,7 @@ export function reportSyncStep(result: {
 }
 
 function completedRun(counts: RecordCounts) {
+  if (hasUnplaceableRecords(counts)) return { ...unplaceableOutcome, counts };
   return {
     code: "complete",
     counts,

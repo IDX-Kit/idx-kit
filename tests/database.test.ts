@@ -59,7 +59,7 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
           "SELECT count(*)::int AS count FROM public.schema_migrations",
         )
       ).rows[0].count,
-      17,
+      18,
     );
     const owners = await db.query(
       "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'idx'",
