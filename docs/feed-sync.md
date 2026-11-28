@@ -31,6 +31,11 @@ after upgrading an existing writer setup.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.sql
 ```
 
+When upgrading sync, apply the migrations and reapply the writer grants first,
+then replace every sync instance, including Workers. Wait for runs from the old
+instances to finish before editing notices. An older sync instance still writes
+its own copy of the notices.
+
 As the migration role, add the feed and authorize the site that may display it.
 Use a stable feed ID and the freshness window and disclosures approved for
 that feed. This invented example uses a one-hour window and starts expired.
@@ -105,10 +110,12 @@ from its last completed mark and restarts an unfinished scan.
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
 ```
 
-`npm run --silent sync -- scan` repairs missed edits across the feed. At the
-start of the scan, edited disclosures take effect together for the feed and
-every stored listing, even if the scan is interrupted. Scheduled polls can
-continue while the scan applies the change.
+`npm run --silent sync -- scan` repairs missed edits across the feed. To update
+notices, edit the approved disclosure blocks in the YAML file at
+`$IDX_SYNC_FEED_FILE`, then run `npm run --silent sync -- scan`. The edits take
+effect together for the feed and every stored listing when the scan's first
+step commits. Upgraded scheduled polls can continue while the scan applies the
+change.
 A scan can apply explicit withdrawals and preserves listings that are merely
 absent unless removal by absence is enabled. Incremental sync renews the feed
 freshness window.

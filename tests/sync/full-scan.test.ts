@@ -85,9 +85,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       ]);
       await db.query("DELETE FROM idx.feeds WHERE id = $1", [feedId]);
     });
-    const options = (feed: Feed) => ({
+    const options = (feed: Feed, notices = disclosures) => ({
       feedId,
-      disclosures,
+      disclosures: notices,
       synthetic: true,
       connector: feed.connector,
     });
@@ -102,11 +102,16 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       feedId,
       siteId,
       poll,
-      scan: (feed: Feed, maxRemovals?: number, client = writer) =>
+      scan: (
+        feed: Feed,
+        maxRemovals?: number,
+        client = writer,
+        notices = disclosures,
+      ) =>
         maxRemovals === undefined
-          ? syncFullScan(client, options(feed))
+          ? syncFullScan(client, options(feed, notices))
           : syncFullScan(client, {
-              ...options(feed),
+              ...options(feed, notices),
               removeMissing: true,
               maxRemovals,
             }),
@@ -139,7 +144,11 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         const { rows } = await db.query<{
           id: string;
           key: string;
-          facts: { price: number } | null;
+          facts: {
+            price: number;
+            display_blocks: unknown[];
+            page_blocks: unknown[];
+          } | null;
           revision: string | null;
           stamp: string | null;
         }>(
@@ -339,7 +348,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         ["", "?cursor=2", "?cursor=2"],
       );
       assert.deepEqual(await state.checkpoint(), {
-        version: pending.version + 2n,
+        version: pending.version + 1n,
         scanNumber: pending.scanNumber,
         active: false,
         nextLink: null,
@@ -688,6 +697,118 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.deepEqual(await state.checkpoint(), winningState);
       assert.deepEqual(await state.listings(), winningListings);
       assert.equal((await state.checkpoint()).scanNumber, 1n);
+    },
+  );
+
+  await t.test(
+    "a failed competing scan can apply notices while the healthy scan finishes",
+    async (t) => {
+      const state = await setup(t, "competing_notices");
+      const peer = await connectWriter(t);
+      const notices = {
+        approvedFeedBlocks: [
+          { ...disclosures.approvedFeedBlocks[0], text: "New feed notice" },
+        ],
+        approvedListingBlocks: [
+          {
+            ...disclosures.approvedListingBlocks[0],
+            text: "New listing notice",
+          },
+        ],
+        approvedPageBlocks: [
+          { ...disclosures.approvedFeedBlocks[0], id: "new_page_notice" },
+        ],
+      };
+      const failing = await standIn(t, () => ({ status: 503 }));
+      const healthy = await standIn(t, async (_url, n) => {
+        if (n === 1) return page([first], "?cursor=2");
+        assertRun(await state.scan(failing, undefined, peer, notices), {
+          code: "http_error",
+          pagesRead: 0,
+        });
+        return page([record("third", 2, "225.00")]);
+      });
+      const counts = { accepted: 2, rejected: 0, rejectedByCode: {} };
+      assertRun(await state.scan(healthy, 0), {
+        code: "removal_limit_exceeded",
+        pagesRead: 2,
+        wouldRemove: 1,
+        maxRemovals: 0,
+        listingsRemoved: 0,
+        counts,
+      });
+      assertRun(await state.lastRun(), { kind: "scan", counts });
+      const { feed } = await state.incrementalState();
+      assert.deepEqual(feed[0].display_blocks, notices.approvedFeedBlocks);
+      const listings = await state.listings();
+      assert.deepEqual(
+        listings.map(({ facts }) => facts?.price),
+        [100, 100, 225],
+      );
+      for (const { facts } of listings) {
+        assert.deepEqual(facts?.display_blocks, notices.approvedListingBlocks);
+        assert.deepEqual(facts?.page_blocks, notices.approvedPageBlocks);
+      }
+    },
+  );
+
+  await t.test(
+    "retrying a scan after a lost startup commit acknowledgment changes no rows",
+    async (t) => {
+      const state = await setup(t, "lost_startup_commit");
+      const notices = {
+        ...disclosures,
+        approvedListingBlocks: [
+          { ...disclosures.approvedListingBlocks[0], text: "Updated notice" },
+        ],
+      };
+      const feed = await standIn(t, () => ({ status: 503 }));
+      const query = writer.query.bind(writer);
+      const fault = t.mock.method(
+        writer,
+        "query",
+        async (sql: string, values: unknown[] = []) => {
+          const result = await query(sql, values);
+          if (sql === "COMMIT")
+            throw new Error("Synthetic lost acknowledgment");
+          return result;
+        },
+      );
+      async function noticeVersions() {
+        const { rows } = await db.query(
+          `SELECT id, xmin::text AS version FROM idx.feeds WHERE id = $1
+          UNION ALL
+          SELECT l.id, l.xmin::text FROM idx.listings l
+          JOIN idx.source_mappings m ON m.listing_id = l.id
+          WHERE m.feed_id = $1 ORDER BY id`,
+          [state.feedId],
+        );
+        return rows;
+      }
+
+      const before = await noticeVersions();
+      try {
+        assertRun(await state.scan(feed, undefined, writer, notices), {
+          code: "write_failed",
+          pagesRead: 0,
+        });
+      } finally {
+        fault.mock.restore();
+      }
+      assert.equal(feed.calls.length, 0);
+      const checkpoint = await state.checkpoint();
+      assert.equal(checkpoint.active, true);
+      const applied = await noticeVersions();
+      assert.equal(applied.length, 4);
+      assert.notDeepEqual(applied, before);
+
+      assertRun(await state.scan(feed, undefined, writer, notices), {
+        code: "http_error",
+        pagesRead: 0,
+      });
+      assert.equal(feed.calls.length, 1);
+      assert.deepEqual(await state.checkpoint(), checkpoint);
+      assert.deepEqual(await noticeVersions(), applied);
     },
   );
 

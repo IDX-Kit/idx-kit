@@ -91,11 +91,11 @@ export async function syncFullScan(
         start.recordsSeen = 0;
         start.unreadableRecords = 0;
         start.counts = emptyCounts;
+        await saveScanCheckpoint(client, feedId, start);
+        start.version += 1n;
       }
-      // Claim the continuation and apply the notices in the same transaction.
-      await saveScanCheckpoint(client, feedId, start);
       await applyScanDisclosures(client, feedId, disclosures);
-      return { ...start, version: start.version + 1n };
+      return start;
     });
     counts = checkpoint.counts ?? emptyCounts;
     const mapChanges = listingChangesFor(feed);

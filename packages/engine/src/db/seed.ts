@@ -39,8 +39,7 @@ export async function seed(client: pg.Client, fixtures: Fixtures) {
         `INSERT INTO idx.feeds (id, refreshed_at, expires_at, display_blocks, rules_version)
       VALUES ($1,$2,$3,$4,$5)
       ON CONFLICT (id) DO UPDATE SET refreshed_at=EXCLUDED.refreshed_at, expires_at=EXCLUDED.expires_at,
-        display_blocks=CASE WHEN idx.feeds.applied_disclosures IS NULL
-          THEN EXCLUDED.display_blocks ELSE idx.feeds.display_blocks END,
+        display_blocks=EXCLUDED.display_blocks, applied_disclosures=NULL,
         rules_version=EXCLUDED.rules_version`,
         [
           feed.id,

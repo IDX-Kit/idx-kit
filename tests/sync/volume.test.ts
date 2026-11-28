@@ -164,15 +164,20 @@ test(
     const finalTimes: number[] = [];
     let pageIndex: number | undefined;
     let startReads = 0;
+    let startupReads = 0;
+    const listingTables = ["listings", "source_mappings"];
     const query = writer.query.bind(writer);
-    async function readRows() {
+    async function readRows(tables: string[] | null = null) {
       // List index IDs from the view and read their transaction-local counters.
       const { rows } = await query<{ count: string }>(
         `SELECT
           (SELECT COALESCE(sum(seq_tup_read), 0)
-           FROM pg_stat_xact_user_tables WHERE schemaname = 'idx') +
+           FROM pg_stat_xact_user_tables WHERE schemaname = 'idx'
+             AND ($1::text[] IS NULL OR relname = ANY($1))) +
           (SELECT COALESCE(sum(pg_stat_get_xact_tuples_returned(indexrelid)), 0)
-           FROM pg_stat_user_indexes WHERE schemaname = 'idx') AS count`,
+           FROM pg_stat_user_indexes WHERE schemaname = 'idx'
+             AND ($1::text[] IS NULL OR relname = ANY($1))) AS count`,
+        [tables],
       );
       return Number(rows[0].count);
     }
@@ -180,10 +185,18 @@ test(
       writer,
       "query",
       async (sql: string, values: unknown[] = []) => {
+        const scanStartup = scanning && offsets.length === 0;
         if (scanning) {
           assert.doesNotMatch(sql, /UPDATE idx\.listings l SET display_blocks/);
         }
         statements += 1;
+        if (sql === "COMMIT" && scanStartup) {
+          assert.equal(
+            await readRows(listingTables),
+            startupReads,
+            "no listing rows read before the first scan fetch",
+          );
+        }
         if (sql === "COMMIT" && pageIndex !== undefined) {
           pageReads.push((await readRows()) - startReads);
           pageIndex = undefined;
@@ -192,6 +205,8 @@ test(
         const result = await query(sql, values);
         if (pageIndex === pages - 1)
           finalTimes.push(performance.now() - started);
+        if (sql === "BEGIN" && scanStartup)
+          startupReads = await readRows(listingTables);
         if (sql === "BEGIN" && pageIndex !== undefined)
           startReads = await readRows();
         return result;

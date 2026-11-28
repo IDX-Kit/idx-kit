@@ -348,10 +348,6 @@ test(
             "UPDATE idx.source_mappings SET source_revision=$2 WHERE listing_id=$1",
             [input.listingId, original.revision],
           );
-          await db.query(
-            "UPDATE idx.feeds SET applied_disclosures=NULL WHERE id=$1",
-            [original.feed_id],
-          );
           await seed(db, fixtures);
         }
         for (const listingId of ["lst_missing_synthetic", "lst_demo_0006"])
