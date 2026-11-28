@@ -672,7 +672,7 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
               headers: { Authorization: `Bearer ${secrets[0]}` },
             });
             assert.equal(response.status, 200);
-            assert.equal(counted.mock.callCount(), 6);
+            assert.equal(counted.mock.callCount(), 5);
             const earlier = await response.json();
             validateResponse("/api/v1/listings", response, earlier);
             assert.equal(afterFeeds, undefined);

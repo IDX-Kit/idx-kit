@@ -59,6 +59,10 @@ export function listingDetail(row: ListingRow): ListingResponse {
   return {
     data: listingData(row),
     meta: {},
-    display: listingDisplay(row, [...row.feed_blocks, ...row.page_blocks], null),
+    display: listingDisplay(
+      row,
+      [...row.feed_blocks, ...row.page_blocks],
+      null,
+    ),
   };
 }

@@ -46,9 +46,10 @@ export function listingSearch(
       page: {
         limit: context.limit,
         hasMore,
-        nextCursor: hasMore && last
-          ? searchCursor(context, { price: last.price, id: last.id })
-          : null,
+        nextCursor:
+          hasMore && last
+            ? searchCursor(context, { price: last.price, id: last.id })
+            : null,
       },
     },
     display: {

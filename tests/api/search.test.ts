@@ -523,41 +523,56 @@ test(
         }
       },
     );
-    await t.test("repeated notices across feeds retain their first position", async () => {
-      const { body: original } = await request("limit=50");
-      const shared = original.display.blocks[0];
-      const distinct = { ...shared, text: "Second synthetic feed notice." };
-      const pageNotice = { ...shared, text: "Synthetic listing page notice." };
-      await db.query(
-        "UPDATE idx.feeds SET expires_at = '2099-11-01T12:00:00Z', display_blocks = $1 WHERE id = 'feed_demo_expired'",
-        [JSON.stringify([distinct, shared])],
-      );
-      await db.query(
-        "UPDATE idx.listings SET page_blocks = $1 WHERE id = 'lst_demo_0023'",
-        [JSON.stringify([shared, pageNotice, distinct, pageNotice])],
-      );
-      await db.query(
-        "INSERT INTO idx.data_licenses VALUES ('site_demo_primary', 'feed_demo_expired')",
-      );
-      try {
-        const { body } = await request("limit=50");
-        assert.ok(ids(body).includes("lst_demo_0023"));
-        const expected = [
-          distinct,
-          shared,
-          ...original.display.blocks.slice(1),
-          pageNotice,
-        ];
-        assert.equal(
-          JSON.stringify(body.display.blocks),
-          JSON.stringify(expected),
-        );
-      } finally {
+    await t.test(
+      "repeated notices across feeds retain their first position",
+      async () => {
+        const { body: original } = await request("limit=50");
+        const shared = original.display.blocks[0];
+        const distinct = { ...shared, text: "Second synthetic feed notice." };
+        const pageNotice = {
+          ...shared,
+          text: "Synthetic listing page notice.",
+        };
         await db.query(
-          "DELETE FROM idx.data_licenses WHERE site_id = 'site_demo_primary' AND feed_id = 'feed_demo_expired'",
+          "UPDATE idx.feeds SET expires_at = '2099-11-01T12:00:00Z', display_blocks = $1 WHERE id = 'feed_demo_expired'",
+          [JSON.stringify([distinct])],
         );
-      }
-    });
+        await db.query(
+          "UPDATE idx.listings SET page_blocks = $1 WHERE id = 'lst_demo_0023'",
+          [JSON.stringify([pageNotice])],
+        );
+        await db.query(
+          "INSERT INTO idx.data_licenses VALUES ('site_demo_primary', 'feed_demo_expired')",
+        );
+        try {
+          const { body, text } = await request("limit=50");
+          assert.ok(ids(body).includes("lst_demo_0023"));
+          const expected = [
+            distinct,
+            shared,
+            ...original.display.blocks.slice(1),
+            pageNotice,
+          ];
+          assert.equal(
+            JSON.stringify(body.display.blocks),
+            JSON.stringify(expected),
+          );
+          await db.query(
+            "UPDATE idx.feeds SET display_blocks = $1 WHERE id = 'feed_demo_expired'",
+            [JSON.stringify([distinct, shared])],
+          );
+          await db.query(
+            "UPDATE idx.listings SET page_blocks = $1 WHERE id = 'lst_demo_0023'",
+            [JSON.stringify([shared, pageNotice, distinct, pageNotice])],
+          );
+          assert.equal((await request("limit=50")).text, text);
+        } finally {
+          await db.query(
+            "DELETE FROM idx.data_licenses WHERE site_id = 'site_demo_primary' AND feed_id = 'feed_demo_expired'",
+          );
+        }
+      },
+    );
     await t.test(
       "price changes shift live results and withdrawals disappear between requests",
       async () => {
@@ -760,7 +775,8 @@ test(
                     diagnostic,
                   );
                   const visited =
-                    index["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0);
+                    index["Actual Rows"] +
+                    (node["Rows Removed by Filter"] ?? 0);
                   assert.ok(visited <= 128, diagnostic);
                   const condition = index["Index Cond"] ?? "";
                   assert.match(condition, /price|id/, diagnostic);

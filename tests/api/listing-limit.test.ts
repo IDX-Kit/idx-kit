@@ -365,10 +365,13 @@ test("detail admission uses two SQL statements and refusal uses one", async (t) 
   });
 
   await t.test(
-    "search takes five SQL statements regardless of price ranges",
+    "search reads a page in five SQL statements across price ranges",
     async () => {
       await setListingRequestLimit(db, key.id, 20);
-      const { context } = searchQuery(searchSchema.parse({ limit: "50" }), site);
+      const { context } = searchQuery(
+        searchSchema.parse({ limit: "50" }),
+        site,
+      );
       const after = searchCursor(context, {
         price: "425000",
         id: "lst_demo_0002",
@@ -390,6 +393,8 @@ test("detail admission uses two SQL statements and refusal uses one", async (t) 
           unpriced,
         );
         assert.equal(counter.mock.callCount(), 5, query);
+        const [statement] = counter.mock.calls[3].arguments;
+        assert.equal(String(statement).includes("l.price IS NULL"), unpriced);
       }
     },
   );
