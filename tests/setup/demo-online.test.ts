@@ -51,6 +51,21 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
     const missing = { ...env, [name]: "" };
     assert.ok(command("demo:prepare", [], missing, false).includes(name));
   }
+  await t.test("non-ASCII passwords are rejected before connecting", () => {
+    const unavailable = new URL(owner);
+    unavailable.pathname = "/idx_missing";
+    const invalidPassword = `${password}\u00a0`;
+    registerSecret(invalidPassword);
+    const variables = {
+      ...env,
+      MIGRATION_DATABASE_URL: unavailable.href,
+      RUNTIME_DATABASE_PASSWORD: invalidPassword,
+    };
+    const log = command("demo:prepare", [], variables, false);
+    assert.ok(log.includes('"operation":"configuration"'));
+    assert.ok(/RUNTIME_DATABASE_PASSWORD.*printable ASCII/.test(log));
+    assert.ok(!log.includes(invalidPassword), "The password must stay private");
+  });
   const db = new pg.Client({ connectionString: owner });
   await db.connect();
   t.after(() => db.end());
