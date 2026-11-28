@@ -1,4 +1,6 @@
 import type pg from "pg";
+import { feedCheckpoint, feedPositionColumns } from "./feed-sync-positions.ts";
+import type { FeedPositionRow } from "./feed-sync-positions.ts";
 
 export type FeedNextStep =
   { kind: "retry"; afterSeconds?: number } | { kind: "stop" };
@@ -32,7 +34,7 @@ export async function readFeedState(
           (o.last_report->>'finishedAt')::timestamptz >= (s.last_report->>'finishedAt')::timestamptz
         THEN o.last_report ELSE s.last_report END`
     : "";
-  const { rows } = await client.query<{
+  const { rows } = await client.query<FeedPositionRow & {
     status: {
       lastOutcome: { code: string; nextStep: "retry" | "stop" | null } | null;
       lastRun?: { kind: "incremental" | "scan"; counts: RecordCounts } | null;
@@ -52,7 +54,7 @@ export async function readFeedState(
     ) AS status,
     CASE WHEN o.next_step = 'retry' AND o.retry_after_seconds IS NOT NULL THEN
       GREATEST(0, CEIL(o.retry_after_seconds + EXTRACT(EPOCH FROM (o.saved_at - statement_timestamp()))))::integer
-    END AS "waitingSeconds"
+    END AS "waitingSeconds", ${feedPositionColumns}
     FROM idx.feeds f
     LEFT JOIN idx.feed_sync_positions p ON p.feed_id = f.id
     LEFT JOIN idx.feed_scan_positions s ON s.feed_id = f.id
@@ -60,7 +62,13 @@ export async function readFeedState(
     WHERE f.id = $1`,
     [feedId],
   );
-  return rows[0];
+  const row = rows[0];
+  if (!row) return;
+  return {
+    status: row.status,
+    waitingSeconds: row.waitingSeconds,
+    checkpoint: feedCheckpoint(row),
+  };
 }
 
 export async function saveFeedOutcome(

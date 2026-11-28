@@ -114,7 +114,7 @@ async function run() {
     };
     const result =
       args.command === "incremental"
-        ? await syncIncrementally(client, options)
+        ? await syncIncrementally(client, options, undefined, state.checkpoint)
         : await syncFullScan(
             client,
             args.maxRemovals === undefined

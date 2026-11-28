@@ -16,21 +16,29 @@ export interface FeedCheckpoint {
 
 export class FeedPositionChanged extends Error {}
 
+export type FeedPositionRow = FeedPosition & { version: string | null };
+
+export const feedPositionColumns = `p.version::text, p.next_link AS "nextLink",
+  p.record_state AS "recordState", p.record_counts AS counts,
+  to_char(p.completed_mark AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "completedMark",
+  to_char(p.pending_mark AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "pendingMark"`;
+
 export async function readFeedCheckpoint(
   client: pg.Client,
   feedId: string,
 ): Promise<FeedCheckpoint> {
-  const { rows } = await client.query<FeedPosition & { version: string }>(
-    `SELECT version::text, next_link AS "nextLink", record_state AS "recordState", record_counts AS counts,
-      to_char(completed_mark AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "completedMark",
-      to_char(pending_mark AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "pendingMark"
-    FROM idx.feed_sync_positions WHERE feed_id = $1`,
+  const { rows } = await client.query<FeedPositionRow>(
+    `SELECT ${feedPositionColumns}
+    FROM idx.feed_sync_positions p WHERE p.feed_id = $1`,
     [feedId],
   );
-  const row = rows[0];
+  return feedCheckpoint(rows[0]);
+}
+
+export function feedCheckpoint(row?: FeedPositionRow): FeedCheckpoint {
   const legacy = row?.nextLink && !row.counts;
   return {
-    version: row ? BigInt(row.version) : 0n,
+    version: row?.version ? BigInt(row.version) : 0n,
     position: {
       completedMark: row?.completedMark ?? null,
       nextLink: legacy ? null : (row?.nextLink ?? null),

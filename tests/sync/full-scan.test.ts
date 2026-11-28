@@ -121,7 +121,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       oldestIngest: () => readOldestIngest(db, feedId),
       clearOldestIngest: () =>
         db.query(
-          "UPDATE idx.feeds SET oldest_listing_ingested_at = NULL WHERE id = $1",
+          `UPDATE idx.feeds SET
+            pending_listing_ingested_at = oldest_listing_ingested_at,
+            oldest_listing_ingested_at = NULL WHERE id = $1`,
           [feedId],
         ),
       async incrementalState() {
@@ -217,7 +219,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         recordsSeen: 2,
         listingsRemoved: 1,
       });
-      assert.deepEqual([...offsets, statements()], [6, 13, 22]);
+      assert.deepEqual([...offsets, statements()], [6, 13, 21]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },

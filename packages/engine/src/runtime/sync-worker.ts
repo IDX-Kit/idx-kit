@@ -9,7 +9,6 @@ import {
   readFeedState,
   saveFeedOutcome,
 } from "../db/feed-sync-outcomes.ts";
-import { readFeedCheckpoint } from "../db/feed-sync-positions.ts";
 import { reportSyncStep, syncIncrementally } from "../sync/incremental.ts";
 import {
   feedTokenSchema,
@@ -87,11 +86,10 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
           withWriter(this.env, async (client) => {
             const state = await readFeedState(client, feed.feedId);
             if (!state) return;
-            const { version } = await readFeedCheckpoint(client, feed.feedId);
             await saveFeedOutcome(
               client,
               feed.feedId,
-              version,
+              state.checkpoint.version,
               { code: "resumed" },
               { kind: "retry" },
             );
@@ -126,7 +124,12 @@ export class ListingSync extends WorkflowEntrypoint<SyncEnv, SyncParams> {
             undefined,
             feed.pageSize,
           );
-          return syncIncrementally(client, { ...feed, connector }, 1);
+          return syncIncrementally(
+            client,
+            { ...feed, connector },
+            1,
+            state.checkpoint,
+          );
         });
         const output = reportSyncStep(result);
         if ("outcomeSaved" in result && result.outcomeSaved === false)

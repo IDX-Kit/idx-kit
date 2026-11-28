@@ -5,6 +5,7 @@ import { test } from "node:test";
 import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
 import { ResoConnector } from "@idx-kit/engine/src/connectors/reso.ts";
+import { readFeedState } from "@idx-kit/engine/src/db/feed-sync-outcomes.ts";
 import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { syncFullScan } from "@idx-kit/engine/src/sync/full-scan.ts";
@@ -43,13 +44,14 @@ function assertStatements(
   completion: number,
   finalPageExtra: number,
   firstPageExtra = 0,
+  statementsPerPage = 7,
 ) {
   assert.equal(offsets.length, pageCount + Number(finalPageExtra === 0));
   assert.equal(offsets[0], setup, "statements before the first fetch");
   const bounds = [...offsets, total - completion];
   for (let index = 0; index < pageCount; index++) {
     const expected =
-      7 +
+      statementsPerPage +
       (index === 0 ? firstPageExtra : 0) +
       (index === pageCount - 1 ? finalPageExtra : 0);
     assert.equal(
@@ -58,17 +60,19 @@ function assertStatements(
       `SQL statements on page ${index + 1} of this invocation`,
     );
   }
-  const pageStatements = pageCount * 7 + finalPageExtra + firstPageExtra;
+  const pageStatements =
+    pageCount * statementsPerPage + finalPageExtra + firstPageExtra;
   assert.equal(total, setup + pageStatements + completion);
 }
 
-function checkPageReads(reads: number[]) {
+function checkPageReads(reads: number[], scanning = false) {
   assert.equal(reads.length, pages, "one row count per page");
   const final = reads.pop()!;
   const min = Math.min(...reads);
   const max = Math.max(...reads);
   const summary = `${min}–${max} rows read per intermediate page, ${final} on the final page`;
-  assert.ok(min > 0 && max <= 32 * pageSize && final >= volume, summary);
+  assert.ok(min > 0 && max <= 32 * pageSize, summary);
+  assert.ok(scanning ? final >= volume : final <= 32 * pageSize, summary);
   return summary;
 }
 
@@ -307,8 +311,7 @@ test(
     });
     const loadBytes = await databaseSize();
     assert.equal(feed.calls[midpoint + 1].query, cursor(midpoint));
-    // The final incremental page renews the feed window after recomputing.
-    const loadRecomputeMs = finalTimes.splice(0).at(-3)!;
+    const loadFreshnessMs = finalTimes.splice(0).at(-3)!;
     const loadReads = checkPageReads(pageReads.splice(0));
     assertStatements(offsets.splice(0), statements, pages - midpoint, 1, 0, 3);
     const loadStatements = firstStatements + statements;
@@ -339,7 +342,14 @@ test(
 
     idle = true;
     statements = 0;
-    const idleRun = await syncIncrementally(writer, options);
+    const idleState = await readFeedState(writer, feedId);
+    assert.ok(idleState);
+    const idleRun = await syncIncrementally(
+      writer,
+      options,
+      1,
+      idleState.checkpoint,
+    );
     assert.deepEqual(idleRun, {
       code: "complete",
       counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
@@ -347,7 +357,8 @@ test(
     t.diagnostic(
       `Empty poll after first load: ${statements} SQL statements, ${pageReads.pop()} rows read, including ${idleListingReads} listing and source-mapping rows.`,
     );
-    assert.equal(statements, 11);
+    assert.equal(statements, 8);
+    assert.equal(idleListingReads, 0);
     assert.deepEqual(offsets.splice(0), [1]);
     idle = false;
 
@@ -362,9 +373,9 @@ test(
     const scanMs = performance.now() - started;
     const scanBytes = await databaseSize();
     const scanRecomputeMs = finalTimes.at(-1)!;
-    const scanReads = checkPageReads(pageReads);
+    const scanReads = checkPageReads(pageReads, true);
     t.diagnostic(
-      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadRecomputeMs.toFixed(2)} ms to recompute freshness, ${loadReads}. ` +
+      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadFreshnessMs.toFixed(2)} ms to finalize listing freshness, ${loadReads}. ` +
         `Full scan: ${(scanMs / 1000).toFixed(2)}s, ${scan.pagesRead} pages, ${statements} SQL statements, ${scanBytes} database bytes, ${scanRecomputeMs.toFixed(2)} ms to recompute freshness, ${scanReads}.`,
     );
     assert.ok(loadMs + scanMs <= 900_000, "first load and scan exceeded 900s");
@@ -376,7 +387,7 @@ test(
       listingsRemoved: changed,
       counts: { accepted: volume - changed, rejected: 0, rejectedByCode: {} },
     });
-    assertStatements(offsets, statements, pages, 6, 0, 2);
+    assertStatements(offsets, statements, pages, 6, 0, 3, 0, 6);
     const repaired = await listings();
     assert.equal(repaired.length, volume);
     for (const [index, row] of repaired.entries()) {

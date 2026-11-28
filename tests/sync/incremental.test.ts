@@ -193,6 +193,56 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
     recordState: "empty",
   });
 
+  await t.test("an empty first poll applies notices and a later edit only changes that listing", async (t) => {
+    const state = await setup(t, "idle_notices");
+    const edit = { ...first, ListPrice: "225.00", ModificationTimestamp: thirdMark };
+    const feed = await standIn(t, (_url, number) => {
+      if (number <= 2) return page([]);
+      if (number === 3) return page([first, second]);
+      return page([edit]);
+    });
+    const options = { feedId: state.feedId, synthetic: true, connector: feed.connector };
+    const statements = countWriterStatements(t, writer);
+    const emptyRun = { code: "complete", counts: { accepted: 0, rejected: 0, rejectedByCode: {} } };
+    assert.deepEqual(await syncIncrementally(writer, { ...options, disclosures }), emptyRun);
+    assert.equal(statements(), 9);
+    const alternate = {
+      ...disclosures,
+      approvedFeedBlocks: [{ ...disclosures.approvedFeedBlocks[0], text: "Unused synthetic notice" }],
+    };
+    assert.deepEqual(await syncIncrementally(writer, { ...options, disclosures: alternate }), emptyRun);
+    assert.equal(statements(), 17);
+    assert.deepEqual(await state.checkpoint(), { version: 2n, position: complete(null) });
+    await assertFresh(state);
+    assert.deepEqual((await state.status())?.lastRun?.counts, emptyRun.counts);
+    const { rows } = await db.query("SELECT applied_disclosures FROM idx.feeds WHERE id = $1", [state.feedId]);
+    assert.deepEqual(rows[0].applied_disclosures, { approvedPageBlocks: [], ...disclosures });
+
+    async function facts() {
+      const { rows } = await db.query(
+        `SELECT m.source_key AS key, to_jsonb(l) - 'ingested_at' - 'source_updated_at' AS facts
+        FROM idx.source_mappings m JOIN idx.listings l ON l.id = m.listing_id
+        WHERE m.feed_id = $1 ORDER BY m.source_key`,
+        [state.feedId],
+      );
+      return rows;
+    }
+    assertRun(await state.run(feed), { code: "complete" });
+    const [before, untouched] = await facts();
+    assert.deepEqual(await state.run(feed), {
+      code: "complete",
+      counts: { accepted: 1, rejected: 0, rejectedByCode: {} },
+    });
+    assert.deepEqual(await facts(), [
+      { ...before, facts: { ...before.facts, price: 225 } },
+      untouched,
+    ]);
+    assert.deepEqual(await state.facts(), [
+      { key: first.ListingKey, price: "225.00", revision: thirdMark },
+      { key: second.ListingKey, price: "200.00", revision: secondMark },
+    ]);
+  });
+
   await t.test(
     "retrying after a final commit polls from the saved mark",
     async (t) => {
