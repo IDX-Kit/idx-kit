@@ -88,9 +88,10 @@ CORS headers.
 | `inquiries:read` | Read receipts for the key's Site. |
 
 The engine resolves the Site from the key. Its data licenses govern which
-listings it may read. Create, rotate, and revoke keys through the
-[operator commands](feed-sync.md#rotate-or-revoke-a-site-key). Rotation replaces a
-key for the same Site and revokes the original.
+listings it may read. The installer guide shows how to
+[create a site key](feed-sync.md#authorize-a-site) and how to
+[rotate or revoke it](feed-sync.md#rotate-or-revoke-a-site-key). Rotation replaces
+a key for the same Site and revokes the original.
 
 ### Listing request limit
 

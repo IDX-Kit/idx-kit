@@ -7,6 +7,7 @@
   Sync stalls when it expires. See [how to replace it](#replace-the-feed-token).
 - Have a direct PostgreSQL connection for an owner that can create roles, the
   freshness window approved in your MLS agreement, and the approved display notices.
+  CI tests PostgreSQL 18.
 - Install the repository's pinned Node version and run `npm ci` from the repository
   root. On Node, use a [service and timer](#run-on-your-own-server) for the
   loopback API and single-attempt sync. For scheduled sync on Cloudflare, use
@@ -118,11 +119,18 @@ block shape in `disclosures.approvedPageBlocks`. If the file still uses
 `requiredListingBlockIds` or `requiredPageBlockIds`, keep only the selected
 blocks in the approved arrays and remove both ID lists.
 
-Create a PostgreSQL database owned by a login that can create roles. Set
-`DATABASE_URL` to that owner's direct connection string and `IDX_SYNC_FEED_FILE`
-to the YAML file above. Set `IDX_SYNC_FRESHNESS_SECONDS` to the positive whole
-number of seconds approved for the feed in your MLS agreement.
-Then run:
+Create a PostgreSQL database owned by a login that can create roles. In that
+database, run this as the `public` schema owner to keep restricted logins from
+creating objects in that schema.
+
+```sql
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+```
+
+Set `DATABASE_URL` to the database owner's direct connection string and
+`IDX_SYNC_FEED_FILE` to the YAML file above. Set `IDX_SYNC_FRESHNESS_SECONDS`
+to the positive whole number of seconds approved for the feed in your MLS
+agreement. Run setup with those values in the environment.
 
 ```sh
 npm run setup
@@ -293,7 +301,9 @@ new scan.
 
 ## Run on your own server
 
-`npm run demo:engine` runs the API in the foreground at `127.0.0.1:8787`.
+Export `RUNTIME_DATABASE_URL` in your shell using the `idx_runtime` connection
+string. Run `npm run demo:engine` to start the API in the foreground at
+`127.0.0.1:8787`.
 A website hosted elsewhere cannot reach that loopback address directly. Give
 its server a private route through a reverse proxy on the engine host, and
 keep the site key on the website server.
@@ -414,7 +424,7 @@ Secrets** settings. Leave them unset to keep the features off.
 | Feature | Engine settings |
 | --- | --- |
 | Inquiry email | Set all three values together. `RESEND_API_KEY` needs permission to send email, `INQUIRY_EMAIL_FROM` must be on a verified domain, and `INQUIRY_EMAIL_TO` is one inbox for all sites served by this engine. |
-| Inquiry spam check | Set `TURNSTILE_SECRET_KEY`. The website includes the visitor's challenge token in the `Turnstile-Token` header. |
+| Inquiry spam check | Set `TURNSTILE_SECRET_KEY`. |
 
 The engine saves the inquiry and returns its receipt while email runs in the
 background. A failed email leaves the inquiry saved. The engine sends email
@@ -422,6 +432,11 @@ only for a new inquiry. Find failures in the `inquiry.email` logs using the
 inquiry ID or Request-Id. Node requires all three email settings at startup
 if any are present. On Workers, a partial configuration logs an error for
 each newly saved inquiry.
+
+Before enabling the spam check, render the Turnstile widget on your inquiry
+form with its public site key. When the form is submitted, have your website
+server forward the widget's token to the engine in the `Turnstile-Token` header.
+[Turnstile widget setup](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/)
 
 If the API returns `422 spam_check_failed`, refresh the widget so the visitor
 can resubmit with a fresh token. Find failures in the `inquiry.spam_check` logs

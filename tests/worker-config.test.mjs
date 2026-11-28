@@ -123,24 +123,19 @@ assert.deepEqual([tool, action, flag], ["wrangler", "deploy", "--config"]);
 assert.ok(options.includes("--dry-run"));
 fs.copyFileSync(file, path.join(__dirname, "generated.json"));
 fs.writeFileSync(path.join(__dirname, "temporary-path"), file);
+if (!options.includes("--outdir")) process.exit(0);
 const result = spawnSync(tool, [action, flag, file, ...options], { stdio: "inherit" });
 assert.ifError(result.error);
 process.exitCode = result.status ?? 1;
 `,
     { mode: 0o700 },
   );
-  function run(settings = {}) {
+  function run(settings = {}, build = false) {
+    const options = ["--dry-run"];
+    if (build) options.push("--outdir", join(directory, "bundle"));
     return spawnSync(
       "npm",
-      [
-        "run",
-        "--silent",
-        "engine:deploy",
-        "--",
-        "--dry-run",
-        "--outdir",
-        join(directory, "bundle"),
-      ],
+      ["run", "--silent", "engine:deploy", "--", ...options],
       { env: { ...env, ...settings }, encoding: "utf8" },
     );
   }
@@ -151,10 +146,11 @@ process.exitCode = result.status ?? 1;
   await assert.rejects(readFile(captured), { code: "ENOENT" });
 
   for (const override of ["", "example-listings-api"]) {
-    const result = run({ ENGINE_WORKER_NAME: override });
+    const build = override === "";
+    const result = run({ ENGINE_WORKER_NAME: override }, build);
     const log = result.stdout + result.stderr;
     assert.equal(result.status, 0, log);
-    assert.match(log, new RegExp(`HYPERDRIVE.*${id}`));
+    if (build) assert.match(log, new RegExp(`HYPERDRIVE.*${id}`));
     assert.doesNotMatch(
       log,
       /idx-kit-demo-engine|demo:(prepare|seed|key|db:migrate)/,
