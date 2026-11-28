@@ -165,6 +165,7 @@ test(
     let pageIndex: number | undefined;
     let startReads = 0;
     let startupReads = 0;
+    let idleListingReads = 0;
     const listingTables = ["listings", "source_mappings"];
     const query = writer.query.bind(writer);
     async function readRows(tables: string[] | null = null) {
@@ -201,12 +202,17 @@ test(
           pageReads.push((await readRows()) - startReads);
           pageIndex = undefined;
         }
+        if (sql === "COMMIT" && idle) {
+          idleListingReads = (await readRows(listingTables)) - idleListingReads;
+        }
         const started = performance.now();
         const result = await query(sql, values);
         if (pageIndex === pages - 1)
           finalTimes.push(performance.now() - started);
         if (sql === "BEGIN" && scanStartup)
           startupReads = await readRows(listingTables);
+        if (sql === "BEGIN" && idle)
+          idleListingReads = await readRows(listingTables);
         if (sql === "BEGIN" && pageIndex !== undefined)
           startReads = await readRows();
         return result;
@@ -234,8 +240,8 @@ test(
         await released;
         return { status: 503 };
       }
-      if (idle) return page([]);
       pageIndex = index;
+      if (idle) return page([]);
       const start = index * pageSize + (scanning ? changed : 0);
       const size = Math.min(pageSize, volume - start);
       const records = Array.from({ length: size }, (_, offset) => {
@@ -338,7 +344,9 @@ test(
       code: "complete",
       counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
     });
-    t.diagnostic(`Empty poll after first load: ${statements} SQL statements.`);
+    t.diagnostic(
+      `Empty poll after first load: ${statements} SQL statements, ${pageReads.pop()} rows read, including ${idleListingReads} listing and source-mapping rows.`,
+    );
     assert.equal(statements, 11);
     assert.deepEqual(offsets.splice(0), [1]);
     idle = false;
