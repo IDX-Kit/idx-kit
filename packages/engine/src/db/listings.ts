@@ -107,8 +107,11 @@ export async function applyScanDisclosures(
   feedId: string,
   disclosures: ListingPageDisclosures,
 ) {
-  const { approvedFeedBlocks, approvedListingBlocks, approvedPageBlocks = [] } =
-    listingDisclosures.parse(disclosures);
+  const {
+    approvedFeedBlocks,
+    approvedListingBlocks,
+    approvedPageBlocks = [],
+  } = listingDisclosures.parse(disclosures);
   await client.query(
     `WITH feed_notice AS (
       UPDATE idx.feeds SET display_blocks = $2::jsonb WHERE id = $1

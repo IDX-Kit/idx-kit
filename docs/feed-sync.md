@@ -107,8 +107,9 @@ from its last completed mark and restarts an unfinished scan.
 
 `npm run --silent sync -- scan` repairs missed edits across the feed. At the
 start of the scan, all approved disclosures change together for the feed and
-every stored listing, even if the scan is interrupted. Coordinate the change
-with any scheduled Worker so subsequent polls use the same disclosures.
+every stored listing, even if the scan is interrupted. For a scheduled Worker,
+pause polling and let active runs finish before the scan. Resume polling with
+the same disclosures.
 A scan can apply explicit withdrawals and preserves listings that are merely
 absent unless removal by absence is enabled. Incremental sync renews the feed
 freshness window.
