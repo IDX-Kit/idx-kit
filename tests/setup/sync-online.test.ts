@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import pg from "pg";
 import { parse } from "yaml";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import { migrate } from "@idx-kit/engine/src/db/migrate.ts";
 import { parseFeedSettings } from "@idx-kit/engine/src/runtime/sync-feed-settings.ts";
 import { prepareDatabase } from "@idx-kit/engine/src/runtime/sync-prepare.ts";
 import { feedToken, page, standIn } from "../sync/feed.ts";
@@ -93,17 +94,26 @@ test("shared setup and hosted builds preserve feed state and logins", async (t) 
   assert.equal(original[0].id, settings.feedId);
   assert.equal(original[0].freshness_seconds, 2700);
   assert.equal(original[0].rules_version, "1");
-  assert.ok(original[0].expires_at.getTime() < Date.now());
+  assert.equal(original[0].expires_at.toISOString(), "1900-01-01T00:00:00.000Z");
   assert.deepEqual(
     original[0].display_blocks,
     settings.disclosures.approvedFeedBlocks,
   );
 
-  // Upgrade the role created by earlier hosted preparation.
-  await db.query("ALTER ROLE idx_runtime NOLOGIN");
+  await db.query(`
+    ALTER ROLE idx_runtime NOLOGIN;
+    ALTER ROLE idx_listing_writer NOLOGIN;
+  `);
   prepare();
-  assert.ok((await roles()).rows[1].rolcanlogin);
+  assert.deepEqual(
+    (await roles()).rows.map(({ rolcanlogin }) => rolcanlogin),
+    [false, false],
+  );
   assert.deepEqual((await feeds()).rows, original);
+  await db.query(`
+    ALTER ROLE idx_runtime LOGIN;
+    ALTER ROLE idx_listing_writer LOGIN;
+  `);
 
   const urls = new Map<string, string>();
   for (const name of ["idx_runtime", "idx_listing_writer"]) {
@@ -149,17 +159,35 @@ test("shared setup and hosted builds preserve feed state and logins", async (t) 
     `);
     return rows;
   };
-  const first = await snapshot();
-  assert.equal(first.length, 1);
-  assert.equal(first[0].listings.length, 1);
+  const loaded = await snapshot();
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0].listings.length, 1);
   assert.equal(
-    Date.parse(first[0].position.completed_mark),
+    Date.parse(loaded[0].position.completed_mark),
     Date.parse(revision),
   );
-  assert.ok(first[0].feed.applied_disclosures);
+  assert.ok(loaded[0].feed.applied_disclosures);
   const active = (await feeds()).rows[0];
   assert.ok(active.expires_at.getTime() > Date.now());
   assert.equal(active.expires_at - active.refreshed_at, 2_700_000);
+
+  // Recreate the pre-017 feed state with a window that includes microseconds.
+  await db.query(`
+    ALTER TABLE idx.feeds DROP COLUMN freshness_seconds;
+    DELETE FROM public.schema_migrations WHERE name = '017_feed_freshness_window.sql';
+    UPDATE idx.feeds SET expires_at = refreshed_at + interval '2700.125001 seconds';
+  `);
+  await migrate(db);
+  assert.equal((await feeds()).rows[0].freshness_seconds, null);
+  await sync();
+  const legacy = await db.query(`
+    SELECT refreshed_at, expires_at - refreshed_at = interval '2700.125001 seconds' AS exact
+    FROM idx.feeds
+  `);
+  assert.ok(legacy.rows[0].refreshed_at > active.refreshed_at);
+  assert.equal(legacy.rows[0].exact, true);
+
+  const first = await snapshot();
   settings.disclosures.approvedFeedBlocks[0].text = "Invented unapplied notice";
   await db.query("REVOKE SELECT ON idx.listings FROM idx_listing_writer");
   prepare({

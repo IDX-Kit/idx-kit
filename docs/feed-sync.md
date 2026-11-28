@@ -21,6 +21,9 @@ incremental sync. On an existing feed, changing the window takes effect on
 the next successful renewal. Setup preserves the current expiration, saved
 sync position, applied notices, and listings.
 
+Setup creates logins without passwords, so they need a password to connect
+when PostgreSQL requires password authentication, and `trust` authentication
+allows any login role to connect without one.
 For new logins, connect as the owner in `psql` and set the passwords
 interactively. The client hashes the passwords before sending them to PostgreSQL.
 
@@ -45,6 +48,7 @@ With `DATABASE_URL` still set to the owner's connection, name the site and feed
 it can display. Add `--new-site` when deliberately creating a site, and keep
 using the site's existing key if it already has one. For a new key, choose the
 scopes it needs and a protected path where the file does not already exist.
+To serve listings, follow the [instructions for starting the API on Node](../README.md#engine-and-secret-keys).
 
 ```sh
 npm run demo:key -- authorize site_example feed_example --new-site
@@ -226,9 +230,10 @@ Set the build command to `npm run sync:prepare` and the deploy command to
 | `IDX_SYNC_CPU_MS` | Optional build variable | Whole number from 10 to 300000. Use a limit supported by your plan. |
 | `IDX_SYNC_FEED_TOKEN` | Worker runtime secret | Feed bearer token. Add it as a **Secret** under the Worker's Variables and Secrets settings, outside the build. |
 
-Cloudflare validates the cron expression at deploy time. The build uses the
-same database setup as `npm run setup`. Run setup locally first, then set the
-new login passwords with `psql` as described above. Create the writer's
+Cloudflare validates the cron expression at deploy time. Workers Builds uses the
+same database setup as `npm run setup` and reapplies its configured window on
+every build. Run setup locally first, then set the new login passwords with
+`psql` as described above. Create the writer's
 Hyperdrive configuration with its direct connection settings and query caching
 off. Set `SYNC_HYPERDRIVE_ID` and the Worker runtime secret before deploying.
 Authorize each site separately.

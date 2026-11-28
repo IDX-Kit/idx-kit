@@ -105,6 +105,12 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
   const keyVersion = async () =>
     (await db.query("SELECT xmin::text FROM idx.site_secret_keys")).rows;
   const version = await keyVersion();
+  // Rebuild from the previous database version with the fixture feeds in place.
+  await db.query(`
+    ALTER TABLE idx.feeds DROP COLUMN freshness_seconds;
+    DELETE FROM public.schema_migrations WHERE name = '017_feed_freshness_window.sql';
+    UPDATE idx.feeds SET display_blocks = '[]' WHERE id = 'feed_demo_primary';
+  `);
   command("demo:prepare");
   command("demo:key", ["--", "sync-demo"]);
   assert.ok(

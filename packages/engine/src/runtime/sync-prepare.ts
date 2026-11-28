@@ -15,7 +15,7 @@ async function prepareRole(
   name: "idx_runtime" | "idx_listing_writer",
 ) {
   const { rows } = await db.query(
-    `SELECT rolcanlogin, rolinherit,
+    `SELECT rolinherit,
        rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication
          OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid) AS unsafe
      FROM pg_roles WHERE rolname=$1`,
@@ -26,12 +26,10 @@ async function prepareRole(
     await db.query(
       `CREATE ROLE ${name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION`,
     );
-  } else {
-    if (role.unsafe || (name === "idx_listing_writer" && role.rolinherit))
-      throw new PrepareError(
-        `${name} must be a restricted login with no role memberships.`,
-      );
-    if (!role.rolcanlogin) await db.query(`ALTER ROLE ${name} LOGIN`);
+  } else if (role.unsafe || (name === "idx_listing_writer" && role.rolinherit)) {
+    throw new PrepareError(
+      `${name} must be a restricted login with no role memberships.`,
+    );
   }
 }
 
@@ -55,8 +53,8 @@ export async function prepareDatabase(
     await db.query(
       `INSERT INTO idx.feeds
          (id, refreshed_at, expires_at, display_blocks, rules_version, freshness_seconds)
-       VALUES ($1, statement_timestamp() - interval '1 second' - $3::integer * interval '1 second',
-         statement_timestamp() - interval '1 second', $2, '1', $3)
+       VALUES ($1, timestamptz '1900-01-01 00:00:00+00' - $3::integer * interval '1 second',
+         timestamptz '1900-01-01 00:00:00+00', $2, '1', $3)
        ON CONFLICT (id) DO UPDATE SET freshness_seconds = EXCLUDED.freshness_seconds
        WHERE idx.feeds.freshness_seconds IS DISTINCT FROM EXCLUDED.freshness_seconds`,
       [
