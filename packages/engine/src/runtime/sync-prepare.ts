@@ -26,7 +26,10 @@ async function prepareRole(
     await db.query(
       `CREATE ROLE ${name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION`,
     );
-  } else if (role.unsafe || (name === "idx_listing_writer" && role.rolinherit)) {
+  } else if (
+    role.unsafe ||
+    (name === "idx_listing_writer" && role.rolinherit)
+  ) {
     throw new PrepareError(
       `${name} must be a restricted login with no role memberships.`,
     );
