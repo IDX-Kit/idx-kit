@@ -14,32 +14,68 @@
 
 ## Check the feed format
 
-Use HTTPS. Synthetic feeds can also use HTTP on loopback. The connector expects
-JSON with a `value` array and an optional `@odata.nextLink`. Omit the link or
-set it to `null` on the last page. A relative or absolute link must point to a
-different page on the Property URL's origin, at or below its path. The connector
-refuses redirects. After a poll saves a mark, the next poll requests
-`$filter=ModificationTimestamp ge <mark>`. Translate feeds with a different shape.
+Use HTTPS. HTTP on loopback is for local synthetic feeds only. A deployed sync
+Worker needs an HTTPS endpoint reachable from the public internet.
 
-| Field | What to send |
+Compare your feed with this synthetic Property response. Translate feeds with a
+different shape before using them.
+
+```json
+{
+  "value": [
+    {
+      "ListingKey": "listing_example",
+      "ModificationTimestamp": "2026-11-01T12:00:00.000001Z",
+      "StandardStatus": "Active",
+      "ListPrice": "425000.00",
+      "BedroomsTotal": null,
+      "Address": {
+        "line1": "12 Example Lane",
+        "city": "Example City",
+        "region": "EX",
+        "postalCode": "00000",
+        "country": "US"
+      },
+      "InternetAddressDisplayYN": true,
+      "InternetEntireListingDisplayYN": true,
+      "Images": [{ "url": "/photos/example.jpg", "alt": "Front of house" }]
+    }
+  ],
+  "@odata.nextLink": "?cursor=example_next"
+}
+```
+
+Include every listing field shown except `Images` on displayable records. Send
+`ListPrice`, `BedroomsTotal` and `Address` even when their values are `null`.
+
+| Field | Rules beyond the example |
 | --- | --- |
-| `ListingKey` | Stable, nonempty string such as `listing_example`, with no NUL or unpaired surrogates. For new keys, at most 1,024 UTF-8 bytes and at most 2,048 bytes combined with the feed ID. |
-| `ModificationTimestamp` | ISO date and time in UTC with `Z`, such as `2026-11-01T12:00:00.000001Z`. Use a nonzero year and at most six fractional digits. Incremental sync rejects revisions more than five minutes ahead of its clock. |
-| `StandardStatus` | Active, Active Under Contract, Coming Soon, or Pending, ignoring case and surrounding spaces. Any other value, including a missing status, withdraws the listing. |
-| `ListPrice` | `null` or a nonnegative decimal string such as `"425000.00"`. Use up to 64 whole digits without leading zeros and up to 32 fractional digits. Prices are stored in USD. |
-| `BedroomsTotal` | `null` or a nonnegative safe integer such as `3`. |
-| `Address` | `null` or an object with string fields `line1`, `city`, `region`, `postalCode` and `country`. Each of the first four allows up to 1,024 UTF-8 bytes. Use two uppercase letters for `country`, such as `"US"`. |
-| `InternetAddressDisplayYN`, `InternetEntireListingDisplayYN` | JSON booleans. A `false` address flag hides address and photos. A `false` listing flag withdraws the listing. |
-| `Images` | Optional array of `{ "url": "/photos/example.jpg", "alt": "Front of house" }` objects. The engine checks the first 128 entries and skips invalid ones. Use HTTPS URLs without credentials or root-relative paths, up to 2,048 characters. Missing, null or blank `alt` becomes `Property photo`. Other alt text allows up to 1,024 UTF-8 bytes. |
+| `ListingKey` | Stable, nonempty string without NUL or unpaired surrogates. New keys allow up to 1,024 UTF-8 bytes and up to 2,048 bytes combined with the feed ID. |
+| `ModificationTimestamp` | UTC ISO date and time ending in `Z`, with a nonzero year and up to six fractional digits. Incremental sync rejects revisions more than five minutes ahead of its clock. |
+| `StandardStatus` | Active, Active Under Contract, Coming Soon, or Pending, ignoring case and surrounding spaces. Any other value or a missing status withdraws the listing. |
+| `ListPrice` | A nonnegative decimal string in USD with up to 64 whole digits without leading zeros and up to 32 fractional digits. |
+| `BedroomsTotal` | A nonnegative safe integer when known. |
+| `Address` | All five fields are strings. `country` uses two uppercase letters. Each other field allows up to 1,024 UTF-8 bytes. |
+| Display flags | JSON booleans. A `false` address flag hides address and photos. A `false` listing flag withdraws the listing. |
+| `Images` | The engine checks the first 128 entries and skips invalid ones. Use HTTPS URLs without credentials or root-relative paths, up to 2,048 characters. Missing, null or blank `alt` becomes `Property photo`. Other alt text allows up to 1,024 UTF-8 bytes. |
 
-A withdrawal needs a valid key and timestamp. For records eligible for display,
-missing or invalid required facts cause rejection and can hide a stored listing.
+Withdrawals still need a valid key and timestamp. Missing or invalid required
+facts on displayable records cause rejection and can hide a stored listing.
 Check [rejection counts in `sync -- status`](#run-and-check-the-feed).
 
-Each response can contain up to 200 records and 8 MiB. Set `pageSize` to an integer
-from 1 to 200 to request `Prefer: odata.maxpagesize=N` for polls and scans. With no
-setting, the feed chooses the size. If sync reports `page_too_large`, request
-smaller pages or ask the feed provider to reduce the response size.
+Omit `@odata.nextLink` or set it to `null` on the last page. Links can be relative
+or absolute. The connector refuses redirects. After a poll saves a position,
+the next poll requests `$filter=ModificationTimestamp ge <mark>`.
+
+Set `pageSize` to an integer from 1 to 200 to request `Prefer: odata.maxpagesize=N`
+for polls and scans. The feed can ignore this preference and chooses the size
+when it receives none.
+
+| Page outcome | Cause and fix |
+| --- | --- |
+| `invalid_link` | The Property URL or continuation is invalid. Keep continuations on the Property URL's origin and at or below its path. Even there, use URLs without credentials or fragments and paths without `%2f`, `%5c` or `%25`. |
+| `invalid_page` | A response has more than 200 records, invalid JSON or page structure, or a continuation back to the same page. Reduce the record count or correct the response. |
+| `page_too_large` | The response exceeds 8 MiB. Request smaller pages or ask the provider to reduce the response size. |
 
 ## Plan the first load on Workers
 
@@ -47,19 +83,43 @@ Use **Workers Paid** for scheduled incremental sync. Typical runs exceeded the
 Free CPU allowance even at the smallest tested page size. See the
 [hosted measurements](#measured-processor-time-on-workers).
 
-A new feed starts expired and becomes current when the first incremental
-traversal finishes with at least one accepted record, or when an empty traversal
-finishes. By default, the Worker reads up to 10 pages per run every 30 minutes.
+Budget for the full first poll before [freshness renews](#run-and-check-the-feed).
+By default, the Worker reads up to 10 pages per run every 30 minutes.
 For 20,000 records at the maximum 200 records per page, allow 100 pages or
 10 runs, about five hours on the default schedule if each run makes progress.
 For a faster first load, [temporarily shorten the schedule](#monitor-and-pause-sync).
 
 ## Set up the database
 
+Save the feed settings in a protected YAML file. Set the feed ID, the
+[Property endpoint](#check-the-feed-format), the `synthetic` flag and the approved notices.
+
+```yaml
+feedId: feed_example
+propertyUrl: https://listings.example.test/reso/Property
+synthetic: true
+disclosures:
+  approvedFeedBlocks:
+    - id: example_feed
+      text: Invented listing feed
+      placement: pageFooter
+      prominence: normal
+  approvedListingBlocks:
+    - id: example_listing
+      text: Invented listing attribution
+      placement: adjacent
+      prominence: normal
+```
+
+List the approved blocks in display order. For page notices, use the same
+block shape in `disclosures.approvedPageBlocks`. If the file still uses
+`requiredListingBlockIds` or `requiredPageBlockIds`, keep only the selected
+blocks in the approved arrays and remove both ID lists.
+
 Create a PostgreSQL database owned by a login that can create roles. Set
-`DATABASE_URL` to that owner's direct connection string, `IDX_SYNC_FEED_FILE`
-to the YAML file described below, and `IDX_SYNC_FRESHNESS_SECONDS` to the
-positive whole number of seconds approved for the feed in your MLS agreement.
+`DATABASE_URL` to that owner's direct connection string and `IDX_SYNC_FEED_FILE`
+to the YAML file above. Set `IDX_SYNC_FRESHNESS_SECONDS` to the positive whole
+number of seconds approved for the feed in your MLS agreement.
 Then run:
 
 ```sh
@@ -67,10 +127,9 @@ npm run setup
 ```
 
 Setup runs migrations, applies writer grants, and registers the feed by its
-stable ID. A new feed starts expired until its first successful renewal by
-incremental sync. On an existing feed, changing the window takes effect on
-the next successful renewal. Setup preserves the current expiration, saved
-sync position, applied notices, and listings.
+stable ID. Setup preserves the current expiration, saved sync position,
+applied notices and listings. A changed window takes effect at the next
+[freshness renewal](#run-and-check-the-feed).
 
 Setup creates logins without passwords, so they need a password to connect
 when PostgreSQL requires password authentication, and `trust` authentication
@@ -92,8 +151,9 @@ updates the [API Worker](#serve-the-engine-api-on-workers) separately. Let old
 sync runs finish before editing notices, since old versions still write their
 own copy and can miss changes needed for the freshness calculation. If old and
 new runs overlapped or you are unsure, run `npm run --silent sync -- scan` on
-Node after the old runs finish. Repeat after each `page_limit` until the scan
-completes and recomputes the oldest listing ingest time.
+Node after the old runs finish to recompute the oldest listing ingest time.
+Repeat after `page_limit` until the scan exits `0` and prints `"code":"complete"`,
+then check the [rejection counts](#run-and-check-the-feed).
 
 ## Authorize a site
 
@@ -112,37 +172,9 @@ npm run demo:key -- create site_example listings:read /path/to/private/site.secr
 ## Set the environment
 
 - `LISTING_WRITER_DATABASE_URL` is the direct PostgreSQL connection string for `idx_listing_writer`.
-- `IDX_SYNC_FEED_FILE` is the path to a YAML file with the feed ID, the RESO
-  [Property endpoint](#check-the-feed-format), an explicit `synthetic` boolean,
-  and the approved disclosures.
-- `IDX_SYNC_FEED_TOKEN` is required for `incremental` and `scan`. Both runtimes
-  add the `Bearer` prefix to the value in the `Authorization` header. Set the
-  value to the token alone.
-
-Keep the YAML and credentials in protected operator configuration. For example:
-
-```yaml
-feedId: feed_example
-propertyUrl: https://listings.example.test/reso/Property
-synthetic: true
-disclosures:
-  approvedFeedBlocks:
-    - id: example_feed
-      text: Invented listing feed
-      placement: pageFooter
-      prominence: normal
-  approvedListingBlocks:
-    - id: example_listing
-      text: Invented listing attribution
-      placement: adjacent
-      prominence: normal
-```
-
-List only the blocks to display, in display order, with their placement and
-prominence. Add `disclosures.approvedPageBlocks` with the same block shape for
-page notices associated with listings. Omit it when there are none. If your
-file uses `requiredListingBlockIds` and `requiredPageBlockIds`, keep only the
-selected blocks in the approved arrays and remove both ID lists.
+- `IDX_SYNC_FEED_FILE` points to the [feed YAML](#set-up-the-database).
+- `IDX_SYNC_FEED_TOKEN` is required for `incremental` and `scan`. Set the token
+  alone in protected configuration. Both runtimes add the `Bearer` prefix.
 
 ### Replace the feed token
 
@@ -155,9 +187,13 @@ If sync shows `stopped`, [start a fresh instance with `resume`](#monitor-and-pau
 
 ## Run and check the feed
 
-`npm run --silent sync -- incremental` reads from the saved position and
-renews freshness after an empty traversal or a complete poll with at least one
-accepted record. Only eligible revisions move the saved mark forward.
+A new feed starts expired. `npm run --silent sync -- incremental` reads from
+the saved position and renews freshness when a poll finishes with at least
+one accepted record or the entire poll is empty.
+
+A completed poll can advance the saved position using a valid key and timestamp
+even when it rejects the listing facts. Give the correction a newer modification
+time, and run a full scan if that time is older than the saved position.
 A future-dated removal hides a listing only if its page has no trusted record
 for the same listing. The stored revision stays in place.
 The first poll or scan records the approved disclosures for the feed.
@@ -166,19 +202,17 @@ or a poll was already running when a scan applied new ones.
 An upgrade to rejection reporting replays a partial poll with earlier records
 from its last completed mark and restarts an unfinished scan.
 
-```json
-{"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
-```
-
 `npm run --silent sync -- scan` repairs missed edits across the feed. To update
 notices, edit the approved disclosure blocks in the YAML file at
 `$IDX_SYNC_FEED_FILE`, then run `npm run --silent sync -- scan`. The edits take
 effect together for the feed and every stored listing when the scan's first
 step commits. Upgraded scheduled polls can continue while the scan applies the
 change.
-A scan can apply explicit withdrawals and preserves listings that are merely
-absent unless removal by absence is enabled. Incremental sync renews the feed
-freshness window.
+A scan applies explicit withdrawals and preserves absent listings unless you
+enable removal by absence. A scan can reach the last page and exit `4` with
+`unreadable_keys` or `empty_scan`. Fix invalid `ListingKey` values for
+`unreadable_keys`. For `empty_scan`, check the Property URL and confirm the
+feed returns the expected records. Run a new scan after fixing the cause.
 
 ```json
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"pagesRead":3,"recordsSeen":24,"listingsRemoved":0,"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
@@ -249,8 +283,10 @@ On Ubuntu, use systemd to keep the API running and invoke sync on a timer.
 Create an unprivileged `idxkit` service account. Use the actual checkout and
 pinned Node binary paths in place of those below. Put these units in
 `/etc/systemd/system` and keep both environment files root-owned with mode `0600`.
-Set `RUNTIME_DATABASE_URL` in `engine.env` and the [sync settings](#set-the-environment)
-in `sync.env`. Give the service account read access to the feed YAML.
+Set `RUNTIME_DATABASE_URL` in `engine.env` to the restricted `idx_runtime`
+connection to keep the setup owner's privileges out of the API. Put the
+[sync settings](#set-the-environment) in `sync.env` and give the service account
+read access to the feed YAML.
 
 `idx-kit-engine.service`
 
@@ -303,14 +339,13 @@ With the same writer database and feed file settings, run
 
 ## Serve the engine API on Workers
 
-1. Follow [database setup](#set-up-the-database) to run `npm run setup` and set
-   the `idx_runtime` password interactively with `\password idx_runtime` in
-   `psql`.
-2. Create a Hyperdrive configuration using the direct PostgreSQL host, port,
+Complete [database setup](#set-up-the-database) and [site authorization](#authorize-a-site).
+
+1. Create a Hyperdrive configuration using the direct PostgreSQL host, port,
    database and TLS settings with the `idx_runtime` login. Disable query caching
    so withdrawals apply on the next request.
-   [Hyperdrive setup](https://developers.cloudflare.com/hyperdrive/get-started/#manage-caching)
-3. Choose a Worker name that is still available. The default is `idx-kit-engine`. Set
+   [Disable Hyperdrive caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/#disable-caching)
+2. Choose a Worker name that is still available. The default is `idx-kit-engine`. Set
    `ENGINE_WORKER_NAME` to choose a different name. If you reuse an existing
    name, confirm the Worker has no routes or custom domains before and after
    the first deploy. In the Cloudflare dashboard, go to **Workers & Pages**,
@@ -329,9 +364,7 @@ With the same writer database and feed file settings, run
    The API uses Smart Placement, which needs traffic from multiple locations
    to optimize where it runs. The demo uses `aws:us-east-1` to stay near its
    database. [Cloudflare placement](https://developers.cloudflare.com/workers/configuration/placement/)
-4. [Authorize the site for its feed and create its key](#authorize-a-site)
-   using the database owner's connection.
-5. Add an HTTP service binding to the website Worker on the same Cloudflare
+3. Add an HTTP service binding to the website Worker on the same Cloudflare
    account. Use the deployed engine name in `service`.
 
    ```json
@@ -365,21 +398,21 @@ settings to enable optional features. Leave them unset to keep the features off.
 ## Keep a feed current on Workers
 
 The sync Worker runs incremental sync. Run repair scans with the Node command.
+Complete [database setup](#set-up-the-database) and create a separate Hyperdrive
+configuration using the direct connection for `idx_listing_writer`. Disable
+query caching so runs read the latest saved position and outcome.
+[Disable Hyperdrive caching](https://developers.cloudflare.com/hyperdrive/concepts/query-caching/#disable-caching)
 
-1. Create a separate Hyperdrive configuration using the direct PostgreSQL
-   connection for `idx_listing_writer`. Disable query caching so each run
-   reads the latest saved position and outcome. Replace the placeholder ID for
-   `LISTING_WRITER_HYPERDRIVE` in your copy of
+Choose **one** deployment method below.
+
+### Deploy manually
+
+1. Set the ID for `LISTING_WRITER_HYPERDRIVE` in your copy of
    [the sync config](../packages/engine/wrangler.sync.jsonc).
-   The `global_fetch_strictly_public` flag lets sync reach a feed served at a
-   public URL by another Worker on the same account.
-   [Hyperdrive setup](https://developers.cloudflare.com/hyperdrive/get-started/#manage-caching)
-2. Add `IDX_SYNC_FEED_JSON` under `vars` in your protected Wrangler config.
-   Set it to a string containing the JSON equivalent of the YAML above,
-   including the feed ID, Property URL, synthetic flag and disclosures.
-   Optionally add `IDX_SYNC_PAGES_PER_RUN` as a string from `"1"` to `"20"`.
-   It defaults to 10 pages. Put the bearer token in a protected secrets file
-   under the key `IDX_SYNC_FEED_TOKEN`.
+2. In that config's `vars`, set `IDX_SYNC_FEED_JSON` to a string with the JSON
+   equivalent of the feed YAML. Optionally set `IDX_SYNC_PAGES_PER_RUN` to a
+   string from `"1"` to `"20"` (default `"10"`). Put `IDX_SYNC_FEED_TOKEN` in a
+   protected secrets file.
 3. Deploy with the sync config and the protected secrets file.
 
    ```sh
@@ -387,7 +420,7 @@ The sync Worker runs incremental sync. Run repair scans with the Node command.
      --secrets-file /path/to/protected/worker-secrets.json
    ```
 
-### Prepare and deploy from Workers Builds
+### Deploy with Workers Builds
 
 Connect `idx-kit-sync` to the repository. Use the repository root, the pinned
 Node version and the default dependency installation. Set the production branch
@@ -406,13 +439,9 @@ Set the build command to `npm run sync:prepare` and the deploy command to
 | `IDX_SYNC_CPU_MS` | Optional build variable | Whole number from 10 to 300000. Use a limit supported by your plan. |
 | `IDX_SYNC_FEED_TOKEN` | Worker runtime secret | Feed bearer token. Add it as a **Secret** under the Worker's Variables and Secrets settings, outside the build. |
 
-Cloudflare validates the cron expression at deploy time. Workers Builds uses the
-same database setup as `npm run setup` and reapplies its configured window on
-every build. Run setup locally first, then set the new login passwords with
-`psql` as described above. Create the writer's
-Hyperdrive configuration with its direct connection settings and query caching
-off. Set `SYNC_HYPERDRIVE_ID` and the Worker runtime secret before deploying.
-Authorize each site separately.
+Cloudflare validates the cron expression at deploy time. Workers Builds runs
+the same database setup as `npm run setup` and reapplies its configured window
+on every build.
 
 ### Monitor and pause sync
 

@@ -17,7 +17,7 @@ a guide page to search to a property page, then sends an inquiry. The demo
 uses only the public API.
 
 Follow the [demo quick start](docs/demo-setup.md) from a fresh checkout.
-See [Operate a listing feed](docs/feed-sync.md) to load, repair and check a feed on Node.
+See [Operate a listing feed](docs/feed-sync.md) for installation and sync on Node and Cloudflare.
 See [Limit and report suspected scraping](docs/scraping.md) for edge limits and reporting.
 See the [repository instructions](AGENTS.md) and the [API rules](docs/api-rules.md).
 
