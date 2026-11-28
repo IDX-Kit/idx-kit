@@ -7,10 +7,10 @@
   Sync stalls when it expires. See [how to replace it](#replace-the-feed-token).
 - Have a direct PostgreSQL connection for an owner that can create roles, the
   freshness window approved in your MLS agreement, and the approved display notices.
-- Install the repository's pinned Node version. Run `npm ci` and the commands
-  below from the repository root. For ongoing Node operation, use a
-  [service and timer](#run-on-your-own-server). For scheduled sync on Cloudflare,
-  use Workers Paid and [budget time for the first load](#plan-the-first-load-on-workers).
+- Install the repository's pinned Node version and run `npm ci` from the repository
+  root. On Node, use a [service and timer](#run-on-your-own-server) for the
+  loopback API and single-attempt sync. For scheduled sync on Cloudflare, use
+  Workers Paid and [budget time for the first load](#plan-the-first-load-on-workers).
 
 ## Check the feed format
 
@@ -24,7 +24,7 @@ refuses redirects. After a poll saves a mark, the next poll requests
 | Field | What to send |
 | --- | --- |
 | `ListingKey` | Stable, nonempty string such as `listing_example`, with no NUL or unpaired surrogates. For new keys, at most 1,024 UTF-8 bytes and at most 2,048 bytes combined with the feed ID. |
-| `ModificationTimestamp` | ISO date and time in UTC with `Z`, such as `2026-11-01T12:00:00.000001Z`. Use a nonzero year and at most six fractional digits. |
+| `ModificationTimestamp` | ISO date and time in UTC with `Z`, such as `2026-11-01T12:00:00.000001Z`. Use a nonzero year and at most six fractional digits. Incremental sync rejects revisions more than five minutes ahead of its clock. |
 | `StandardStatus` | Active, Active Under Contract, Coming Soon, or Pending, ignoring case and surrounding spaces. Any other value, including a missing status, withdraws the listing. |
 | `ListPrice` | `null` or a nonnegative decimal string such as `"425000.00"`. Use up to 64 whole digits without leading zeros and up to 32 fractional digits. Prices are stored in USD. |
 | `BedroomsTotal` | `null` or a nonnegative safe integer such as `3`. |
