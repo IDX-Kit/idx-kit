@@ -1,7 +1,58 @@
 # Operate a listing feed
 
-Use the repository's pinned Node version. Run `npm ci` and all commands below
-from the repository root on your Node host.
+## Before you start
+
+- Get a Property endpoint that matches the [feed format](#check-the-feed-format)
+  and an MLS-issued bearer token. A username and password alone are insufficient.
+  Sync stalls when it expires. See [how to replace it](#replace-the-feed-token).
+- Have a direct PostgreSQL connection for an owner that can create roles, the
+  freshness window approved in your MLS agreement, and the approved display notices.
+- Install the repository's pinned Node version. Run `npm ci` and the commands
+  below from the repository root. For ongoing Node operation, use a
+  [service and timer](#run-on-your-own-server). For scheduled sync on Cloudflare,
+  use Workers Paid and [budget time for the first load](#plan-the-first-load-on-workers).
+
+## Check the feed format
+
+Use HTTPS. Synthetic feeds can also use HTTP on loopback. The connector expects
+JSON with a `value` array and an optional `@odata.nextLink`. Omit the link or
+set it to `null` on the last page. A relative or absolute link must point to a
+different page on the Property URL's origin, at or below its path. The connector
+refuses redirects. After a poll saves a mark, the next poll requests
+`$filter=ModificationTimestamp ge <mark>`. Translate feeds with a different shape.
+
+| Field | What to send |
+| --- | --- |
+| `ListingKey` | Stable, nonempty string such as `listing_example`, with no NUL or unpaired surrogates. For new keys, at most 1,024 UTF-8 bytes and at most 2,048 bytes combined with the feed ID. |
+| `ModificationTimestamp` | ISO date and time in UTC with `Z`, such as `2026-11-01T12:00:00.000001Z`. Use a nonzero year and at most six fractional digits. |
+| `StandardStatus` | Active, Active Under Contract, Coming Soon, or Pending, ignoring case and surrounding spaces. Any other value, including a missing status, withdraws the listing. |
+| `ListPrice` | `null` or a nonnegative decimal string such as `"425000.00"`. Use up to 64 whole digits without leading zeros and up to 32 fractional digits. Prices are stored in USD. |
+| `BedroomsTotal` | `null` or a nonnegative safe integer such as `3`. |
+| `Address` | `null` or an object with string fields `line1`, `city`, `region`, `postalCode` and `country`. Each of the first four allows up to 1,024 UTF-8 bytes. Use two uppercase letters for `country`, such as `"US"`. |
+| `InternetAddressDisplayYN`, `InternetEntireListingDisplayYN` | JSON booleans. A `false` address flag hides address and photos. A `false` listing flag withdraws the listing. |
+| `Images` | Optional array of `{ "url": "/photos/example.jpg", "alt": "Front of house" }` objects. The engine checks the first 128 entries and skips invalid ones. Use HTTPS URLs without credentials or root-relative paths, up to 2,048 characters. Missing, null or blank `alt` becomes `Property photo`. Other alt text allows up to 1,024 UTF-8 bytes. |
+
+A withdrawal needs a valid key and timestamp. For records eligible for display,
+missing or invalid required facts cause rejection and can hide a stored listing.
+Check [rejection counts in `sync -- status`](#run-and-check-the-feed).
+
+Each response can contain up to 200 records and 8 MiB. Set `pageSize` to an integer
+from 1 to 200 to request `Prefer: odata.maxpagesize=N` for polls and scans. With no
+setting, the feed chooses the size. If sync reports `page_too_large`, request
+smaller pages or ask the feed provider to reduce the response size.
+
+## Plan the first load on Workers
+
+Use **Workers Paid** for scheduled incremental sync. Typical runs exceeded the
+Free CPU allowance even at the smallest tested page size. See the
+[hosted measurements](#measured-processor-time-on-workers).
+
+A new feed starts expired and becomes current when the first incremental
+traversal finishes with at least one accepted record, or when an empty traversal
+finishes. By default, the Worker reads up to 10 pages per run every 30 minutes.
+For 20,000 records at the maximum 200 records per page, allow 100 pages or
+10 runs, about five hours on the default schedule if each run makes progress.
+For a faster first load, [temporarily shorten the schedule](#monitor-and-pause-sync).
 
 ## Set up the database
 
@@ -35,12 +86,14 @@ interactively. The client hashes the passwords before sending them to PostgreSQL
 Use a feed of your own for real sync. After sync has been applied to the demo
 feed, reseeding leaves synced notices on any listings it skips.
 
-For an upgrade, run setup first, then replace every sync instance, including
-Workers. Wait for old runs to finish before editing notices, since old
-instances still write their own copy. If old and new runs overlapped or you
-are unsure, run `npm run --silent sync -- scan` once on Node after the old runs
-finish. Old runs do not track listing changes for freshness, and a completed
-scan recomputes the oldest listing ingest time.
+For an upgrade, run `npm run setup` from the new checkout, then switch all Node
+polls and scans to it and redeploy any sync Worker. `npm run engine:deploy`
+updates the [API Worker](#serve-the-engine-api-on-workers) separately. Let old
+sync runs finish before editing notices, since old versions still write their
+own copy and can miss changes needed for the freshness calculation. If old and
+new runs overlapped or you are unsure, run `npm run --silent sync -- scan` on
+Node after the old runs finish. Repeat after each `page_limit` until the scan
+completes and recomputes the oldest listing ingest time.
 
 ## Authorize a site
 
@@ -48,7 +101,7 @@ With `DATABASE_URL` still set to the owner's connection, name the site and feed
 it can display. Add `--new-site` when deliberately creating a site, and keep
 using the site's existing key if it already has one. For a new key, choose the
 scopes it needs and a protected path where the file does not already exist.
-To serve listings, follow the [instructions for starting the API on Node](../README.md#engine-and-secret-keys).
+To serve listings on Node, follow [Run on your own server](#run-on-your-own-server).
 For Cloudflare, follow [Serve the engine API on Workers](#serve-the-engine-api-on-workers).
 
 ```sh
@@ -60,10 +113,11 @@ npm run demo:key -- create site_example listings:read /path/to/private/site.secr
 
 - `LISTING_WRITER_DATABASE_URL` is the direct PostgreSQL connection string for `idx_listing_writer`.
 - `IDX_SYNC_FEED_FILE` is the path to a YAML file with the feed ID, the RESO
-  Property resource URL, an explicit `synthetic` boolean, and the approved
-  disclosures. Use HTTPS. Synthetic feeds can also use HTTP on loopback.
-  Optionally set `pageSize` to an integer from 1 to 200 to request smaller pages for both incremental sync and scans. The feed may ignore it.
-- `IDX_SYNC_FEED_TOKEN` is the feed's bearer token. Only `incremental` and `scan` require it.
+  [Property endpoint](#check-the-feed-format), an explicit `synthetic` boolean,
+  and the approved disclosures.
+- `IDX_SYNC_FEED_TOKEN` is required for `incremental` and `scan`. Both runtimes
+  add the `Bearer` prefix to the value in the `Authorization` header. Set the
+  value to the token alone.
 
 Keep the YAML and credentials in protected operator configuration. For example:
 
@@ -90,18 +144,22 @@ page notices associated with listings. Omit it when there are none. If your
 file uses `requiredListingBlockIds` and `requiredPageBlockIds`, keep only the
 selected blocks in the approved arrays and remove both ID lists.
 
-## Run and check the feed
+### Replace the feed token
 
-Feed listings are eligible for display only with a status of Active, Active
-Under Contract, Coming Soon, or Pending. Any other status, including an empty
-or missing status, withdraws the listing when the record is processed.
+When the token expires and the feed rejects it, sync stops making progress.
+On Node, replace `IDX_SYNC_FEED_TOKEN` in the sync environment or service's
+environment file before the next invocation. On Cloudflare, update the runtime
+secret on the **sync** Worker under **Settings → Variables and Secrets** and
+deploy the change. If you use a secrets file for deploys, update that copy too.
+If sync shows `stopped`, [start a fresh instance with `resume`](#monitor-and-pause-sync).
+
+## Run and check the feed
 
 `npm run --silent sync -- incremental` reads from the saved position and
 renews freshness after an empty traversal or a complete poll with at least one
-accepted record. Unreadable identities and revisions more than five minutes
-ahead of the sync clock are rejected, and only eligible revisions move the
-saved mark forward. A future-dated removal hides a listing only if its page has
-no trusted record for the same listing. The stored revision stays in place.
+accepted record. Only eligible revisions move the saved mark forward.
+A future-dated removal hides a listing only if its page has no trusted record
+for the same listing. The stored revision stays in place.
 The first poll or scan records the approved disclosures for the feed.
 Incremental polls use those applied disclosures, even if the file has changed
 or a poll was already running when a scan applied new ones.
@@ -138,8 +196,7 @@ records already up to date. Each rejected record contributes to one code.
 
 When every record is rejected, the result explains that freshness stayed
 unchanged. Start with the reported codes. For `invalid_change`, check the
-Property resource's field names and types, including the decimal-string
-price and the address field. For `future_revision`, check both clocks.
+[feed format](#check-the-feed-format). For `future_revision`, check both clocks.
 
 Enable removal by absence only when you know the feed's full list is complete.
 Run `npm run --silent sync -- scan --remove-missing --max-removals N` with both
@@ -150,9 +207,10 @@ exceeds the limit, the run removes none of them and reports `wouldRemove` and
 `npm run --silent sync -- status` reads saved state without calling the feed.
 Before the first run, the dates reflect initial provisioning. Missing marks,
 scan numbers, counts, and outcomes are `null`. A scan number is a decimal string.
-`lastRun` shows the counts saved with the most recent final incremental or
-scan checkpoint. An interrupted traversal leaves this report in place until
-a traversal finishes. `lastOutcome` tracks incremental retry and stop state.
+Check `expiresAt` against the current time and `lastOutcome` for the latest
+saved incremental result, including retries or stops. See `lastRun.counts.rejected`
+and `rejectedByCode` for refusals in the latest finished poll or scan. An
+interrupted traversal leaves those counts in place until a traversal finishes.
 
 ```json
 {"feedId":"feed_example","refreshedAt":"2026-11-03T15:00:00+00:00","expiresAt":"2026-11-03T16:00:00+00:00","completedMark":"2026-11-03T14:59:00.000001Z","incrementalInProgress":false,"scanNumber":"1","scanInProgress":false,"recordsSeen":24,"unreadableRecords":0,"lastOutcome":{"code":"complete","httpStatus":null,"nextStep":null,"retrySeconds":null,"savedAt":"2026-11-03T15:00:00+00:00"},"lastRun":{"kind":"scan","finishedAt":"2026-11-03T15:10:00+00:00","counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}}
@@ -174,16 +232,74 @@ When `outcomeSaved` is `false`, `status` still shows the previous
 the feed requested, could not be saved. The final checkpoint and counts of
 a completed traversal are saved together.
 
-Each invocation makes one attempt. After an interruption, run the same command
-again to resume after the last saved page. If the feed rejects its continuation,
-the runner clears it. Run the command again to continue from the last completed
-incremental mark or to start a new scan.
+Node makes one attempt per invocation and reads up to 1,000 pages. After an
+interruption or `page_limit`, run the same command again to resume after the last
+saved page. If the feed rejects its continuation, the runner clears it. Run the
+command again to continue from the last completed incremental mark or to start a
+new scan.
 
-Feed responses are limited to 8 MiB per page. If a run reports
-`page_too_large`, request a smaller `pageSize` or ask the feed provider to
-reduce the response size before retrying. Node incremental sync and scans
-read up to 1,000 pages per invocation, so run the same command again after
-`page_limit` to resume from the saved position.
+## Run on your own server
+
+`npm run demo:engine` runs the API in the foreground at `127.0.0.1:8787`.
+A website hosted elsewhere cannot reach that loopback address directly. Give
+its server a private route through a reverse proxy on the engine host, and
+keep the site key on the website server.
+
+On Ubuntu, use systemd to keep the API running and invoke sync on a timer.
+Create an unprivileged `idxkit` service account. Use the actual checkout and
+pinned Node binary paths in place of those below. Put these units in
+`/etc/systemd/system` and keep both environment files root-owned with mode `0600`.
+Set `RUNTIME_DATABASE_URL` in `engine.env` and the [sync settings](#set-the-environment)
+in `sync.env`. Give the service account read access to the feed YAML.
+
+`idx-kit-engine.service`
+
+```ini
+[Service]
+User=idxkit
+WorkingDirectory=/opt/idx-kit
+EnvironmentFile=/etc/idx-kit/engine.env
+ExecStart=/opt/node/bin/node packages/engine/src/runtime/node.ts
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`idx-kit-sync.service`
+
+```ini
+[Service]
+Type=oneshot
+User=idxkit
+WorkingDirectory=/opt/idx-kit
+EnvironmentFile=/etc/idx-kit/sync.env
+ExecStart=/opt/node/bin/node --no-warnings packages/engine/src/runtime/sync.ts incremental
+```
+
+`idx-kit-sync.timer`
+
+```ini
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+The timer waits five minutes after the service finishes, so scheduled runs
+do not overlap. This example assumes an approved one-hour freshness window.
+Choose a delay that leaves ample time for a full poll and retries within your
+approved window.
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now idx-kit-engine.service idx-kit-sync.timer
+```
+
+With the same writer database and feed file settings, run
+`npm run --silent sync -- status` and check `expiresAt` and `lastOutcome`.
 
 ## Serve the engine API on Workers
 
@@ -243,14 +359,12 @@ settings to enable optional features. Leave them unset to keep the features off.
 
 | Feature | Engine Worker runtime secrets |
 | --- | --- |
-| Inquiry email | Set all three: `RESEND_API_KEY`, `INQUIRY_EMAIL_FROM` (verified sender) and `INQUIRY_EMAIL_TO` (recipient). |
+| Inquiry email | Set `RESEND_API_KEY`, `INQUIRY_EMAIL_FROM` (verified sender) and `INQUIRY_EMAIL_TO` (one inbox for all sites served by this engine). |
 | Inquiry spam check | Set `TURNSTILE_SECRET_KEY`. The website includes the visitor's challenge token in the `Turnstile-Token` header. |
 
 ## Keep a feed current on Workers
 
-The optional sync Worker runs incremental sync on a schedule. Use the
-database setup above to create the feed and grant access to the writer login.
-Run repair scans with the Node command.
+The sync Worker runs incremental sync. Run repair scans with the Node command.
 
 1. Create a separate Hyperdrive configuration using the direct PostgreSQL
    connection for `idx_listing_writer`. Disable query caching so each run
@@ -327,11 +441,9 @@ Cloudflare says adding, changing or removing a Cron Trigger can take up to
 15 minutes to take effect. In the hosted test, a new schedule first ran about
 8 minutes after deployment. [Cloudflare Cron Trigger changes](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 
-For a first load, start the feed expired. Each schedule can apply up to
-pages per run times page size listings if the feed honors the requested page
-size. The last page of an empty traversal or a traversal with accepted records
-renews freshness and makes the feed available in the API.
-A temporarily more frequent schedule can speed up the initial load.
+For a faster first load, temporarily use a more frequent Cron Trigger. Edit
+`triggers.crons` for manual deploys or set `IDX_SYNC_SCHEDULE` for Workers Builds.
+After `sync -- status` shows a current `expiresAt`, restore your regular schedule.
 
 ### Measured processor time on Workers
 
@@ -359,12 +471,9 @@ For runs with several pages, the reported total does not show how much
 processor time any single step used. The one-page runs in the table are the
 closest estimates of processor time for a page step.
 
-Typical runs at every tested page size exceeded 10 ms, and runs with no work
-took 20 to 40 ms. A smaller `pageSize` did not reliably keep sync under 10 ms.
-Plan on Workers Paid for sync on Cloudflare. The measured `pageSize` values
-up to 100 were well within the default Paid limit. On Workers Paid, the
-observed runs completed with `IDX_SYNC_CPU_MS` set to `10`. Sync behavior on
-Workers Free remains unverified.
+The measured `pageSize` values up to 100 were well within the default Paid
+limit. On Workers Paid, the observed runs completed with `IDX_SYNC_CPU_MS`
+set to `10`. Sync behavior on Workers Free remains unverified.
 
 The [stand-in feed Worker](../tests/workers/wrangler.stand-in-feed.jsonc) serves
 invented listings for hosted sync tests. Its records come from the repository's

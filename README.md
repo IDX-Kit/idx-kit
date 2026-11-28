@@ -163,7 +163,8 @@ To email new inquiries through Resend, set all three values on the engine:
 
 - `RESEND_API_KEY` is your Resend API key with permission to send email.
 - `INQUIRY_EMAIL_FROM` is an address on a domain verified in Resend.
-- `INQUIRY_EMAIL_TO` is the inbox that should receive new inquiries.
+- `INQUIRY_EMAIL_TO` is the inbox for new inquiry emails from every site served
+  by this engine.
 
 On Node, set them in the environment of the process running the engine. On
 Workers, add all three as runtime secrets on your engine Worker. From the
