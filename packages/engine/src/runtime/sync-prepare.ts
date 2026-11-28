@@ -121,7 +121,10 @@ async function prepare(fromFile: boolean) {
   );
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   const args = process.argv.slice(2);
   try {
     if (args.length && !(args.length === 1 && args[0] === "file"))
