@@ -396,6 +396,20 @@ test("detail admission uses two SQL statements and refusal uses one", async (t) 
         const [statement] = counter.mock.calls[3].arguments;
         assert.equal(String(statement).includes("l.price IS NULL"), unpriced);
       }
+
+      const afterUnpriced = searchCursor(context, {
+        price: null,
+        id: "lst_demo_0004",
+      });
+      counter.mock.resetCalls();
+      const response = await app.request(
+        `${search}?limit=50&after=${afterUnpriced}`,
+        { headers },
+      );
+      const { body } = await check(response, search);
+      assert.equal(response.status, 200);
+      assert.deepEqual((body as SearchResponse).data, []);
+      assert.equal(counter.mock.callCount(), 5);
     },
   );
 });
