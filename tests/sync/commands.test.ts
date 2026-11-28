@@ -448,11 +448,14 @@ test(
         await writeFile(feedFile, stringify(config));
         const waiting = new EventEmitter();
         const requested = once(waiting, "requested");
-        const { promise: release, resolve } = Promise.withResolvers<void>();
+        let resolve!: () => void;
+        const release = new Promise<void>((done) => {
+          resolve = done;
+        });
         respond = async () => {
           waiting.emit("requested");
           await release;
-          return page([record("second", 2, "210.00")]);
+          return page([record("second", 7, "210.00")]);
         };
         const oldPoll = start(["incremental"]);
         try {

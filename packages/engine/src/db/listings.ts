@@ -124,12 +124,13 @@ function validatedDisclosures(disclosures: ListingPageDisclosures) {
     listingDisclosures.parse(disclosures);
   return { ...blocks, approvedPageBlocks };
 }
+type AppliedDisclosures = ReturnType<typeof validatedDisclosures>;
 
 // The caller holds the feed lock. Update the public copies with the configuration.
 async function writeAppliedDisclosures(
   client: pg.Client,
   feedId: string,
-  disclosures: Required<ListingPageDisclosures>,
+  disclosures: AppliedDisclosures,
 ) {
   await client.query(
     `WITH feed_notice AS (
@@ -260,7 +261,7 @@ async function readExisting(
     | Stored
     | {
         source_key: null;
-        applied_disclosures: Required<ListingPageDisclosures> | null;
+        applied_disclosures: AppliedDisclosures | null;
       }
   >(
     `SELECT m.source_key,
