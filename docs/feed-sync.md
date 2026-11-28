@@ -73,7 +73,7 @@ when it receives none.
 
 | Page outcome | Cause and fix |
 | --- | --- |
-| `invalid_link` | The Property URL or continuation is invalid. Keep continuations on the Property URL's origin and at or below its path. Even there, use URLs without credentials or fragments and paths without `%2f`, `%5c` or `%25`. |
+| `invalid_link` | The connector refused a continuation link. Keep continuations on the Property URL's origin and at or below its path. Even there, use URLs without credentials or fragments and paths without `%2f`, `%5c` or `%25`. |
 | `invalid_page` | A response has more than 200 records, invalid JSON or page structure, or a continuation back to the same page. Reduce the record count or correct the response. |
 | `page_too_large` | The response exceeds 8 MiB. Request smaller pages or ask the provider to reduce the response size. |
 
@@ -93,6 +93,9 @@ For a faster first load, [temporarily shorten the schedule](#monitor-and-pause-s
 
 Save the feed settings in a protected YAML file. Set the feed ID, the
 [Property endpoint](#check-the-feed-format), the `synthetic` flag and the approved notices.
+An invalid `propertyUrl` makes Node sync exit `1` with `Invalid sync settings`
+and the sync Worker's Workflow fail with the same message before either
+fetches a page.
 
 ```yaml
 feedId: feed_example
