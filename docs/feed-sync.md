@@ -52,7 +52,7 @@ Include every listing field shown except `Images` on displayable records. Send
 | Field | Rules beyond the example |
 | --- | --- |
 | `ListingKey` | Stable, nonempty string without NUL or unpaired surrogates. New keys allow up to 1,024 UTF-8 bytes and up to 2,048 bytes combined with the feed ID. |
-| `ModificationTimestamp` | UTC ISO date and time ending in `Z`, with a nonzero year and up to six fractional digits. Incremental sync rejects revisions more than five minutes ahead of its clock. |
+| `ModificationTimestamp` | UTC ISO date and time ending in `Z`, with a nonzero year and up to six fractional digits. Polls and scans reject revisions more than five minutes ahead of the sync clock. |
 | `StandardStatus` | Active, Active Under Contract, Coming Soon, or Pending, ignoring case and surrounding spaces. Any other value or a missing status withdraws the listing. |
 | `ListPrice` | A nonnegative decimal string in USD with up to 64 whole digits without leading zeros and up to 32 fractional digits. |
 | `BedroomsTotal` | A nonnegative safe integer when known. |
@@ -216,18 +216,23 @@ If sync shows `stopped`, [start a fresh instance with `resume`](#monitor-and-pau
 
 A new feed starts expired. `npm run --silent sync -- incremental` reads from
 the saved position and renews freshness when a poll finishes with at least
-one accepted record or the entire poll is empty.
+one accepted record or the entire poll is empty. If any page contains an
+unreadable key or untrustworthy revision, sync still applies safe changes.
+The poll reports `unplaceable_records`, leaves expiry unchanged, and the next
+poll starts from the last completed mark. A corrected key can be replayed at
+its original modification time.
 
 A completed poll can advance the saved position using a valid key and timestamp
 even when it rejects the listing facts. Give the correction a newer modification
 time, and run a full scan if that time is older than the saved position.
-A future-dated removal hides a listing only if its page has no trusted record
-for the same listing. The stored revision stays in place.
+An identifiable removal with an untrustworthy revision takes down the listing,
+even beside an active record for the same key. A valid upsert in a later scan
+can restore the listing.
 The first poll or scan records the approved disclosures for the feed.
 Incremental polls use those applied disclosures, even if the file has changed
 or a poll was already running when a scan applied new ones.
-An upgrade to rejection reporting replays a partial poll with earlier records
-from its last completed mark and restarts an unfinished scan.
+The upgrade to unplaceable record handling restarts an unfinished poll from
+its last completed mark and starts a new scan in place of an unfinished one.
 
 `npm run --silent sync -- scan` repairs missed edits across the feed. To update
 notices, edit the approved disclosure blocks in the YAML file at
@@ -237,9 +242,11 @@ step commits. Upgraded scheduled polls can continue while the scan applies the
 change.
 A scan applies explicit withdrawals and preserves absent listings unless you
 enable removal by absence. A scan can reach the last page and exit `4` with
-`unreadable_keys` or `empty_scan`. Fix invalid `ListingKey` values for
-`unreadable_keys`. For `empty_scan`, check the Property URL and confirm the
-feed returns the expected records. Run a new scan after fixing the cause.
+`unreadable_keys` or `empty_scan`. Untrustworthy revisions are reported as
+`unplaceable_records` with exit `3`. Unreadable keys and untrustworthy
+revisions both prevent removal by absence. For `empty_scan`, check the
+Property URL and confirm the feed returns the expected records. Run a new
+scan after fixing the cause.
 
 ```json
 {"feedId":"feed_example","code":"complete","nextStep":{"kind":"none"},"pagesRead":3,"recordsSeen":24,"listingsRemoved":0,"counts":{"accepted":23,"rejected":1,"rejectedByCode":{"invalid_change":1}}}
@@ -252,12 +259,13 @@ records already up to date. Each rejected record contributes to one code.
 | Code | Meaning |
 | --- | --- |
 | `invalid_key` | The listing key is missing, unreadable, or too large. |
-| `invalid_change` | The revision, listing facts, or disclosures failed validation. |
-| `future_revision` | An incremental record's revision is more than five minutes ahead of the sync clock. |
+| `invalid_change` | The listing facts failed validation. |
+| `invalid_revision` | The revision is missing or fails timestamp validation. |
+| `future_revision` | The revision is more than five minutes ahead of the sync clock. |
 
-When every record is rejected, the result explains that freshness stayed
-unchanged. Start with the reported codes. For `invalid_change`, check the
-[feed format](#check-the-feed-format). For `future_revision`, check both clocks.
+Start with the reported codes. For `invalid_key`, `invalid_change`, or
+`invalid_revision`, check the [feed format](#check-the-feed-format). For
+`future_revision`, check both clocks.
 
 Enable removal by absence only when you know the feed's full list is complete.
 Run `npm run --silent sync -- scan --remove-missing --max-removals N` with both

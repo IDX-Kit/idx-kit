@@ -4,7 +4,12 @@ import {
   readScanCheckpoint,
   saveScanCheckpoint,
 } from "../db/feed-scan-positions.ts";
-import { allRejectedMessage, emptyCounts } from "../db/feed-sync-outcomes.ts";
+import {
+  allRejectedMessage,
+  emptyCounts,
+  hasUnplaceableRecords,
+  unplaceableOutcome,
+} from "../db/feed-sync-outcomes.ts";
 import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
 import { FeedPositionChanged } from "../db/feed-sync-positions.ts";
 import {
@@ -22,6 +27,7 @@ type ScanFeed = SyncFeed &
   );
 
 type ScanOutcome =
+  | typeof unplaceableOutcome
   | { code: "complete" | "position_changed"; nextStep: { kind: "none" } }
   | { code: StoppedRun["code"]; nextStep: FeedNextStep }
   | { code: "invalid_removal_limit"; nextStep: { kind: "stop" } }
@@ -154,6 +160,7 @@ export async function syncFullScan(
         true,
       );
     }
+    if (hasUnplaceableRecords(counts)) return finish(unplaceableOutcome);
     if (maxRemovals !== undefined && wouldRemove > maxRemovals) {
       return finish(
         {

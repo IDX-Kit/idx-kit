@@ -4,16 +4,23 @@ import {
   listingDisclosures,
   listingStatus,
   normalize,
+  normalizeFacts,
   sourceKeySchema,
   timestampSchema,
 } from "../domain/normalize.ts";
 import type {
   FixtureRecord,
   ListingRecord,
+  NormalizedFacts,
   NormalizedListing,
   WithheldField,
 } from "../domain/normalize.ts";
-import { emptyCounts, saveFeedOutcome } from "./feed-sync-outcomes.ts";
+import {
+  emptyCounts,
+  hasUnplaceableRecords,
+  saveFeedOutcome,
+  unplaceableOutcome,
+} from "./feed-sync-outcomes.ts";
 import type { RecordCounts, RejectionCode } from "./feed-sync-outcomes.ts";
 import { saveFeedCheckpoint } from "./feed-sync-positions.ts";
 import type { FeedCheckpoint } from "./feed-sync-positions.ts";
@@ -53,11 +60,11 @@ export interface ListingPageDisclosures {
   approvedPageBlocks?: DisplayBlock[];
 }
 
-interface PageRow {
+interface PageRow<Listing = NormalizedListing> {
   source_key: string;
   revision: string | null;
   candidate: string;
-  listing: NormalizedListing | null;
+  listing: Listing | null;
 }
 
 interface Stored {
@@ -66,9 +73,11 @@ interface Stored {
   withheld: WithheldField[] | null;
 }
 
-interface Candidate extends PageRow {
+interface Candidate extends PageRow<NormalizedFacts> {
   index: number;
 }
+
+type IndexedChange = { change: ListingChange; index: number };
 
 function isRemoved(source: ListingChangeSource, fixture: boolean) {
   return (
@@ -254,8 +263,7 @@ async function removeMissingListings(
   };
 }
 
-export function revisionKey(value: string | null) {
-  if (value === null) return null;
+export function revisionKey(value: string) {
   const [time, fraction = ""] = value.slice(0, -1).split(".");
   const seconds = time.length === 16 ? time + ":00" : time;
   return `${seconds}.${fraction.padEnd(6, "0")}Z`;
@@ -311,8 +319,8 @@ function validateNewKey(feedId: string, sourceKey: string, stored?: Stored) {
   );
 }
 
-function selectChange(
-  rows: Candidate[],
+function selectChange<T extends Candidate>(
+  rows: T[],
   stored: Stored | undefined,
   mode: "fixture" | "stream" | "snapshot",
 ) {
@@ -392,7 +400,10 @@ export async function writeFixturePages(
         return {
           index,
           source_key: record.source.ListingKey,
-          revision: revisionKey(record.sourceUpdatedAt),
+          revision:
+            record.sourceUpdatedAt === null
+              ? null
+              : revisionKey(record.sourceUpdatedAt),
           candidate: record.publicId,
           listing: isRemoved(record.source, true) ? null : listing,
         };
@@ -433,6 +444,68 @@ type PageOptions = {
     }
 );
 
+function selectPageChanges(
+  feedId: string,
+  groups: Map<string, IndexedChange[]>,
+  keys: Set<string>,
+  existing: Map<string, Stored>,
+  mode: "snapshot" | "stream",
+) {
+  const latestAllowed = revisionKey(
+    new Date(Date.now() + clockSkewAllowanceMs).toISOString(),
+  );
+  const rejected: { index: number; code: RejectionCode }[] = [];
+  const rows: Candidate[] = [];
+  let latestRevision: string | null = null;
+  for (const [key, group] of groups) {
+    const stored = existing.get(key);
+    if (!keys.has(key) || !validateNewKey(feedId, key, stored)) {
+      for (const { index } of group)
+        rejected.push({ index, code: "invalid_key" });
+      continue;
+    }
+    const candidates: Candidate[] = [];
+    for (const { change, index } of group) {
+      const upsert =
+        change.kind === "upsert" && !isRemoved(change.listing.source, false)
+          ? change.listing
+          : null;
+      const timestamp = timestampSchema.safeParse(change.revision);
+      let revision = timestamp.success ? revisionKey(timestamp.data) : null;
+      let listing: NormalizedFacts | null = null;
+      if (revision === null || revision > latestAllowed) {
+        const code = timestamp.success ? "future_revision" : "invalid_revision";
+        rejected.push({ index, code });
+        if (upsert) continue;
+        revision = orderUnknown;
+      } else {
+        if (latestRevision === null || revision > latestRevision)
+          latestRevision = revision;
+        if (upsert) {
+          try {
+            listing = normalizeFacts(
+              { ...upsert, source: { ...upsert.source, ListingKey: key } },
+              true,
+            );
+          } catch {
+            rejected.push({ index, code: "invalid_change" });
+          }
+        }
+      }
+      candidates.push({
+        index,
+        source_key: key,
+        revision,
+        candidate: `lst_${crypto.randomUUID()}`,
+        listing,
+      });
+    }
+    const selected = selectChange(candidates, stored, mode);
+    if (selected) rows.push(selected);
+  }
+  return { rows, rejected, latestRevision };
+}
+
 export async function applyListingPage(
   client: pg.Client,
   feedId: string,
@@ -446,23 +519,13 @@ export async function applyListingPage(
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
-  const rejected: {
-    index: number;
-    code: RejectionCode;
-  }[] = [];
   const indexed = Array.from(changes, (change, index) => ({ change, index }));
   const groups = Map.groupBy(indexed, ({ change }) => change?.sourceKey);
-  const previous = incremental?.checkpoint.position;
-  const completedMark = previous?.completedMark ?? null;
-  const latestAllowed = incremental
-    ? revisionKey(new Date(Date.now() + clockSkewAllowanceMs).toISOString())
-    : null;
+  const keys = new Set(
+    [...groups.keys()].filter((key) => sourceKeySchema.safeParse(key).success),
+  );
   return listingFeedTransaction(client, feedId, async () => {
-    let pendingMark = previous?.pendingMark ?? null;
-    const keys = [...groups.keys()].filter(
-      (key) => sourceKeySchema.safeParse(key).success,
-    );
-    const { existing, feed } = await readExisting(client, feedId, keys);
+    const { existing, feed } = await readExisting(client, feedId, [...keys]);
     let listingsChanged = feed?.listings_changed ?? true;
     let disclosures = feed?.applied_disclosures;
     if (!disclosures) {
@@ -474,81 +537,14 @@ export async function applyListingPage(
         JSON.stringify(disclosures),
       );
     }
-    const { approvedListingBlocks: blocks, approvedPageBlocks: pageBlocks } =
-      disclosures;
-    const rows: Candidate[] = [];
-    const futureRemovals = new Map<string, number>();
-    for (const [key, group] of groups) {
-      const stored = existing.get(key);
-      if (
-        !sourceKeySchema.safeParse(key).success ||
-        !validateNewKey(feedId, key, stored)
-      ) {
-        for (const { index } of group)
-          rejected.push({ index, code: "invalid_key" });
-        continue;
-      }
-      const candidates: Candidate[] = [];
-      for (const { change, index } of group) {
-        const timestamp = timestampSchema.safeParse(change.revision);
-        const revision = timestamp.success ? revisionKey(timestamp.data) : null;
-        if (latestAllowed && revision && revision > latestAllowed) {
-          rejected.push({ index, code: "future_revision" });
-          if (
-            change.kind !== "upsert" ||
-            isRemoved(change.listing.source, false)
-          ) {
-            futureRemovals.set(key, index);
-          }
-          continue;
-        }
-        if (latestAllowed && revision) {
-          pendingMark ??= completedMark;
-          if (pendingMark === null || revision > pendingMark)
-            pendingMark = revision;
-        }
-        let listing: NormalizedListing | null = null;
-        try {
-          if (change.kind === "upsert") {
-            const source = change.listing.source;
-            if (revision === null) throw new Error("Invalid revision");
-            if (!isRemoved(source, false)) {
-              listing = normalize(
-                {
-                  ...change.listing,
-                  source: { ...source, ListingKey: key },
-                  blocks,
-                  pageBlocks,
-                },
-                true,
-              );
-            }
-          } else if (
-            revision === null ||
-            (change.kind !== "withdrawn" && change.kind !== "deleted")
-          ) {
-            throw new Error("Invalid removal");
-          }
-        } catch {
-          rejected.push({ index, code: "invalid_change" });
-        }
-        candidates.push({
-          index,
-          source_key: key,
-          revision: revision ?? orderUnknown,
-          candidate: `lst_${crypto.randomUUID()}`,
-          listing,
-        });
-      }
-      if (candidates.length) futureRemovals.delete(key);
-      const selected = selectChange(
-        candidates,
-        stored,
-        authoritativeSnapshot === true ? "snapshot" : "stream",
-      );
-      if (!selected) continue;
-      rows.push(selected);
-    }
+    const { rows, rejected, latestRevision } = selectPageChanges(
+      feedId,
+      groups,
+      keys,
+      existing,
+      authoritativeSnapshot ? "snapshot" : "stream",
+    );
+    const previous = incremental?.checkpoint.position;
     const priorCounts =
       previous?.counts ?? scan?.checkpoint.counts ?? emptyCounts;
     const counts: RecordCounts = {
@@ -559,6 +555,7 @@ export async function applyListingPage(
     for (const { code } of rejected) {
       counts.rejectedByCode[code] = (counts.rejectedByCode[code] ?? 0) + 1;
     }
+    const unplaceable = hasUnplaceableRecords(counts);
     const scanCheckpoint = scan && {
       ...scan.checkpoint,
       counts,
@@ -567,19 +564,27 @@ export async function applyListingPage(
     };
     if (scanCheckpoint)
       await saveScanCheckpoint(client, feedId, scanCheckpoint);
+
     let savedPosition: FeedCheckpoint["position"] | undefined;
-    let renewFreshness = false;
     const incrementalContinues = incremental?.nextLink != null;
     if (incremental) {
+      const completedMark = previous?.completedMark ?? null;
+      let pendingMark = previous?.pendingMark ?? null;
+      if (latestRevision) {
+        pendingMark ??= completedMark;
+        if (pendingMark === null || latestRevision > pendingMark)
+          pendingMark = latestRevision;
+      }
       let recordState: FeedCheckpoint["position"]["recordState"] = "empty";
       if (counts.accepted > 0) recordState = "accepted";
       else if (counts.rejected > 0) recordState = "rejected";
       savedPosition = {
-        completedMark: incrementalContinues
-          ? completedMark
-          : (pendingMark ?? completedMark),
+        completedMark:
+          incrementalContinues || unplaceable
+            ? completedMark
+            : (pendingMark ?? completedMark),
         nextLink: incremental.nextLink,
-        pendingMark: incrementalContinues ? pendingMark : null,
+        pendingMark: incrementalContinues && !unplaceable ? pendingMark : null,
         recordState: incrementalContinues ? recordState : "empty",
         ...(incrementalContinues && { counts }),
       };
@@ -587,35 +592,25 @@ export async function applyListingPage(
         position: savedPosition,
         version: incremental.checkpoint.version,
       });
-      renewFreshness = !incrementalContinues && recordState !== "rejected";
     }
-    await writePage(client, feedId, rows);
-    if (rows.length) listingsChanged = true;
-    const applied = new Set(rows.map(({ index }) => index));
-    if (futureRemovals.size) {
-      const { rows: hidden } = await client.query<{ source_key: string }>(
-        `WITH removed AS (
-          DELETE FROM idx.listings l USING idx.source_mappings m
-          WHERE l.id = m.listing_id AND m.feed_id = $1
-            AND m.source_key = ANY($2::text[])
-          RETURNING m.source_key
-        ), marked AS (
-          ${markListingsChanged} AND EXISTS (SELECT 1 FROM removed)
-        )
-        SELECT source_key FROM removed`,
-        [feedId, [...futureRemovals.keys()]],
-      );
-      if (hidden.length) listingsChanged = true;
-      for (const { source_key } of hidden)
-        applied.add(futureRemovals.get(source_key)!);
-    }
-    if (keys.length)
-      await stampScanKeys(client, feedId, keys, scan !== undefined);
+
+    const { approvedListingBlocks: blocks, approvedPageBlocks: pageBlocks } =
+      disclosures;
+    await writePage(
+      client,
+      feedId,
+      rows.map((row) => ({
+        ...row,
+        listing: row.listing && { ...row.listing, blocks, pageBlocks },
+      })),
+    );
+    if (keys.size)
+      await stampScanKeys(client, feedId, [...keys], scan !== undefined);
     const removal =
       scan &&
       scanCheckpoint &&
       !scanCheckpoint.active &&
-      scanCheckpoint.unreadableRecords === 0 &&
+      !unplaceable &&
       scan.maxRemovals !== undefined
         ? await removeMissingListings(
             client,
@@ -627,22 +622,23 @@ export async function applyListingPage(
     if (
       !incrementalContinues &&
       !scanCheckpoint?.active &&
-      (!incremental || listingsChanged)
+      (!incremental || listingsChanged || rows.length > 0)
     )
       await updateListingFreshness(client, [feedId]);
-    if (renewFreshness) {
-      await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
-    }
     if (incremental && !incrementalContinues) {
+      if (!unplaceable && (counts.accepted > 0 || counts.rejected === 0)) {
+        await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
+      }
       await saveFeedOutcome(
         client,
         feedId,
         incremental.checkpoint.version + 1n,
-        { code: "complete" },
-        null,
+        unplaceable ? unplaceableOutcome : { code: "complete" },
+        unplaceable ? unplaceableOutcome.nextStep : null,
         counts,
       );
     }
+    const applied = new Set(rows.map(({ index }) => index));
     return {
       counts,
       ...(savedPosition && { savedPosition }),
