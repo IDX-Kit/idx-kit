@@ -719,17 +719,15 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
           { ...disclosures.approvedFeedBlocks[0], id: "new_page_notice" },
         ],
       };
-      const failing = await standIn(t, () => ({ status: 503 }));
-      const healthy = await standIn(t, async (_url, n) => {
+      let failed: Awaited<ReturnType<typeof state.scan>> | undefined;
+      const feed = await standIn(t, async (_url, n) => {
         if (n === 1) return page([first], "?cursor=2");
-        assertRun(await state.scan(failing, undefined, peer, notices), {
-          code: "http_error",
-          pagesRead: 0,
-        });
+        if (n === 3) return { status: 503 };
+        failed = await state.scan(feed, undefined, peer, notices);
         return page([record("third", 2, "225.00")]);
       });
       const counts = { accepted: 2, rejected: 0, rejectedByCode: {} };
-      assertRun(await state.scan(healthy, 0), {
+      assertRun(await state.scan(feed, 0), {
         code: "removal_limit_exceeded",
         pagesRead: 2,
         wouldRemove: 1,
@@ -737,6 +735,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         listingsRemoved: 0,
         counts,
       });
+      assertRun(failed, { code: "http_error", pagesRead: 0 });
       assertRun(await state.lastRun(), { kind: "scan", counts });
       const { feed } = await state.incrementalState();
       assert.deepEqual(feed[0].display_blocks, notices.approvedFeedBlocks);
