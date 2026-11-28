@@ -751,7 +751,7 @@ test(
     await t.test(
       "every page seeks through listing indexes in both price orders",
       async (t) => {
-        const inspect = (last: SearchQuery["last"]) => {
+        const inspect = () => {
           const { database, queries } = explainSearch(db);
           return {
             database,
@@ -907,7 +907,7 @@ test(
               if (withNulls)
                 positions.push({ price: null, id: "lst_search_plan_000001" });
               for (const last of positions) {
-                const { database, check } = inspect(last);
+                const { database, check } = inspect();
                 const result = await searchListings(database, {
                   ...query,
                   last,
