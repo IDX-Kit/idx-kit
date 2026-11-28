@@ -483,7 +483,6 @@ Set the build command to `npm run sync:prepare` and the deploy command to
 | `SYNC_HYPERDRIVE_ID` | Build variable | ID of the writer's Hyperdrive configuration. |
 | `IDX_SYNC_PAGES_PER_RUN` | Optional build variable | Whole number from 1 to 20. Defaults to 10. |
 | `IDX_SYNC_SCHEDULE` | Optional build variable | One [Cron Trigger expression](https://developers.cloudflare.com/workers/configuration/cron-triggers/#supported-cron-expressions) in UTC, or `off`. Defaults to `*/30 * * * *`. |
-| `IDX_SYNC_CPU_MS` | Optional build variable | Whole number from 10 to 300000. Use a limit supported by your plan. |
 | `IDX_SYNC_FEED_TOKEN` | Worker runtime secret | Feed bearer token. Add it as a **Secret** under the Worker's Variables and Secrets settings, outside the build. |
 
 Cloudflare validates the cron expression at deploy time. Workers Builds runs
@@ -547,9 +546,9 @@ For runs with several pages, the reported total does not show how much
 processor time any single step used. The one-page runs in the table are the
 closest estimates of processor time for a page step.
 
-The measured `pageSize` values up to 100 were well within the default Paid
-limit. On Workers Paid, the observed runs completed with `IDX_SYNC_CPU_MS`
-set to `10`. Sync behavior on Workers Free remains unverified.
+The hosted measurements used Workers Paid. The observed processor times at
+`pageSize` values up to 100 were well within the default Paid limit. Sync
+behavior on Workers Free remains unverified.
 
 The [stand-in feed Worker](../tests/workers/wrangler.stand-in-feed.jsonc) serves
 invented listings for hosted sync tests. Its records come from the repository's

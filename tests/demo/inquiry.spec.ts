@@ -40,7 +40,7 @@ let code = "invalid_input";
 let posts = 0;
 let upstreamId: string | null = null;
 let lostReceipt: { id: string; receivedAt: string } | undefined;
-let upstreamReads: Response[] | undefined;
+let upstreamReads: Promise<Response>[] | undefined;
 const faultOrigin = "http://127.0.0.1:4322";
 const stub = createServer(async (req, res) => {
   if (req.method !== "POST") {
@@ -48,10 +48,11 @@ const stub = createServer(async (req, res) => {
     if (receiptLookupTimesOut && path?.startsWith("/api/v1/inquiries/")) {
       return;
     }
-    const upstream = await fetch(`http://127.0.0.1:8787${path}`, {
+    const read = fetch(`http://127.0.0.1:8787${path}`, {
       headers: { Authorization: `Bearer ${secret}` },
     });
-    upstreamReads?.push(upstream);
+    upstreamReads?.push(read);
+    const upstream = await read;
     const retryAfter = upstream.headers.get("Retry-After");
     // fetch decodes the body; do not forward its wire encoding or length.
     res.writeHead(upstream.status, {
@@ -197,7 +198,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
       ["/search", "/api/v1/listings"],
       [property, "/api/v1/listings/lst_demo_0001"],
     ];
-    const reads: Response[] = [];
+    const reads: Promise<Response>[] = [];
     upstreamReads = reads;
     try {
       const spent = await db.query(
@@ -213,7 +214,7 @@ test.describe("no-JavaScript inquiry forms and durable receipts", () => {
         const response = await listingPage.goto(faultOrigin + path);
         expect(response?.status()).toBe(429);
         expect(reads).toHaveLength(1);
-        const [upstream] = reads;
+        const upstream = await reads[0];
         expect(upstream.status).toBe(429);
         expect(new URL(upstream.url).pathname).toBe(upstreamPath);
         const retryAfter = upstream.headers.get("Retry-After");

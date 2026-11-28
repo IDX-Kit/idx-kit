@@ -11,6 +11,39 @@ import {
   readConfig,
 } from "../scripts/check-worker-config.mjs";
 
+async function deployCommand(t, command, stub) {
+  const directory = await mkdtemp(join(tmpdir(), "worker-deploy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(
+    join(directory, "npx"),
+    `#!/usr/bin/env node
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const [tool, action, flag, file, ...options] = process.argv.slice(2);
+assert.deepEqual([tool, action, flag], ["wrangler", "deploy", "--config"]);
+assert.ok(options.includes("--dry-run"));
+${stub}
+`,
+    { mode: 0o700 },
+  );
+  return {
+    directory,
+    run(env, options = [], intercept = true) {
+      return spawnSync(
+        "npm",
+        ["run", "--silent", command, "--", "--dry-run", ...options],
+        {
+          env: {
+            ...env,
+            PATH: intercept ? `${directory}:${env.PATH}` : env.PATH,
+          },
+          encoding: "utf8",
+        },
+      );
+    },
+  };
+}
+
 test("Worker configs reject exposure, secrets and runtime drift", async () => {
   for (const [kind, path] of Object.entries(configs)) {
     const { config } = await readConfig(path);
@@ -87,8 +120,6 @@ test("Worker configs reject exposure, secrets and runtime drift", async () => {
 });
 
 test("engine deploy dry-runs a private API against the supplied Hyperdrive", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "engine-deploy-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
   const original = await readFile(configs.engine, "utf8");
   const id = "1234567890abcdef1234567890abcdef";
   const env = {
@@ -98,7 +129,6 @@ test("engine deploy dry-runs a private API against the supplied Hyperdrive", asy
     ENGINE_HYPERDRIVE_ID: id,
     ENGINE_WORKER_NAME: "",
     DEMO_HYPERDRIVE_ID: "1".repeat(32),
-    PATH: `${directory}:${process.env.PATH}`,
   };
   for (const name of [
     "CLOUDFLARE_API_TOKEN",
@@ -111,33 +141,22 @@ test("engine deploy dry-runs a private API against the supplied Hyperdrive", asy
     "IDX_SECRET_KEY",
   ])
     delete env[name];
-  await writeFile(
-    join(directory, "npx"),
-    `#!/usr/bin/env node
-const assert = require("node:assert/strict");
-const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
+  const deploy = await deployCommand(
+    t,
+    "engine:deploy",
+    `const { spawnSync } = require("node:child_process");
 const path = require("node:path");
-const [tool, action, flag, file, ...options] = process.argv.slice(2);
-assert.deepEqual([tool, action, flag], ["wrangler", "deploy", "--config"]);
-assert.ok(options.includes("--dry-run"));
 fs.copyFileSync(file, path.join(__dirname, "generated.json"));
 fs.writeFileSync(path.join(__dirname, "temporary-path"), file);
 if (!options.includes("--outdir")) process.exit(0);
 const result = spawnSync(tool, [action, flag, file, ...options], { stdio: "inherit" });
 assert.ifError(result.error);
-process.exitCode = result.status ?? 1;
-`,
-    { mode: 0o700 },
+process.exitCode = result.status ?? 1;`,
   );
+  const { directory } = deploy;
   function run(settings = {}, build = false) {
-    const options = ["--dry-run"];
-    if (build) options.push("--outdir", join(directory, "bundle"));
-    return spawnSync(
-      "npm",
-      ["run", "--silent", "engine:deploy", "--", ...options],
-      { env: { ...env, ...settings }, encoding: "utf8" },
-    );
+    const options = build ? ["--outdir", join(directory, "bundle")] : [];
+    return deploy.run({ ...env, ...settings }, options);
   }
   const missing = run({ ENGINE_HYPERDRIVE_ID: "" });
   assert.equal(missing.status, 1);
@@ -176,8 +195,6 @@ process.exitCode = result.status ?? 1;
 });
 
 test("hosted sync deploy checks settings and removes its temporary config", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "sync-deploy-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
   const guide = await readFile(
     new URL("../docs/feed-sync.md", import.meta.url),
     "utf8",
@@ -198,39 +215,20 @@ test("hosted sync deploy checks settings and removes its temporary config", asyn
     IDX_SYNC_FEED_JSON: JSON.stringify(input),
   };
   for (const name of secrets) env[name] = marker;
-  await writeFile(
-    join(directory, "npx"),
-    `#!/usr/bin/env node
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const [tool, action, flag, file] = process.argv.slice(2);
-assert.deepEqual([tool, action, flag], ["wrangler", "deploy", "--config"]);
-for (const name of ${JSON.stringify([...secrets, "IDX_SYNC_FEED_JSON"])}) assert.equal(process.env[name], undefined);
-console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf8")) }));
-`,
-    { mode: 0o700 },
+  const deploy = await deployCommand(
+    t,
+    "sync:deploy",
+    `for (const name of ${JSON.stringify([...secrets, "IDX_SYNC_FEED_JSON"])}) assert.equal(process.env[name], undefined);
+console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf8")) }));`,
   );
   const bundleRoot = process.env.IDX_TEST_WORKER_BUNDLES;
   function run(settings, intercept = true) {
-    const result = spawnSync(
-      "npm",
-      [
-        "run",
-        "--silent",
-        "sync:deploy",
-        "--",
-        "--dry-run",
-        "--outdir",
-        !intercept && bundleRoot ? join(bundleRoot, "sync") : directory,
-      ],
-      {
-        env: {
-          ...env,
-          ...settings,
-          PATH: intercept ? `${directory}:${env.PATH}` : env.PATH,
-        },
-        encoding: "utf8",
-      },
+    const outdir =
+      !intercept && bundleRoot ? join(bundleRoot, "sync") : deploy.directory;
+    const result = deploy.run(
+      { ...env, ...settings },
+      ["--outdir", outdir],
+      intercept,
     );
     assert.ok(!(result.stdout + result.stderr).includes(marker));
     return result;
@@ -244,7 +242,6 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
   const overrides = {
     IDX_SYNC_PAGES_PER_RUN: "2",
     IDX_SYNC_SCHEDULE: `  ${schedule}  `,
-    IDX_SYNC_CPU_MS: "10",
   };
   const { file, config } = generated(overrides);
   await assert.rejects(readFile(file), { code: "ENOENT" });
@@ -259,7 +256,6 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
   assert.deepEqual(generatedFeed, feed);
   assert.equal(config.vars.IDX_SYNC_PAGES_PER_RUN, "2");
   assert.deepEqual(config.triggers, { crons: [schedule] });
-  assert.deepEqual(config.limits, { cpu_ms: 10 });
   assert.deepEqual(generated().config.triggers, { crons: ["*/30 * * * *"] });
   assert.deepEqual(generated({ IDX_SYNC_SCHEDULE: "off" }).config.triggers, {
     crons: [],
@@ -271,9 +267,6 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
     ["IDX_SYNC_FEED_JSON", "{"],
     ["IDX_SYNC_PAGES_PER_RUN", "21"],
     ["IDX_SYNC_SCHEDULE", "* * * * *\n* * * * *"],
-    ["IDX_SYNC_CPU_MS", "9"],
-    ["IDX_SYNC_CPU_MS", "300001"],
-    ["IDX_SYNC_CPU_MS", "10.5"],
   ]) {
     const result = run({ [name]: value });
     assert.equal(result.status, 1);

@@ -79,12 +79,6 @@ async function syncOverrides(config) {
       throw new Error("IDX_SYNC_SCHEDULE must be one non-empty line.");
     config.triggers.crons = schedule === "off" ? [] : [cron];
   }
-  const cpu = process.env.IDX_SYNC_CPU_MS;
-  if (cpu !== undefined) {
-    if (!integer(cpu, 10, 300000))
-      throw new Error("IDX_SYNC_CPU_MS must be an integer from 10 to 300000.");
-    config.limits = { cpu_ms: Number(cpu) };
-  }
 }
 
 let directory;

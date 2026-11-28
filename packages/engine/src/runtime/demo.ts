@@ -1,4 +1,10 @@
-import { randomUUID } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  pbkdf2Sync,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { FixtureConnector } from "../connectors/fixture.ts";
@@ -15,6 +21,19 @@ function required(name: string) {
   const value = process.env[name];
   if (!value) throw new DemoError(`Missing ${name}.`);
   return value;
+}
+
+function scramVerifier(password: string) {
+  const salt = randomBytes(16);
+  const iterations = 4096;
+  // Use the same password bytes as the pinned pg client's SCRAM login.
+  const salted = pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  const clientKey = createHmac("sha256", salted).update("Client Key").digest();
+  const storedKey = createHash("sha256").update(clientKey).digest("base64");
+  const serverKey = createHmac("sha256", salted)
+    .update("Server Key")
+    .digest("base64");
+  return `SCRAM-SHA-256$${iterations}:${salt.toString("base64")}$${storedKey}:${serverKey}`;
 }
 
 export async function demoKey(db: pg.Client, secret: string) {
@@ -138,7 +157,7 @@ export async function runDemo(action: string) {
             "idx_runtime must have no elevated privileges and NOINHERIT.",
           );
         await db.query(
-          `ALTER ROLE idx_runtime LOGIN PASSWORD ${pg.escapeLiteral(password)}`,
+          `ALTER ROLE idx_runtime LOGIN PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
         );
         stage = "migrations";
         await migrate(db);

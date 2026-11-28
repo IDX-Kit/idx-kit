@@ -484,6 +484,12 @@ test.describe.serial("SSR property pages through the public engine", () => {
       await page.getByLabel("Minimum price").fill("350000");
       await page.getByLabel("Maximum price").fill("450000");
       await page.getByLabel("Minimum bedrooms").fill("3");
+      const listingIds = () =>
+        page
+          .locator("[data-listing]")
+          .evaluateAll((nodes) =>
+            nodes.map((node) => node.getAttribute("data-listing")!),
+          );
       const browse = async (sort: string) => {
         await page.getByLabel("Price order").selectOption(sort);
         await page.getByRole("button", { name: "Search", exact: true }).click();
@@ -492,13 +498,8 @@ test.describe.serial("SSR property pages through the public engine", () => {
         let pages = 0;
         while (true) {
           expect(++pages).toBeLessThan(5);
-          ids.push(
-            ...(await page
-              .locator("[data-listing]")
-              .evaluateAll((nodes) =>
-                nodes.map((n) => n.getAttribute("data-listing")!),
-              )),
-          );
+          const pageIds = await listingIds();
+          ids.push(...pageIds);
           const amounts = await page
             .locator('[data-fact="price"]')
             .allTextContents();
@@ -534,9 +535,12 @@ test.describe.serial("SSR property pages through the public engine", () => {
           expect(nextUrl.searchParams.get("after")).toBeTruthy();
           const earlier = page.url();
           await next.click();
+          await page.waitForURL(nextUrl.href);
           await page.goBack();
-          expect(page.url()).toBe(earlier);
-          await page.getByRole("link", { name: "Next", exact: true }).click();
+          await expect(page).toHaveURL(earlier);
+          expect(await listingIds()).toEqual(pageIds);
+          await next.click();
+          await page.waitForURL(nextUrl.href);
         }
         expect(pages).toBeGreaterThan(1);
         expect([...ids].sort()).toEqual(expected);

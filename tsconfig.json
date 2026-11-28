@@ -6,7 +6,7 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ES2024.Collection", "DOM", "DOM.Iterable"],
     "resolveJsonModule": true
   },
   "include": [

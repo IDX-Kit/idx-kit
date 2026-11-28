@@ -9,6 +9,7 @@ import { setTimeout } from "node:timers/promises";
 import pg from "pg";
 import ts from "typescript";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
+import { readFeedCheckpoint } from "@idx-kit/engine/src/db/feed-sync-positions.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
 import { reportSyncStep } from "@idx-kit/engine/src/sync/incremental.ts";
 import { validateResponse } from "../api/contract.ts";
@@ -70,7 +71,11 @@ async function finished(id: string) {
   assert.fail("Workflow did not finish");
 }
 
-async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
+async function openSyncWorker(
+  t: TestContext,
+  vars: Record<string, string>,
+  interruptAfterCommit = false,
+) {
   const directory = await mkdtemp(`${tmpdir()}/idx-worker-sync-`);
   let stop = () => Promise.resolve();
   t.after(async () => {
@@ -82,6 +87,31 @@ async function openSyncWorker(t: TestContext, vars: Record<string, string>) {
     await readFile(configPath, "utf8"),
   );
   config.main = resolve(dirname(configPath), config.main);
+  if (interruptAfterCommit) {
+    const source = JSON.stringify(config.main);
+    config.main = `${directory}/interrupt.mjs`;
+    await writeFile(
+      config.main,
+      `import { ListingSync as Sync } from ${source};
+export { default } from ${source};
+export class ListingSync extends Sync {
+  run(event, step) {
+    return super.run(event, {
+      do(name, options, apply) {
+        return step.do(name, options, async () => {
+          const output = await apply();
+          if (output.code === "page_limit") {
+            throw new Error("Synthetic interruption after page commit");
+          }
+          return output;
+        });
+      },
+    });
+  }
+}
+`,
+    );
+  }
   const path = `${directory}/wrangler.json`;
   await writeFile(path, JSON.stringify(config));
   const bindings = Object.entries(vars).map(
@@ -343,6 +373,66 @@ test("scheduled listing sync on Workers", { timeout: 90_000 }, async (t) => {
       counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
     });
     assert.equal(feed.calls.length, start);
+  });
+
+  await t.test("a retried step resumes after its committed page", async (t) => {
+    const retryFeedId = `feed_worker_retry_${suffix}`;
+    await seed(db, {
+      feeds: [{ ...fixture, id: retryFeedId }],
+      listings: [],
+      sites: [],
+    });
+    const retryRecords = records.slice(0, 2);
+    const retryFeed = await standIn(t, () => retryRecords);
+    await openSyncWorker(
+      t,
+      {
+        ...vars,
+        IDX_SYNC_FEED_JSON: JSON.stringify({
+          ...feedSettings,
+          feedId: retryFeedId,
+          propertyUrl: retryFeed.propertyUrl,
+        }),
+        IDX_SYNC_PAGES_PER_RUN: "1",
+      },
+      true,
+    );
+    const result = await finished(await tick());
+    assert.equal(result.status, "complete");
+    assert.equal(result.steps.length, 1);
+    const { attempts } = result.steps[0];
+    assert.equal(attempts.length, 2);
+    assert.match(
+      attempts[0].error.message,
+      /Synthetic interruption after page commit/,
+    );
+    assert.equal(result.output.code, "complete");
+    assert.deepEqual(result.output.counts, {
+      accepted: 2,
+      rejected: 0,
+      rejectedByCode: {},
+    });
+    assert.deepEqual(
+      retryFeed.calls.map(({ query }) => query),
+      ["", "?cursor=1"],
+    );
+    const saved = await readFeedCheckpoint(db, retryFeedId);
+    assert.equal(saved.version, 2n);
+    assert.equal(
+      saved.position.completedMark,
+      retryRecords[1].ModificationTimestamp,
+    );
+    assert.equal(saved.position.nextLink, null);
+    const { rows } = await db.query<{ source_key: string }>(
+      `SELECT m.source_key FROM idx.source_mappings m
+      JOIN idx.listings l ON l.id = m.listing_id
+      WHERE m.feed_id=$1 ORDER BY m.source_key`,
+      [retryFeedId],
+    );
+    assert.deepEqual(
+      rows.map(({ source_key }) => source_key),
+      retryRecords.map(({ ListingKey }) => ListingKey),
+    );
   });
 
   await t.test(

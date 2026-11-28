@@ -454,6 +454,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
             } else {
               assert.equal(body.code, "feed_expired");
               assert.deepEqual(await state.freshness(), initialFreshness);
+              assert.equal(
+                (await state.checkpoint()).position.completedMark,
+                null,
+              );
             }
           }
           assert.deepEqual(await state.checkpoint(), {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import pg from "pg";
 import { captureLog, registerSecret } from "../logs.ts";
@@ -59,6 +60,17 @@ test("online preparation, restricted login, repeat build and key rotation", asyn
     0,
   );
   command("demo:prepare");
+  const databaseLog = await readFile(`${process.env.IDX_TEST_PG_DIR}.log`, "utf8");
+  const passwordStatements = databaseLog
+    .split("\n")
+    .filter((line) =>
+      line.includes("statement: ALTER ROLE idx_runtime LOGIN PASSWORD "),
+    );
+  assert.equal(passwordStatements.length, 1);
+  assert.ok(
+    /PASSWORD 'SCRAM-SHA-256\$4096:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}='$/.test(passwordStatements[0]),
+    "PostgreSQL must receive only a SCRAM verifier in the password statement",
+  );
   const snapshot = async () => {
     const tables = [
       "schema_migrations",

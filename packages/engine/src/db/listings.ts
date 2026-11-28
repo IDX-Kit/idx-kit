@@ -302,17 +302,6 @@ async function readExisting(
   return { existing, feed };
 }
 
-function groupPage<T>(rows: readonly T[], sourceKey: (row: T) => string) {
-  const groups = new Map<string, T[]>();
-  for (const row of rows) {
-    const key = sourceKey(row);
-    const group = groups.get(key) ?? [];
-    group.push(row);
-    groups.set(key, group);
-  }
-  return groups;
-}
-
 function validateNewKey(feedId: string, sourceKey: string, stored?: Stored) {
   // Existing keys have already fit the index. Leave headroom for new composite keys.
   const bytes = Buffer.byteLength(sourceKey);
@@ -408,7 +397,7 @@ export async function writeFixturePages(
           listing: isRemoved(record.source, true) ? null : listing,
         };
       });
-    const groups = groupPage(candidates, (row) => row.source_key);
+    const groups = Map.groupBy(candidates, (row) => row.source_key);
     const { existing } = await readExisting(
       client,
       feedId,
@@ -462,7 +451,7 @@ export async function applyListingPage(
     code: RejectionCode;
   }[] = [];
   const indexed = Array.from(changes, (change, index) => ({ change, index }));
-  const groups = groupPage(indexed, ({ change }) => change?.sourceKey);
+  const groups = Map.groupBy(indexed, ({ change }) => change?.sourceKey);
   const previous = incremental?.checkpoint.position;
   const completedMark = previous?.completedMark ?? null;
   const latestAllowed = incremental

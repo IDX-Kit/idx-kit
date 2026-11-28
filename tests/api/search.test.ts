@@ -812,6 +812,7 @@ test(
         const started = performance.now();
         await db.query("BEGIN");
         try {
+          await db.query("SET LOCAL default_statistics_target = 1000");
           if (volume === 100_000) await dropBedroomIndex();
           await db.query(`
             INSERT INTO idx.feeds

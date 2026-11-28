@@ -135,6 +135,8 @@ jobs:
           psql -h 127.0.0.1 -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE ROLE idx_listing_writer LOGIN NOINHERIT'
           sed -i '1i host idx_online idx_runtime 127.0.0.1/32 scram-sha-256' "$RUNNER_TEMP/idx11-pg/pg_hba.conf"
           /usr/lib/postgresql/18/bin/pg_ctl -D "$RUNNER_TEMP/idx11-pg" reload
+          psql -h 127.0.0.1 -p 55432 -U postgres -d idx_online -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE idx_migration IN DATABASE idx_online SET log_statement = 'ddl'"
           psql -h 127.0.0.1 -p 55432 -U postgres -d idx_online -v ON_ERROR_STOP=1 -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
       - name: Prove online preparation, password login and idempotent key registration
         id: online
