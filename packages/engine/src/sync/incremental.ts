@@ -66,7 +66,9 @@ export async function syncIncrementally(
   let counts = emptyCounts;
   let outcome: Awaited<ReturnType<typeof readFeedPages>>;
   try {
-    const current = { ...(start ?? (await readFeedCheckpoint(client, feedId))) };
+    const current = {
+      ...(start ?? (await readFeedCheckpoint(client, feedId))),
+    };
     checkpoint = current;
     counts = current.position.counts ?? emptyCounts;
     const mapChanges = listingChangesFor(feed);

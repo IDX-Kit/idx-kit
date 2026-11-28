@@ -34,13 +34,15 @@ export async function readFeedState(
           (o.last_report->>'finishedAt')::timestamptz >= (s.last_report->>'finishedAt')::timestamptz
         THEN o.last_report ELSE s.last_report END`
     : "";
-  const { rows } = await client.query<FeedPositionRow & {
-    status: {
-      lastOutcome: { code: string; nextStep: "retry" | "stop" | null } | null;
-      lastRun?: { kind: "incremental" | "scan"; counts: RecordCounts } | null;
-    };
-    waitingSeconds: number | null;
-  }>(
+  const { rows } = await client.query<
+    FeedPositionRow & {
+      status: {
+        lastOutcome: { code: string; nextStep: "retry" | "stop" | null } | null;
+        lastRun?: { kind: "incremental" | "scan"; counts: RecordCounts } | null;
+      };
+      waitingSeconds: number | null;
+    }
+  >(
     `SELECT jsonb_build_object(
       'feedId', f.id, 'refreshedAt', f.refreshed_at, 'expiresAt', f.expires_at,
       'completedMark', to_char(p.completed_mark AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),

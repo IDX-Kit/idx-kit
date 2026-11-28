@@ -309,7 +309,9 @@ async function readExisting(
         pending_freshness: boolean;
       }
   >(
-    `${keys.length ? `SELECT m.source_key,
+    `${
+      keys.length
+        ? `SELECT m.source_key,
       CASE WHEN m.source_revision = '${orderUnknown}'::timestamptz THEN '${orderUnknown}'
         ELSE to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
       END AS revision,
@@ -317,7 +319,9 @@ async function readExisting(
       NULL::jsonb AS applied_disclosures, false AS has_listings, false AS pending_freshness
     FROM idx.source_mappings m LEFT JOIN idx.listings l ON l.id = m.listing_id
     WHERE m.feed_id = $1 AND m.source_key = ANY($2::text[])
-    UNION ALL` : ""}
+    UNION ALL`
+        : ""
+    }
     SELECT NULL AS source_key, NULL AS revision, NULL AS withheld, applied_disclosures,
       oldest_listing_ingested_at IS NOT NULL OR pending_listing_ingested_at IS NOT NULL AS has_listings,
       pending_listing_ingested_at IS NOT NULL AS pending_freshness
@@ -504,11 +508,7 @@ export async function applyListingPage(
     const keys = [...groups.keys()].filter(
       (key) => sourceKeySchema.safeParse(key).success,
     );
-    const { existing, feed } = await readExisting(
-      client,
-      feedId,
-      keys,
-    );
+    const { existing, feed } = await readExisting(client, feedId, keys);
     let disclosures = feed?.applied_disclosures;
     if (!disclosures) {
       if (!initialDisclosures) throw new Error("Missing applied disclosures");
@@ -654,7 +654,8 @@ export async function applyListingPage(
       for (const { source_key } of hidden)
         applied.add(futureRemovals.get(source_key)!);
     }
-    if (keys.length) await stampScanKeys(client, feedId, keys, scan !== undefined);
+    if (keys.length)
+      await stampScanKeys(client, feedId, keys, scan !== undefined);
     const removal =
       scan &&
       scanCheckpoint &&

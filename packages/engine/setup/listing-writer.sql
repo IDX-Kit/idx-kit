@@ -1,5 +1,5 @@
 -- Run as the schema owner after creating a separate idx_listing_writer login.
--- Run after migrations, and rerun for an existing writer login before its next sync page because every page writes scan stamps.
+-- Run after migrations, and rerun for an existing writer login before its next sync page.
 GRANT USAGE ON SCHEMA idx TO idx_listing_writer;
 GRANT SELECT, INSERT, UPDATE, DELETE ON idx.listings TO idx_listing_writer;
 GRANT SELECT, INSERT, UPDATE (source_revision) ON idx.source_mappings TO idx_listing_writer;
