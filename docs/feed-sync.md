@@ -194,15 +194,22 @@ read up to 1,000 pages per invocation, so run the same command again after
    database and TLS settings with the `idx_runtime` login. Disable query caching
    so withdrawals apply on the next request.
    [Hyperdrive setup](https://developers.cloudflare.com/hyperdrive/get-started/#manage-caching)
-3. From the repository root, deploy with the Hyperdrive ID returned by Cloudflare.
+3. Choose a Worker name that is still available. The default is `idx-kit-engine`. Set
+   `ENGINE_WORKER_NAME` to choose a different name. If you reuse an existing
+   name, confirm the Worker has no routes or custom domains before and after
+   the first deploy. In the Cloudflare dashboard, go to **Workers & Pages**,
+   select the Worker, and open **Settings → Domains & Routes**.
+   [Cloudflare routes](https://developers.cloudflare.com/workers/configuration/routing/routes/#set-up-a-route-in-the-dashboard)
+
+   From the repository root, deploy with the Hyperdrive ID returned by Cloudflare.
 
    ```sh
    ENGINE_HYPERDRIVE_ID=your_hyperdrive_id npm run engine:deploy
    ```
 
    The command bundles the API and supplies the ID through a temporary config.
-   The Worker defaults to `idx-kit-engine`. Set `ENGINE_WORKER_NAME` to use a
-   different name. Public routes, `workers.dev` and preview URLs are disabled.
+   It adds no public route, `workers.dev` address, or preview URL. Any route
+   or custom domain already attached to a Worker of that name stays in place.
    The API uses Smart Placement, which needs traffic from multiple locations
    to optimize where it runs. The demo uses `aws:us-east-1` to stay near its
    database. [Cloudflare placement](https://developers.cloudflare.com/workers/configuration/placement/)
@@ -218,10 +225,18 @@ read up to 1,000 pages per invocation, so run the same command again after
    ```
 
    In the website Worker's **Variables and Secrets** settings, add the key as
-   an encrypted runtime secret named `IDX_SECRET_KEY`. Send it as
-   `Authorization: Bearer <key>` from server code through
-   `env.IDX_ENGINE.fetch()`. Keep it out of build variables and browser code.
+   an encrypted runtime secret named `IDX_SECRET_KEY`. Keep it out of build
+   variables and browser code. Make the request from server code. The URL
+   supplies the API path on a placeholder host, and the binding selects the
+   engine Worker.
    [HTTP service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/http/)
+
+   ```js
+   const request = new Request("https://engine.example.invalid/api/v1/listings", {
+     headers: { Authorization: `Bearer ${env.IDX_SECRET_KEY}` },
+   });
+   const response = await env.IDX_ENGINE.fetch(request);
+   ```
 
 Set these runtime secrets in the **engine** Worker's **Variables and Secrets**
 settings to enable optional features. Leave them unset to keep the features off.
