@@ -37,6 +37,8 @@ instances to finish before editing notices. An older sync instance still writes
 its own copy of the notices.
 
 As the migration role, add the feed and authorize the site that may display it.
+Use a feed of your own for real sync. After a sync file has been applied to the
+demo feed, reseeding leaves synced notices on any listings it skips.
 Use a stable feed ID and the freshness window and disclosures approved for
 that feed. This invented example uses a one-hour window and starts expired.
 The API serves none of the feed until the first complete incremental run.

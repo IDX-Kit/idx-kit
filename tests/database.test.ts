@@ -3,10 +3,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { test } from "node:test";
 import pg from "pg";
 import { FixtureConnector } from "@idx-kit/engine/src/connectors/fixture.ts";
-import {
-  applyScanDisclosures,
-  listingFeedTransaction,
-} from "@idx-kit/engine/src/db/listings.ts";
 import { normalize } from "@idx-kit/engine/src/domain/normalize.ts";
 import { migrate } from "@idx-kit/engine/src/db/migrate.ts";
 import { seed } from "@idx-kit/engine/src/db/seed.ts";
@@ -390,34 +386,6 @@ test("fresh PostgreSQL database and transactional fixture loading", async (t) =>
         ).rows[0].count,
         24,
       );
-
-      const closed = fixtures.listings.find((row) => row.pageBlocks.length)!;
-      const feed = fixtures.feeds.find((row) => row.id === closed.feedId)!;
-      await listingFeedTransaction(db, feed.id, () =>
-        applyScanDisclosures(db, feed.id, {
-          approvedFeedBlocks: feed.blocks,
-          approvedListingBlocks: fixtures.listings[0].blocks,
-        }),
-      );
-      await db.query(
-        `UPDATE idx.source_mappings SET source_revision = source_revision + interval '1 second'
-        WHERE listing_id = $1`,
-        [closed.publicId],
-      );
-      await db.query("UPDATE idx.listings SET price = 123456 WHERE id = $1", [
-        closed.publicId,
-      ]);
-      await seed(db, fixtures);
-      const restored = (await snapshot()).find(
-        (row) => row.id === closed.publicId,
-      );
-      assert.deepEqual(restored.page_blocks, closed.pageBlocks);
-      assert.equal(restored.price, "123456");
-      const { rows } = await db.query(
-        "SELECT applied_disclosures FROM idx.feeds WHERE id = $1",
-        [feed.id],
-      );
-      assert.equal(rows[0].applied_disclosures, null);
     },
   );
   await t.test(

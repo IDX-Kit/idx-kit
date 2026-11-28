@@ -13,7 +13,6 @@ import type {
   NormalizedListing,
   WithheldField,
 } from "../domain/normalize.ts";
-import { addressProtection } from "../domain/withholding.ts";
 import { emptyCounts, saveFeedOutcome } from "./feed-sync-outcomes.ts";
 import type { RecordCounts, RejectionCode } from "./feed-sync-outcomes.ts";
 import { saveFeedCheckpoint } from "./feed-sync-positions.ts";
@@ -392,42 +391,14 @@ export async function writeFixturePages(
       true,
     );
     const rows: PageRow[] = [];
-    const notices = [];
     for (const [key, changes] of groups) {
       const stored = existing.get(key);
       if (!validateNewKey(feedId, key, stored))
         throw new Error("Invalid source key");
       const selected = selectChange(changes, stored, "fixture");
-      if (selected) {
-        rows.push(selected);
-        continue;
-      }
-      // Restore fixture notices on live rows whose facts have a newer revision.
-      if (!stored?.withheld) continue;
-      const fixture = selectChange(changes, undefined, "fixture");
-      if (!fixture?.listing) continue;
-      const { blocks } = addressProtection(
-        stored.withheld.includes("address")
-          ? records[start + fixture.index].source.Address
-          : null,
-      );
-      notices.push({
-        source_key: key,
-        display_blocks: blocks(fixture.listing.blocks),
-        page_blocks: blocks(fixture.listing.pageBlocks),
-      });
+      if (selected) rows.push(selected);
     }
     await writePage(client, feedId, rows);
-    if (notices.length)
-      await client.query(
-        `UPDATE idx.listings l SET display_blocks = n.display_blocks, page_blocks = n.page_blocks
-        FROM idx.source_mappings m
-        JOIN jsonb_to_recordset($2::jsonb)
-          AS n(source_key text, display_blocks jsonb, page_blocks jsonb) USING (source_key)
-        WHERE m.feed_id = $1 AND m.listing_id = l.id
-          AND (l.display_blocks, l.page_blocks) IS DISTINCT FROM (n.display_blocks, n.page_blocks)`,
-        [feedId, JSON.stringify(notices)],
-      );
   }
 }
 

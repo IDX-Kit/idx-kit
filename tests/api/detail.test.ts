@@ -132,6 +132,10 @@ test("real HTTP listing and key acceptance", { timeout: 90_000 }, async (t) => {
           WHERE l.id = m.listing_id AND m.source_key LIKE 'Synthetic writer %';
         DELETE FROM idx.source_mappings WHERE source_key LIKE 'Synthetic writer %';
       `);
+        await db.query(
+          "UPDATE idx.feeds SET applied_disclosures=NULL WHERE id=ANY($1::text[])",
+          [[primary, secondary]],
+        );
       });
       const feed = fixtureDisclosures(fixtures, primary);
       const applyNotices = (disclosures = feed) =>
