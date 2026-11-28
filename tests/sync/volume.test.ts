@@ -224,6 +224,7 @@ test(
     });
     let interrupt = true;
     let scanning = false;
+    let idle = false;
     const source = fixtures.listings[0].source;
     const feed = await standIn(t, async (url) => {
       const index = Number(url.searchParams.get("cursor"));
@@ -233,6 +234,7 @@ test(
         await released;
         return { status: 503 };
       }
+      if (idle) return page([]);
       pageIndex = index;
       const start = index * pageSize + (scanning ? changed : 0);
       const size = Math.min(pageSize, volume - start);
@@ -328,6 +330,18 @@ test(
     const publicIds = new Set(loaded.map(({ id }) => id));
     assert.ok(fresh.data.every(({ id }: { id: string }) => publicIds.has(id)));
     assert.equal((await detail(fresh.data[0].id)).data.id, fresh.data[0].id);
+
+    idle = true;
+    statements = 0;
+    const idleRun = await syncIncrementally(writer, options);
+    assert.deepEqual(idleRun, {
+      code: "complete",
+      counts: { accepted: 0, rejected: 0, rejectedByCode: {} },
+    });
+    t.diagnostic(`Empty poll after first load: ${statements} SQL statements.`);
+    assert.equal(statements, 11);
+    assert.deepEqual(offsets.splice(0), [1]);
+    idle = false;
 
     scanning = true;
     statements = 0;
