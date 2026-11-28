@@ -149,11 +149,14 @@ feed, reseeding leaves synced notices on any listings it skips.
 
 For an upgrade, run `npm run setup` from the new checkout, then switch all Node
 polls and scans to it and redeploy any sync Worker. `npm run engine:deploy`
-updates the [API Worker](#serve-the-engine-api-on-workers) separately. Let old
-sync runs finish before editing notices, since old versions still write their
-own copy and can miss changes needed for the freshness calculation. If old and
-new runs overlapped or you are unsure, run `npm run --silent sync -- scan` on
-Node after the old runs finish to recompute the oldest listing ingest time.
+updates the [API Worker](#serve-the-engine-api-on-workers) separately. Finish
+the migrations and replace every running API instance before the new version
+serves requests for the same keys. This preserves each key's listing request
+limit. Let old sync runs finish before editing notices, since old versions
+still write their own copy and can miss changes needed for the freshness
+calculation. If old and new runs overlapped or you are unsure, run
+`npm run --silent sync -- scan` on Node after the old runs finish to recompute
+the oldest listing ingest time.
 Repeat after `page_limit` until the scan exits `0` and prints `"code":"complete"`,
 then check the [rejection counts](#run-and-check-the-feed).
 
@@ -170,6 +173,20 @@ For Cloudflare, follow [Serve the engine API on Workers](#serve-the-engine-api-o
 npm run demo:key -- authorize site_example feed_example --new-site
 npm run demo:key -- create site_example listings:read /path/to/private/site.secret
 ```
+
+### Rotate or revoke a site key
+
+Use the owner's connection in `DATABASE_URL`. Replace `KEY_ID` with the ID
+printed by the key command and choose the [scopes](api-rules.md#secret-keys-and-scopes)
+the site needs.
+
+```sh
+npm run demo:key -- rotate KEY_ID listings:read /path/to/private/replacement.secret
+npm run demo:key -- revoke KEY_ID
+```
+
+The key command writes a new secret once to a file with mode `0600`. Store the
+file outside the repository and use the secret only on the website server.
 
 ## Set the environment
 
@@ -364,8 +381,7 @@ Complete [database setup](#set-up-the-database) and [site authorization](#author
    It adds no public route, `workers.dev` address, or preview URL. Any route
    or custom domain already attached to a Worker of that name stays in place.
    The API uses Smart Placement, which needs traffic from multiple locations
-   to optimize where it runs. The demo uses `aws:us-east-1` to stay near its
-   database. [Cloudflare placement](https://developers.cloudflare.com/workers/configuration/placement/)
+   to optimize where it runs. [Cloudflare placement](https://developers.cloudflare.com/workers/configuration/placement/)
 3. Add an HTTP service binding to the website Worker on the same Cloudflare
    account. Use the deployed engine name in `service`.
 
@@ -389,13 +405,27 @@ Complete [database setup](#set-up-the-database) and [site authorization](#author
    const response = await env.IDX_ENGINE.fetch(request);
    ```
 
-Set these runtime secrets in the **engine** Worker's **Variables and Secrets**
-settings to enable optional features. Leave them unset to keep the features off.
+## Configure inquiry email and spam checks
 
-| Feature | Engine Worker runtime secrets |
+On Node, put these settings in the engine's environment file. On Cloudflare,
+add them as encrypted runtime secrets in the engine Worker's **Variables and
+Secrets** settings. Leave them unset to keep the features off.
+
+| Feature | Engine settings |
 | --- | --- |
-| Inquiry email | Set `RESEND_API_KEY`, `INQUIRY_EMAIL_FROM` (verified sender) and `INQUIRY_EMAIL_TO` (one inbox for all sites served by this engine). |
+| Inquiry email | Set all three values together. `RESEND_API_KEY` needs permission to send email, `INQUIRY_EMAIL_FROM` must be on a verified domain, and `INQUIRY_EMAIL_TO` is one inbox for all sites served by this engine. |
 | Inquiry spam check | Set `TURNSTILE_SECRET_KEY`. The website includes the visitor's challenge token in the `Turnstile-Token` header. |
+
+The engine saves the inquiry and returns its receipt while email runs in the
+background. A failed email leaves the inquiry saved. The engine sends email
+only for a new inquiry. Find failures in the `inquiry.email` logs using the
+inquiry ID or Request-Id. Node requires all three email settings at startup
+if any are present. On Workers, a partial configuration logs an error for
+each newly saved inquiry.
+
+If the API returns `422 spam_check_failed`, refresh the widget so the visitor
+can resubmit with a fresh token. Find failures in the `inquiry.spam_check` logs
+using the Request-Id. The API can replay a saved receipt without a new token.
 
 ## Keep a feed current on Workers
 

@@ -8,7 +8,8 @@ import { readConfig, checkConfig } from "../../scripts/check-worker-config.mjs";
 import { captureLog, registerSecret } from "../logs.ts";
 
 test("deploy commands use checked configs and Wrangler dry runs", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "demo-deploy-"));
+  const bundles = process.env.IDX_TEST_WORKER_BUNDLES;
+  const directory = bundles ?? (await mkdtemp(join(tmpdir(), "demo-deploy-")));
   const source = "packages/engine/wrangler.jsonc";
   const original = await readFile(source, "utf8");
   const id = "1234567890abcdef1234567890abcdef";
@@ -69,7 +70,7 @@ test("deploy commands use checked configs and Wrangler dry runs", async () => {
       assert.ok(files.some((name) => /\.m?js$/.test(name)));
     }
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    if (!bundles) await rm(directory, { recursive: true, force: true });
   }
 });
 

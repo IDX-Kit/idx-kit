@@ -1,239 +1,36 @@
 # IDX Kit
 
-IDX Kit is an early project to build a free, self-hostable listings engine and
-API for real estate agents, teams and brokerages. It is designed around the
-RESO data standard. Showing real listings requires your own data license from
-your MLS.
+IDX Kit is an early, free, self-hostable listings engine and API for real
+estate agents, teams, and brokerages. It uses the RESO data standard. To show
+real listings, you need a data license and feed credentials from your MLS.
 
-## Status
+## Install
 
-This project is early. The engine serves discovery, its contract, authorized
-synthetic listing detail, search with paging, and durable inquiry receipts. The
-plain demo website renders guide, search and property pages through the generated
-API client.
+- **Your own server (Node).** Follow the [installer guide](docs/feed-sync.md)
+  to prepare PostgreSQL and authorize your site. Then
+  [run the API as a service and sync on a timer](docs/feed-sync.md#run-on-your-own-server).
+- **Cloudflare.** Follow the [installer guide](docs/feed-sync.md) to prepare
+  PostgreSQL and authorize your site. Then
+  [deploy the API with Hyperdrive](docs/feed-sync.md#serve-the-engine-api-on-workers)
+  and [schedule feed sync](docs/feed-sync.md#keep-a-feed-current-on-workers).
 
-The first milestone is a demo with clearly fake listings. A visitor goes from
-a guide page to search to a property page, then sends an inquiry. The demo
-uses only the public API.
+## Try the synthetic demo
 
-Follow the [demo quick start](docs/demo-setup.md) from a fresh checkout.
-See [Operate a listing feed](docs/feed-sync.md) for installation and sync on Node and Cloudflare.
-See [Limit and report suspected scraping](docs/scraping.md) for edge limits and reporting.
-See the [repository instructions](AGENTS.md) and the [API rules](docs/api-rules.md).
+Follow the [local quick start](docs/demo-setup.md) to browse invented listings,
+open a property page, and send an inquiry that returns a receipt. The
+server-rendered demo uses the public API through the TypeScript client.
+The [hosted demo guide](docs/demo-online.md) covers the private Workers deployment.
 
-## Install the client in your website
+## Documentation
 
-Install the early test version of `@idx-kit/client` from its GitHub release:
+- [API contract](openapi/v1/openapi.yaml) and [API rules](docs/api-rules.md)
+- [TypeScript client installation and release recovery](docs/releases/README.md)
+- [Scraping limits and reporting](docs/scraping.md)
+- [Repository instructions](AGENTS.md) and [fixture provenance](fixtures/RIGHTS.md)
 
-```sh
-npm install --save-exact https://github.com/IDX-Kit/idx-kit/releases/download/client-v0.1.0/idx-kit-client-0.1.0.tgz
-```
+IDX Kit is source available under FSL-1.1-ALv2. See [the license](LICENSE.md)
+for permitted uses and the transition to Apache 2.0.
 
-The dependency URL pins the version. To upgrade or roll back, replace that URL in
-`package.json` with the tarball URL for the desired version from the
-[GitHub releases](https://github.com/IDX-Kit/idx-kit/releases), run `npm install`,
-and commit `package.json` and the updated lockfile. Import `@idx-kit/client` from
-your server code and keep your engine key in server configuration.
-
-## Client release recovery
-
-1. **Missing tarball.** Find the release tag's commit in GitHub Releases. In
-   Actions, download and unzip the `client-release-*` artifact from the `CI` run
-   for the push to `main` at that commit. Remove any empty
-   `idx-kit-client-<version>.tgz` upload from the release, attach that file from
-   the artifact, then rerun the `release-client` job that reported the missing file.
-2. **Tag conflict.** Set a new version in `packages/client/package.json` and in
-   the `@idx-kit/client` pins in `packages/engine/package.json` and
-   `examples/demo-site/package.json`. Refresh the root `package-lock.json` with
-   `npm install --package-lock-only --ignore-scripts`. Add
-   `docs/releases/client-v<version>.md` using the
-   [first release notes](docs/releases/client-v0.1.0.md) as a template. Update the
-   tag (`client-v<version>`) and filename (`idx-kit-client-<version>.tgz`) in the
-   install URLs in the notes and above, then merge to `main`.
-
-## Database development
-
-Use Node 24.14.1 (see `.nvmrc`) and PostgreSQL 18. The npm workspace lockfile
-pins the dependencies. The database commands are:
-
-```sh
-npm ci
-npm run demo:db:migrate
-npm run demo:seed
-```
-
-When upgrading the engine, apply the migrations first, then replace every
-running engine instance before the updated instances serve the same keys.
-An old engine on the migrated database keeps counting requests, and an updated
-engine refuses listing requests until the migrations run.
-If both versions serve the same key during a rollout, the key can briefly
-exceed its listing request limit.
-
-Set `DATABASE_URL` to a dedicated database owned by a migration role. Create a
-separate role named `idx_runtime` before migrating. Revoke public schema creation
-from `PUBLIC`; the runtime role must not inherit schema ownership or other roles.
-The migration role owns the tables and can read stored inquiries. `idx_runtime`
-receives schema usage, read access for listing queries, and permission to insert
-inquiries. On `idx.source_mappings` it can read only `feed_id` and `listing_id`.
-On `idx.inquiries` it can read only `id`, `site_id`, `received_at`,
-`idempotency_key`, and `body_hash` for receipts and retries. Inquiry email uses
-the submitted form data. Seeding uses the migration connection.
-Repeating the seed keeps public listing IDs and updates facts by feed/source key.
-The fixtures contain 24 invented listings, including deliberately undisplayable
-and expired records. See [fixture provenance](fixtures/RIGHTS.md).
-
-[CI](.github/workflows/ci.yml) defines the disposable Linux runner setup, contract
-lint, reproducible client generation, compatibility typecheck and database tests.
-The tests require an empty dedicated database plus `RUNTIME_DATABASE_URL` for the
-restricted role. The workflow installs the latest PostgreSQL 18.x from the project's
-apt repository and checks both the binary and connected server versions. It creates
-its own loopback PostgreSQL 18 cluster on port 55432 and stops that cluster when
-finished. The generated client comes only from `openapi/v1/openapi.yaml`;
-regenerate it with `npm run contract:generate`.
-
-The checks also start the engine and validate real HTTP responses and required
-headers against the checked-in contract, with negative controls. They cover key
-creation, revocation and rotation, display metadata, withholding, version and input
-errors, search and paging, inquiry creation and receipts, redacted logs and a stopped
-database. CI also builds the demo site and checks property HTML, search filters,
-complete Next traversal, exact decimal prices and no-JavaScript browsing and
-inquiries with a real engine and database. All execution checks run in CI.
-
-## Demo pages
-
-The `examples/demo-site` workspace uses Astro with its Node adapter. After building
-with `npm run demo:site:build`, set `IDX_ENGINE_URL` to the engine origin and
-`IDX_SECRET_KEY` to a Site-bound key with `listings:read`, `inquiries:write` and
-`inquiries:read`. Keep both in server configuration. Run `npm run demo:site` with
-`HOST=127.0.0.1` and `PORT=4321` for loopback use. Startup checks `/api` for v1 and
-`listingDetail` before serving. Do not expose the synthetic demo publicly.
-
-`/properties/lst_demo_0001` renders facts, illustrations, listing and page disclosures,
-and feed freshness without browser JavaScript. Unknown display instructions suppress
-the listing. Missing and withdrawn listings return 404, stale feeds return 503, and
-upstream failures show a generic error. HTML and illustration responses use no-store.
-`/` redirects to `/guides/example-springs`, an original invented guide labeled as
-synthetic site content. Its link opens `/search?city=Example%20Springs`. The GET form
-accepts city, whole US dollar price bounds, minimum bedrooms and price order. Next
-preserves those filters and passes the engine's opaque cursor; Back uses browser
-history. The shared renderer includes listing disclosures on each result, and page
-disclosures appear even with no matches. Invalid filters show field guidance, while
-an invalid cursor links to the first page with the same filters. Prices are formatted
-directly from decimal strings. The key stays on the server; all engine requests use
-`@idx-kit/client`, a five-second timeout, no-store and refused redirects. Websites
-should leave automatic retries off for a listing `429` and show the visitor a message.
-The property page saves synthetic inquiries and shows a receipt. The demo sends no email.
-`npm run test:demo` runs the runner-only browser checks after building, migrating,
-seeding and installing the pinned Chromium browser.
-
-## Engine and secret keys
-
-After migrating and seeding a dedicated database, use the migration connection
-in `DATABASE_URL` to manage keys. Each command requires explicit scopes; the
-supported scopes are `listings:read`, `inquiries:write` and `inquiries:read`.
-The demo uses all three to show listings, submit inquiries and read receipts.
-There is no key API.
-
-```sh
-npm run demo:key -- create site_demo_primary listings:read,inquiries:write,inquiries:read /absolute/private/demo.secret
-npm run demo:key -- rotate KEY_ID listings:read,inquiries:write,inquiries:read /absolute/private/replacement.secret
-npm run demo:key -- revoke KEY_ID
-```
-
-The command prints only a key ID. It generates 256 random bits, stores a SHA-256
-hash and writes the value once to a new mode-0600 file. An existing path is never
-overwritten. Rotation creates a key for the old key's Site and revokes the old
-one in the same transaction. Protect the file and keep it outside the repository.
-
-Set `RUNTIME_DATABASE_URL` to the restricted runtime role's connection and run
-`npm run demo:engine`. It binds only to `127.0.0.1:8787`. Anonymous `GET /api`
-reports the installed release and implemented capabilities; `GET
-/api/v1/openapi.json` converts this checkout's contract to JSON. Send the file's
-value as `Authorization: Bearer ...` from a server to read
-`GET /api/v1/listings/lst_demo_0001`. Never put a key in browser code, a URL or
-logs. Requests with a secret key and an Origin header are refused; no CORS
-headers are sent. Listing responses are private and no-store. Unknown,
-withdrawn and unlicensed listings share a generic 404; expired feeds fail closed.
-Consumers must render permitted facts and both sets of required display blocks
-together, keeping site branding outside the listing body. Fixtures are synthetic.
-
-## Inquiry email
-
-To email new inquiries through Resend, set all three values on the engine:
-
-- `RESEND_API_KEY` is your Resend API key with permission to send email.
-- `INQUIRY_EMAIL_FROM` is an address on a domain verified in Resend.
-- `INQUIRY_EMAIL_TO` is the inbox for new inquiry emails from every site served
-  by this engine.
-
-On Node, set them in the environment of the process running the engine. On
-Workers, add all three as runtime secrets on your engine Worker. From the
-directory containing your engine's Wrangler configuration, run:
-
-```sh
-npx wrangler secret put RESEND_API_KEY
-npx wrangler secret put INQUIRY_EMAIL_FROM
-npx wrangler secret put INQUIRY_EMAIL_TO
-```
-
-Wrangler preserves these secrets across code redeploys. Leave all three unset
-to disable email. With only some values set, Node refuses to start and the
-Worker logs a configuration error for each newly saved inquiry.
-
-The engine saves the inquiry and returns its receipt while the email runs in
-the background. Check `inquiry.email` logs by inquiry ID or Request-Id. A failed
-email leaves the inquiry saved, and replaying its receipt does not send email.
-
-## Inquiry spam check
-
-Set `TURNSTILE_SECRET_KEY` to your Turnstile widget's secret in the environment
-of the Node engine process. On Workers, add it as a runtime secret on the
-engine Worker. From the directory containing its Wrangler configuration, run:
-
-```sh
-npx wrangler secret put TURNSTILE_SECRET_KEY
-```
-
-The Worker secret persists across code redeploys. Leave the setting unset to
-disable the engine check. Your website renders the Turnstile widget with its
-public site key and forwards the token from its server in the `Turnstile-Token`
-header when creating an inquiry. If the engine returns `422 spam_check_failed`,
-refresh the widget and ask the visitor to submit again with a fresh token. A
-retry with the same inquiry body and key can replay a kept receipt without a
-token. Use the Request-Id to find failures in the `inquiry.spam_check` logs.
-
-## License
-
-IDX Kit is source available under FSL-1.1-ALv2. Anyone may use, copy, change
-and share it for any purpose except a Competing Use: making it available to
-others in a commercial product or service that substitutes for it or offers
-the same or substantially similar functionality. Running it for your own
-business, or setting it up for a client, is allowed. Each version also becomes
-available under Apache 2.0 two years after it is published. See
-[LICENSE.md](LICENSE.md) for the full terms.
-
-## Feedback and security
-
-Bug reports, questions and ideas are welcome. Code contributions are not
-accepted. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue.
-Report security vulnerabilities privately as described in
-[SECURITY.md](SECURITY.md).
-
-### Worker build proof
-
-CI also builds the engine and demo site as separate Workers, then reruns the API
-and no-JavaScript page suites under local Wrangler on the runner. The site uses
-an HTTP service binding to the engine; Node keeps using HTTP over the network.
-The engine opens one `pg` client per request through `HYPERDRIVE`. Local tests
-supply `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` with the restricted
-`idx_runtime` login. The site reads `IDX_SECRET_KEY` from a Worker secret.
-
-From the repository root, `npm ci`, `npm run workers:contract`, and
-`npm run workers:site:build` prepare the Worker builds. CI runs
-`wrangler deploy --dry-run --outdir` for each and checks gzip sizes against the
-Free plan's 3 MiB limit. These commands do not deploy anything. Config checks
-also reject public engine routes, alternate site addresses, embedded credentials,
-and changes to logging, database placement or the marked Hyperdrive placeholder.
-The fixed Worker names are `idx-kit-demo-engine` and `idx-kit-demo-site`.
-See [private demo setup](docs/demo-online.md) for online configuration. Local
-test results do not measure production CPU time.
+Bug reports, questions, and ideas are welcome. Read the
+[contribution policy](CONTRIBUTING.md) before opening an issue. Report security
+vulnerabilities privately using the [security policy](SECURITY.md).

@@ -77,7 +77,7 @@ when you report a count from retained logs.
 To reduce traffic, tighten your edge rule or lower the key's ceiling. To lower
 it, use the [SQL in the API rules](api-rules.md#listing-request-limit) and
 replace `120` with a positive whole number below the key's current ceiling.
-If you suspect a key was exposed, use the [key commands](../README.md#engine-and-secret-keys)
+If you suspect a key was exposed, use the [key commands](feed-sync.md#rotate-or-revoke-a-site-key)
 to revoke it or rotate it and update the website's server configuration.
 
 ## Report suspected scraping

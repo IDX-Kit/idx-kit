@@ -1,6 +1,6 @@
 # Private demo on Workers Builds
 
-These settings use Workers Free and Neon Free. The listings and illustrations are synthetic. Only the operator connects services and deploys; CI uses disposable PostgreSQL 18 and Wrangler dry runs, with no service credentials.
+Use a PostgreSQL host for the demo database. The listings and illustrations are synthetic. CI checks the setup with disposable PostgreSQL 18 and Wrangler dry runs.
 
 Connect each Worker to this repository with the following settings. Worker names match their Wrangler configs. Root directory is the repository root (`/`) for both. Use production branch **main**, and turn **non-production branch builds off** before adding any build secrets. Node comes from `.nvmrc`. Keep Cloudflare's build token inside Cloudflare; do not add any GitHub environment, secret or deploy workflow.
 
@@ -15,7 +15,7 @@ Keep the default dependency installation (`npm ci` with the committed lockfile).
 
 | Name | Where it belongs | Value |
 | --- | --- | --- |
-| `MIGRATION_DATABASE_URL` | Engine production build trigger, secret | Neon owner role's **direct** PostgreSQL connection, including database and required TLS options. This role must be able to create/manage `idx_runtime` and own the schema. |
+| `MIGRATION_DATABASE_URL` | Engine production build trigger, secret | The database owner's **direct** PostgreSQL connection string with TLS. This role owns the schema and must be able to create and manage roles, including `idx_runtime`. |
 | `RUNTIME_DATABASE_PASSWORD` | Engine production build trigger, secret | Random password, at least 32 characters; use a password generator. Store the identical password in Hyperdrive. |
 | `IDX_SECRET_KEY` | Engine production build trigger, secret; also site Worker runtime secret | `idx_secret_` followed by base64url encoding of 32 random bytes (43 characters without padding). Generate securely, for example with `node -e 'console.log("idx_secret_" + require("node:crypto").randomBytes(32).toString("base64url"))'` in the operator's secure environment. Never commit or log the value. |
 | `DEMO_HYPERDRIVE_ID` | Engine production build trigger, ordinary variable | Id returned when creating the Hyperdrive configuration. Keep this account-specific value out of the repository. |
@@ -26,7 +26,7 @@ First-time order:
 
 1. Confirm Access already covers **demo.idxkit.com** at the edge, with the intended private allow policy. This happens before any build. Both Workers disable workers.dev and preview URLs; the engine has no public route. CI checks these settings. There is no deploy-time Access guard.
 2. Connect the engine production trigger with its three build secrets, leaving `DEMO_HYPERDRIVE_ID` unset. Run its first build. Preparation creates `idx_runtime` with login and no elevated privileges or other role membership, runs migrations and fixture seed, registers the key with `listings:read`, `inquiries:write` and `inquiries:read` (the site reads receipts after redirecting), and checks the seeded listings. The deploy step then stops with **Missing DEMO_HYPERDRIVE_ID** by design.
-3. Create one Hyperdrive configuration named **idx-kit-demo**: use the owner connection's direct host, port, database and TLS settings, change the user to **idx_runtime**, and use `RUNTIME_DATABASE_PASSWORD`. Do not use the owner login or Neon's pooled host. Turn **query caching off**, so withdrawals apply on the next request. Set the resulting id as `DEMO_HYPERDRIVE_ID` on the engine production trigger. The engine is placed in `aws:us-east-1`, next to the demo database.
+3. Create a Hyperdrive configuration using the direct host, port, database, and TLS settings. Use the **idx_runtime** login and `RUNTIME_DATABASE_PASSWORD`. Turn **query caching off** so withdrawals apply on the next request. Set the resulting ID as `DEMO_HYPERDRIVE_ID` on the engine production trigger.
 4. Retry the engine build. Its password setup keeps the runtime login equal to the Hyperdrive password. Its deploy command uses the supplied id without changing the committed placeholder.
 5. Set the site's Worker runtime secret `IDX_SECRET_KEY`, then connect its production trigger with the site settings above and run its first build. Wrangler attaches the custom domain already covered by Access. Do not put this secret on the site's build trigger.
 6. Confirm Workers Builds checks passed on the reviewed, merged full `main` commit and record their links. Every engine build re-registers those scopes on the same key; no site secret change is needed. The demo leaves `RESEND_API_KEY`, `INQUIRY_EMAIL_FROM` and `INQUIRY_EMAIL_TO` unset and keeps inquiries with receipts. Later reviewed merges rebuild the affected Workers through these production triggers.

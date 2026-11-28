@@ -66,7 +66,7 @@ cluster, socket, logs, and protected key.
 The migration role owns the database. The engine uses the separate runtime
 role, which can read listing data, save inquiries, and read the fields needed
 for inquiry receipts and retries.
-See the [database permissions](../README.md#database-development).
+See the [runtime column grants](../packages/engine/migrations/013_runtime_read_columns.sql).
 
 ```bash ci
 export IDX_TEST_LOG_DIR="$IDX_DEMO_DIR/test-logs"

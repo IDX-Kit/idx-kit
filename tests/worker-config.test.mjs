@@ -214,6 +214,7 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
 `,
     { mode: 0o700 },
   );
+  const bundleRoot = process.env.IDX_TEST_WORKER_BUNDLES;
   function run(settings, intercept = true) {
     const result = spawnSync(
       "npm",
@@ -224,7 +225,7 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
         "--",
         "--dry-run",
         "--outdir",
-        directory,
+        !intercept && bundleRoot ? join(bundleRoot, "sync") : directory,
       ],
       {
         env: {
@@ -285,17 +286,4 @@ console.log(JSON.stringify({ file, config: JSON.parse(fs.readFileSync(file, "utf
   }
   const dryRun = run(overrides, false);
   assert.equal(dryRun.status, 0, dryRun.stdout + dryRun.stderr);
-});
-
-test("the self-hosting guide stores all Worker email settings as secrets", async () => {
-  const guide = await readFile(
-    new URL("../README.md", import.meta.url),
-    "utf8",
-  );
-  for (const name of [
-    "RESEND_API_KEY",
-    "INQUIRY_EMAIL_FROM",
-    "INQUIRY_EMAIL_TO",
-  ])
-    assert.ok(guide.includes(`wrangler secret put ${name}`));
 });

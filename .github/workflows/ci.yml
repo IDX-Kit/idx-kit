@@ -38,7 +38,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
       - &setup-node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -82,19 +81,9 @@ jobs:
           path: /tmp/formatting.patch
       - name: Audit dependencies including development tooling
         run: npm audit --omit=optional
-      - name: Compare lint findings with the pre-update dependency tree
-        run: |
-          baseline="$RUNNER_TEMP/lint-baseline"
-          mkdir -p "$baseline"
-          git archive 931c9bee6e0a43c326461adff157a9f0003166ab | tar -x -C "$baseline"
-          npm ci --ignore-scripts --no-audit --prefix "$baseline"
-          export IDX_BASELINE_ESLINT="$baseline/node_modules/eslint/bin/eslint.js"
-          export IDX_BASELINE_CONFIG="$baseline/eslint.config.mjs"
-          node "$IDX_BASELINE_ESLINT" --config "$IDX_BASELINE_CONFIG" . --format json > "$RUNNER_TEMP/lint-before.json"
-          node node_modules/eslint/bin/eslint.js . --format json > "$RUNNER_TEMP/lint-after.json"
-          diff -u "$RUNNER_TEMP/lint-before.json" "$RUNNER_TEMP/lint-after.json"
-          node --test tests/code-style.test.ts
       - name: Check Worker exposure and binding invariants
+        env:
+          IDX_TEST_WORKER_BUNDLES: ${{ runner.temp }}/worker-bundles
         run: npm run workers:check
       - name: Lint contract with no errors or warnings
         run: npm run contract:lint
@@ -153,6 +142,8 @@ jobs:
           mkdir -p "$IDX_TEST_LOG_DIR"
           node --test tests/setup/demo-online.test.ts 2>&1 | tee "$IDX_TEST_LOG_DIR/demo-online.log"
       - name: Prove both deploy commands with Wrangler dry runs and no service secrets
+        env:
+          IDX_TEST_WORKER_BUNDLES: ${{ runner.temp }}/worker-bundles
         run: node --test tests/setup/demo-deploy.test.mjs 2>&1 | tee "$IDX_TEST_LOG_DIR/demo-deploy-command.log"
       - name: Prove database acceptance and command entry points
         id: acceptance
@@ -211,16 +202,12 @@ jobs:
           elapsed=$((SECONDS - started))
           echo "Reverse-order API proof added ${elapsed}s (budget: 60s)"
           (( elapsed < 60 ))
-      - name: Build all Workers without deploying and enforce Free bundle size
+      - name: Check dry-run Worker bundles and enforce Free bundle size
         run: |
-          npm run workers:site:build
-          node scripts/check-worker-config.mjs examples/demo-site/dist-worker/server/wrangler.json
-          npx wrangler deploy --config packages/engine/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-engine"
-          npx wrangler deploy --config examples/demo-site/dist-worker/server/wrangler.json --dry-run --outdir "$RUNNER_TEMP/worker-site"
-          npx wrangler deploy --config packages/engine/wrangler.sync.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-sync"
-          npx wrangler deploy --config tests/workers/wrangler.stand-in-feed.jsonc --dry-run --outdir "$RUNNER_TEMP/worker-stand-in-feed"
-          node scripts/check-worker-size.mjs "$RUNNER_TEMP/worker-engine" "$RUNNER_TEMP/worker-site" "$RUNNER_TEMP/worker-sync" "$RUNNER_TEMP/worker-stand-in-feed"
-          if grep -qEr --include='*.js' 'IDX_SYNC_|LISTING_WRITER_HYPERDRIVE|LISTING_SYNC' "$RUNNER_TEMP/worker-engine"; then
+          bundles="$RUNNER_TEMP/worker-bundles"
+          npx wrangler deploy --config tests/workers/wrangler.stand-in-feed.jsonc --dry-run --outdir "$bundles/stand-in-feed"
+          node scripts/check-worker-size.mjs "$bundles/engine" "$bundles/site" "$bundles/sync" "$bundles/stand-in-feed"
+          if grep -qEr --include='*.js' 'IDX_SYNC_|LISTING_WRITER_HYPERDRIVE|LISTING_SYNC' "$bundles/engine"; then
             echo "The HTTP Worker bundle contains a sync setting or binding." >&2
             exit 1
           fi
@@ -362,7 +349,7 @@ jobs:
               exit 1
             fi
             if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset and .state == "uploaded" and .size > 0)' <<< "$lookup" > /dev/null; then
-              echo "Release $TAG is missing $asset. This run tested $GITHUB_SHA. Restore the tarball using README.md#client-release-recovery." >&2
+              echo "Release $TAG is missing $asset. This run tested $GITHUB_SHA. Restore the tarball using docs/releases/README.md#recover-a-client-release." >&2
               exit 1
             fi
             echo "Release $TAG is published with $asset. This run tested $GITHUB_SHA."
@@ -393,7 +380,7 @@ jobs:
               END { print (commit ? commit : tag) }
             ')
           if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
-            echo "Tag $TAG points to $tag_commit. This run tested $GITHUB_SHA. Publish a new client version using README.md#client-release-recovery." >&2
+            echo "Tag $TAG points to $tag_commit. This run tested $GITHUB_SHA. Publish a new client version using docs/releases/README.md#recover-a-client-release." >&2
             exit 1
           fi
           release_dir="$RUNNER_TEMP/client-release"

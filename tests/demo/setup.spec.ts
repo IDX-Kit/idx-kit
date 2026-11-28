@@ -38,9 +38,8 @@ async function rows() {
 test.describe("clean demo quick start", () => {
   test.skip(!directory, "Run from the demo quick start.");
 
-  test("public instructions are linked and reference existing paths and scripts", async () => {
+  test("instructions reference existing paths and scripts", async () => {
     const root = new URL("../../", import.meta.url);
-    const readme = await readFile(new URL("README.md", root), "utf8");
     const manifest = JSON.parse(
       await readFile(new URL("package.json", root), "utf8"),
     );
@@ -49,7 +48,6 @@ test.describe("clean demo quick start", () => {
       "docs/api-rules.md",
       "docs/demo-setup.md",
     ]) {
-      expect(readme).toContain(`](${path})`);
       const document = new URL(path, root);
       const text = await readFile(document, "utf8");
       for (const [, link] of text.matchAll(/\]\(([^)#]+)(?:#[^)]*)?\)/g)) {

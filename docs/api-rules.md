@@ -89,7 +89,7 @@ CORS headers.
 
 The engine resolves the Site from the key. Its data licenses govern which
 listings it may read. Create, rotate, and revoke keys through the
-[operator commands](../README.md#engine-and-secret-keys). Rotation replaces a
+[operator commands](feed-sync.md#rotate-or-revoke-a-site-key). Rotation replaces a
 key for the same Site and revokes the original.
 
 ### Listing request limit
