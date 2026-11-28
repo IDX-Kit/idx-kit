@@ -10,6 +10,8 @@ export const configs = {
   sync: "packages/engine/wrangler.sync.jsonc",
   "stand-in-feed": "tests/workers/wrangler.stand-in-feed.jsonc",
 };
+export const defaultEngineName = "idx-kit-engine";
+
 export async function readConfig(path) {
   const text = await readFile(path, "utf8");
   const parsed = ts.parseConfigFileTextToJson(path, text);
@@ -25,8 +27,12 @@ export function checkConfig(
   kind,
   source = true,
   hyperdriveId = "00000000000000000000000000000000",
+  engineName = defaultEngineName,
 ) {
+  const installer = kind === "api";
+  const engine = kind === "engine" || installer;
   const hostedSync = kind === "sync" && !source;
+  const strict = source || hostedSync || engine;
   const allowed = [
     "name",
     "compatibility_date",
@@ -35,22 +41,21 @@ export function checkConfig(
     "preview_urls",
     "observability",
     ...(kind === "site" ? ["routes", "services"] : ["main"]),
-    ...(["engine", "sync"].includes(kind) ? ["hyperdrive"] : []),
-    ...(kind === "engine" ? ["placement"] : []),
+    ...(engine || kind === "sync" ? ["hyperdrive"] : []),
+    ...(engine ? ["placement"] : []),
+    ...(installer ? ["routes"] : []),
     ...(kind === "sync" ? ["triggers", "workflows"] : []),
     ...(hostedSync ? ["vars", "limits"] : []),
   ];
-  if (source || hostedSync)
+  if (strict)
     assert.ok(
       Object.keys(config).every((key) => allowed.includes(key)),
       "Only approved config fields",
     );
-  assert.equal(
-    config.name,
-    ["sync", "stand-in-feed"].includes(kind)
-      ? `idx-kit-${kind}`
-      : `idx-kit-demo-${kind}`,
-  );
+  const expectedName = ["sync", "stand-in-feed"].includes(kind)
+    ? `idx-kit-${kind}`
+    : `idx-kit-demo-${kind}`;
+  assert.equal(config.name, installer ? engineName : expectedName);
   assert.equal(config.compatibility_date, "2026-11-06");
   assert.deepEqual(config.compatibility_flags, [
     "nodejs_compat",
@@ -77,14 +82,19 @@ export function checkConfig(
   assert.equal(config.observability?.enabled, observability);
   if (observability)
     assert.notEqual(config.observability?.logs?.enabled, false);
-  if (source || hostedSync)
-    assert.deepEqual(config.observability, { enabled: observability });
-  if (kind === "engine") {
-    assert.ok(!("routes" in config));
+  if (strict) assert.deepEqual(config.observability, { enabled: observability });
+  if (engine) {
+    const main = "src/runtime/worker.ts";
+    assert.equal(config.main, source ? main : resolve("packages/engine", main));
+    if (installer) assert.deepEqual(config.routes, []);
+    else assert.ok(!("routes" in config));
     assert.deepEqual(config.hyperdrive, [
       { binding: "HYPERDRIVE", id: hyperdriveId },
     ]);
-    assert.deepEqual(config.placement, { region: "aws:us-east-1" });
+    assert.deepEqual(
+      config.placement,
+      installer ? { mode: "smart" } : { region: "aws:us-east-1" },
+    );
   } else if (kind === "sync") {
     assert.ok(!("routes" in config));
     const main = "src/runtime/sync-worker.ts";

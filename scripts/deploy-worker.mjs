@@ -1,18 +1,30 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { readConfig, checkConfig, configs } from "./check-worker-config.mjs";
+import {
+  checkConfig,
+  configs,
+  defaultEngineName,
+  readConfig,
+} from "./check-worker-config.mjs";
 
 const [kind, ...args] = process.argv.slice(2);
+const installer = kind === "api";
+const hyperdriveVariables = {
+  api: "ENGINE_HYPERDRIVE_ID",
+  engine: "DEMO_HYPERDRIVE_ID",
+  sync: "SYNC_HYPERDRIVE_ID",
+};
 const buildOnly = new Set([
+  "DATABASE_URL",
   "MIGRATION_DATABASE_URL",
   "RUNTIME_DATABASE_PASSWORD",
+  "RUNTIME_DATABASE_URL",
   "LISTING_WRITER_DATABASE_PASSWORD",
   "IDX_SECRET_KEY",
   "IDX_SYNC_FEED_JSON",
   "IDX_SYNC_FEED_TOKEN",
-  "DEMO_HYPERDRIVE_ID",
-  "SYNC_HYPERDRIVE_ID",
+  ...Object.values(hyperdriveVariables),
 ]);
 const env = {};
 for (const name of Object.keys(process.env))
@@ -77,23 +89,28 @@ async function syncOverrides(config) {
 
 let directory;
 try {
-  if (kind === "engine" || kind === "sync") {
-    const id = hyperdriveId(
-      kind === "sync" ? "SYNC_HYPERDRIVE_ID" : "DEMO_HYPERDRIVE_ID",
-    );
-    if (kind === "engine") run("npm", ["run", "workers:contract"]);
-    const { config } = await readConfig(configs[kind]);
-    checkConfig(config, kind);
+  if (Object.hasOwn(hyperdriveVariables, kind)) {
+    const id = hyperdriveId(hyperdriveVariables[kind]);
+    const source = installer ? "engine" : kind;
+    const { config } = await readConfig(configs[source]);
+    checkConfig(config, source);
+    const name = process.env.ENGINE_WORKER_NAME || defaultEngineName;
+    if (installer) {
+      config.name = name;
+      config.placement = { mode: "smart" };
+      // Reconcile any routes previously configured for this Worker name.
+      config.routes = [];
+    }
+    if (source === "engine") run("npm", ["run", "workers:contract"]);
     if (kind === "sync") await syncOverrides(config);
     config.hyperdrive[0].id = id;
     config.main = resolve("packages/engine", config.main);
     await mkdir(".wrangler", { recursive: true });
-    const prefix = kind === "sync" ? "sync" : "demo-engine";
-    directory = await mkdtemp(`.wrangler/${prefix}-`);
+    directory = await mkdtemp(`.wrangler/${kind}-`);
     const path = resolve(directory, "wrangler.json");
     await writeFile(path, JSON.stringify(config));
     const generated = await readConfig(path);
-    checkConfig(generated.config, kind, kind === "engine", id);
+    checkConfig(generated.config, kind, false, id, name);
     run("npx", ["wrangler", "deploy", "--config", path, ...args]);
   } else if (kind === "site") {
     run("npm", ["run", "workers:site:build"]);
@@ -109,11 +126,11 @@ try {
       ...args,
     ]);
   } else {
-    throw new Error("Choose engine, site or sync.");
+    throw new Error("Choose api, engine, site or sync.");
   }
 } catch (error) {
   console.error(
-    `${kind === "sync" ? "Sync" : "Demo"} deploy: ${error instanceof Error ? error.message : "Command failed."}`,
+    `${installer ? "Engine" : kind === "sync" ? "Sync" : "Demo"} deploy: ${error instanceof Error ? error.message : "Command failed."}`,
   );
   process.exitCode = 1;
 } finally {

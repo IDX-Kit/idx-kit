@@ -49,6 +49,7 @@ it can display. Add `--new-site` when deliberately creating a site, and keep
 using the site's existing key if it already has one. For a new key, choose the
 scopes it needs and a protected path where the file does not already exist.
 To serve listings, follow the [instructions for starting the API on Node](../README.md#engine-and-secret-keys).
+For Cloudflare, follow [Serve the engine API on Workers](#serve-the-engine-api-on-workers).
 
 ```sh
 npm run demo:key -- authorize site_example feed_example --new-site
@@ -183,6 +184,52 @@ Feed responses are limited to 8 MiB per page. If a run reports
 reduce the response size before retrying. Node incremental sync and scans
 read up to 1,000 pages per invocation, so run the same command again after
 `page_limit` to resume from the saved position.
+
+## Serve the engine API on Workers
+
+1. Follow [database setup](#set-up-the-database) to run `npm run setup` and set
+   the `idx_runtime` password interactively with `\password idx_runtime` in
+   `psql`.
+2. Create a Hyperdrive configuration using the direct PostgreSQL host, port,
+   database and TLS settings with the `idx_runtime` login. Disable query caching
+   so withdrawals apply on the next request.
+   [Hyperdrive setup](https://developers.cloudflare.com/hyperdrive/get-started/#manage-caching)
+3. From the repository root, deploy with the Hyperdrive ID returned by Cloudflare.
+
+   ```sh
+   ENGINE_HYPERDRIVE_ID=your_hyperdrive_id npm run engine:deploy
+   ```
+
+   The command bundles the API and supplies the ID through a temporary config.
+   The Worker defaults to `idx-kit-engine`. Set `ENGINE_WORKER_NAME` to use a
+   different name. Public routes, `workers.dev` and preview URLs are disabled.
+   The API uses Smart Placement, which needs traffic from multiple locations
+   to optimize where it runs. The demo uses `aws:us-east-1` to stay near its
+   database. [Cloudflare placement](https://developers.cloudflare.com/workers/configuration/placement/)
+4. [Authorize the site for its feed and create its key](#authorize-a-site)
+   using the database owner's connection.
+5. Add an HTTP service binding to the website Worker on the same Cloudflare
+   account. Use the deployed engine name in `service`.
+
+   ```json
+   {
+     "services": [{ "binding": "IDX_ENGINE", "service": "idx-kit-engine" }]
+   }
+   ```
+
+   In the website Worker's **Variables and Secrets** settings, add the key as
+   an encrypted runtime secret named `IDX_SECRET_KEY`. Send it as
+   `Authorization: Bearer <key>` from server code through
+   `env.IDX_ENGINE.fetch()`. Keep it out of build variables and browser code.
+   [HTTP service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/http/)
+
+Set these runtime secrets in the **engine** Worker's **Variables and Secrets**
+settings to enable optional features. Leave them unset to keep the features off.
+
+| Feature | Engine Worker runtime secrets |
+| --- | --- |
+| Inquiry email | Set all three: `RESEND_API_KEY`, `INQUIRY_EMAIL_FROM` (verified sender) and `INQUIRY_EMAIL_TO` (recipient). |
+| Inquiry spam check | Set `TURNSTILE_SECRET_KEY`. The website includes the visitor's challenge token in the `Turnstile-Token` header. |
 
 ## Keep a feed current on Workers
 

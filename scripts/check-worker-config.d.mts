@@ -1,4 +1,5 @@
 export const configs: { engine: string; site: string };
+export const defaultEngineName: string;
 
 export function readConfig(
   path: string,
@@ -9,4 +10,5 @@ export function checkConfig(
   kind: string,
   source?: boolean,
   hyperdriveId?: string,
+  engineName?: string,
 ): void;
