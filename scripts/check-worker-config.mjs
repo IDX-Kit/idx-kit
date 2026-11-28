@@ -82,7 +82,8 @@ export function checkConfig(
   assert.equal(config.observability?.enabled, observability);
   if (observability)
     assert.notEqual(config.observability?.logs?.enabled, false);
-  if (strict) assert.deepEqual(config.observability, { enabled: observability });
+  if (strict)
+    assert.deepEqual(config.observability, { enabled: observability });
   if (engine) {
     const main = "src/runtime/worker.ts";
     assert.equal(config.main, source ? main : resolve("packages/engine", main));
