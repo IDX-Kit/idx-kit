@@ -32,9 +32,10 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/engine/setup/listing-writer.
 ```
 
 When upgrading sync, apply the migrations and reapply the writer grants first,
-then replace every sync instance, including Workers. Wait for runs from the old
-instances to finish before editing notices. An older sync instance still writes
-its own copy of the notices.
+then switch all polls and scans for each feed, including Worker retries and
+continuations, to the new version together. Wait for runs from the old instances
+to finish before editing notices. An older sync instance still writes its own
+copy of the notices.
 
 As the migration role, add the feed and authorize the site that may display it.
 Use a feed of your own for real sync. After a sync file has been applied to the

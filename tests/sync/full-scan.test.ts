@@ -167,6 +167,41 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
     };
   }
 
+  async function interruptScan(t: TestContext, status: 410 | 503) {
+    const withdrawn = { ...record("withdrawn", 3), StandardStatus: "Withdrawn" };
+    const state = await setup(t, `interrupted_${status}`, [withdrawn]);
+    assert.equal(
+      (await state.incrementalState()).position.position.completedMark,
+      revision(3),
+    );
+    assert.equal((await state.oldestIngest()).actual, null);
+    const feed = await standIn(t, (_url, n) => {
+      if (n === 1) return page([first], "?cursor=interrupted");
+      if (n === 2) return { status };
+      return page([]);
+    });
+    assertRun(await state.scan(feed), {
+      code: status === 410 ? "continuation_rejected" : "http_error",
+      recordsSeen: 1,
+    });
+    const { stored, actual } = await state.oldestIngest();
+    assert.equal(stored, null);
+    assert.ok(actual);
+    return { state, feed, actual };
+  }
+
+  await t.test("an empty poll publishes ingest time after an interrupted scan", async (t) => {
+    const { state, actual } = await interruptScan(t, 503);
+    await state.poll([]);
+    assert.equal((await state.oldestIngest()).stored, actual);
+  });
+
+  await t.test("an empty scan restart publishes ingest time after a refused continuation", async (t) => {
+    const { state, feed, actual } = await interruptScan(t, 410);
+    assertRun(await state.scan(feed), { code: "empty_scan", recordsSeen: 0 });
+    assert.equal((await state.oldestIngest()).stored, actual);
+  });
+
   await t.test(
     "repairs a missed edit and withdraws a missing listing from the API and storage",
     async (t) => {
@@ -536,7 +571,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         assert.equal((await state.checkpoint()).active, false);
         const { stored, actual } = await state.oldestIngest();
         assert.ok(actual);
-        assert.equal(stored, null);
+        assert.equal(stored, actual);
         assert.deepEqual(await state.listings(), before);
       }
       assert.deepEqual(
