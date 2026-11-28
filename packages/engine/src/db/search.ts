@@ -77,12 +77,13 @@ export async function searchListings(
     const seek = `${licensedListing} WHERE ${where.join(" AND ")}
       ORDER BY l.price ${direction}, l.id ASC LIMIT ${limit}`;
     if (index === 0) return seek;
-    // The inner limit gives the planner the page size. The outer limit skips
-    // the seek entirely when earlier ranges have already filled the page.
+    // Plan the seek with a fixed page size. The remaining limit can read
+    // fewer rows from the CTE, or skip it if earlier ranges filled the page.
     const previous = ranges
       .slice(0, index)
       .map((name) => `(SELECT count(*) FROM ${name})`);
-    return `SELECT * FROM (${seek}) AS candidates
+    return `WITH candidates AS MATERIALIZED (${seek})
+      SELECT * FROM candidates
       LIMIT (${limit} - ${previous.join(" - ")})`;
   });
   let sql = queries[0];
