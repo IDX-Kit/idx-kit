@@ -65,14 +65,13 @@ function assertStatements(
   assert.equal(total, setup + pageStatements + completion);
 }
 
-function checkPageReads(reads: number[], scanning = false) {
+function checkPageReads(reads: number[]) {
   assert.equal(reads.length, pages, "one row count per page");
   const final = reads.pop()!;
   const min = Math.min(...reads);
   const max = Math.max(...reads);
   const summary = `${min}–${max} rows read per intermediate page, ${final} on the final page`;
-  assert.ok(min > 0 && max <= 32 * pageSize, summary);
-  assert.ok(scanning ? final >= volume : final <= 32 * pageSize, summary);
+  assert.ok(min > 0 && max <= 32 * pageSize && final >= volume, summary);
   return summary;
 }
 
@@ -311,7 +310,8 @@ test(
     });
     const loadBytes = await databaseSize();
     assert.equal(feed.calls[midpoint + 1].query, cursor(midpoint));
-    const loadFreshnessMs = finalTimes.splice(0).at(-3)!;
+    // The final incremental page renews the feed window after recomputing.
+    const loadRecomputeMs = finalTimes.splice(0).at(-3)!;
     const loadReads = checkPageReads(pageReads.splice(0));
     assertStatements(offsets.splice(0), statements, pages - midpoint, 1, 0, 3);
     const loadStatements = firstStatements + statements;
@@ -373,9 +373,9 @@ test(
     const scanMs = performance.now() - started;
     const scanBytes = await databaseSize();
     const scanRecomputeMs = finalTimes.at(-1)!;
-    const scanReads = checkPageReads(pageReads, true);
+    const scanReads = checkPageReads(pageReads);
     t.diagnostic(
-      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadFreshnessMs.toFixed(2)} ms to finalize listing freshness, ${loadReads}. ` +
+      `First load: ${(loadMs / 1000).toFixed(2)}s, ${pages} pages, ${loadStatements} SQL statements, ${loadBytes} database bytes, ${loadRecomputeMs.toFixed(2)} ms to recompute freshness, ${loadReads}. ` +
         `Full scan: ${(scanMs / 1000).toFixed(2)}s, ${scan.pagesRead} pages, ${statements} SQL statements, ${scanBytes} database bytes, ${scanRecomputeMs.toFixed(2)} ms to recompute freshness, ${scanReads}.`,
     );
     assert.ok(loadMs + scanMs <= 900_000, "first load and scan exceeded 900s");

@@ -36,10 +36,6 @@ then replace every sync instance, including Workers. Wait for runs from the old
 instances to finish before editing notices. An older sync instance still writes
 its own copy of the notices.
 
-Before applying migration 016, stop scheduling polls and let active polls and
-scans finish. Resume them after all sync instances use the new writer. The
-migration carries forward the oldest ingest time from pages already written.
-
 As the migration role, add the feed and authorize the site that may display it.
 Use a feed of your own for real sync. After a sync file has been applied to the
 demo feed, reseeding leaves synced notices on any listings it skips.

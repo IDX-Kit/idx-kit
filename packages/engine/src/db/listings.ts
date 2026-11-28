@@ -131,72 +131,37 @@ async function writeAppliedDisclosures(
   client: pg.Client,
   feedId: string,
   disclosures: string,
-  hasListings = true,
 ) {
-  const updateFeed = `UPDATE idx.feeds SET applied_disclosures = $2::jsonb,
-    display_blocks = $2::jsonb->'approvedFeedBlocks' WHERE id = $1`;
   await client.query(
-    hasListings
-      ? `WITH feed_notice AS (${updateFeed})
-        UPDATE idx.listings l SET display_blocks = $2::jsonb->'approvedListingBlocks',
-          page_blocks = $2::jsonb->'approvedPageBlocks'
-        FROM idx.source_mappings m WHERE m.feed_id = $1 AND m.listing_id = l.id`
-      : updateFeed,
+    `WITH feed_notice AS (
+      UPDATE idx.feeds SET applied_disclosures = $2::jsonb,
+        display_blocks = $2::jsonb->'approvedFeedBlocks' WHERE id = $1
+    )
+    UPDATE idx.listings l SET display_blocks = $2::jsonb->'approvedListingBlocks',
+      page_blocks = $2::jsonb->'approvedPageBlocks'
+    FROM idx.source_mappings m
+    WHERE m.feed_id = $1 AND m.listing_id = l.id`,
     [feedId, disclosures],
   );
 }
-
-const oldestListing = `SELECT min(l.ingested_at) FROM idx.source_mappings m
-  JOIN idx.listings l ON l.id = m.listing_id
-  WHERE m.feed_id = f.id AND l.entire_listing_display`;
 
 export async function updateListingFreshness(
   client: pg.Client,
   feedIds: string[],
 ) {
   await client.query(
-    `UPDATE idx.feeds f SET oldest_listing_ingested_at = (${oldestListing}),
-      pending_listing_ingested_at = NULL
+    `UPDATE idx.feeds f SET oldest_listing_ingested_at = (
+      SELECT min(l.ingested_at) FROM idx.source_mappings m
+      JOIN idx.listings l ON l.id = m.listing_id
+      WHERE m.feed_id = f.id AND l.entire_listing_display
+    )
     WHERE f.id = ANY($1::text[])`,
     [feedIds],
   );
 }
 
-// The page supplies the timestamps it wrote or replaced. Keep the previous
-// minimum if it is still valid. Recalculate only if it might have disappeared.
-const trackFreshness = `UPDATE idx.feeds f
-  SET pending_listing_ingested_at = next.ingested_at
-  FROM (
-    SELECT cached.ingested_at AS previous, CASE
-      WHEN delta.replaced_at IS NOT NULL AND (cached.ingested_at IS NULL OR
-        (delta.replaced_at <= cached.ingested_at AND
-          (delta.written_at IS NULL OR delta.written_at > cached.ingested_at)))
-      THEN '-infinity'::timestamptz
-      ELSE LEAST(delta.written_at, cached.ingested_at)
-    END AS ingested_at
-    FROM (
-      SELECT COALESCE(pending_listing_ingested_at, oldest_listing_ingested_at) AS ingested_at
-      FROM idx.feeds WHERE id = $1
-    ) cached, (
-      SELECT min(written_at) AS written_at, min(replaced_at) AS replaced_at FROM freshness
-    ) delta
-  ) next
-  WHERE f.id = $1 AND next.ingested_at IS DISTINCT FROM next.previous`;
-
-async function finishListingFreshness(client: pg.Client, feedId: string) {
-  await client.query(
-    `UPDATE idx.feeds f SET oldest_listing_ingested_at = CASE
-      WHEN pending_listing_ingested_at = '-infinity' THEN (${oldestListing})
-      ELSE pending_listing_ingested_at END,
-      pending_listing_ingested_at = NULL
-    WHERE f.id = $1 AND pending_listing_ingested_at IS NOT NULL`,
-    [feedId],
-  );
-}
-
 const deleteListings = `DELETE FROM idx.listings l USING changes c
-  WHERE l.id = c.listing_id AND c.listing IS NULL
-  RETURNING CASE WHEN l.entire_listing_display THEN l.ingested_at END AS replaced_at`;
+  WHERE l.id = c.listing_id AND c.listing IS NULL`;
 
 async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
   if (!rows.length) return;
@@ -239,12 +204,8 @@ async function writePage(client: pg.Client, feedId: string, rows: PageRow[]) {
         entire_listing_display=EXCLUDED.entire_listing_display,
         display_blocks=EXCLUDED.display_blocks, page_blocks=EXCLUDED.page_blocks,
         source_updated_at=EXCLUDED.source_updated_at, ingested_at=EXCLUDED.ingested_at
-      RETURNING new.ingested_at AS written_at,
-        CASE WHEN old.entire_listing_display THEN old.ingested_at END AS replaced_at
-    ), freshness AS (
-      SELECT written_at, replaced_at FROM stored
-      UNION ALL SELECT NULL, replaced_at FROM removed
-    ) ${trackFreshness}`,
+    )
+    SELECT count(*) FROM accepted`,
     [feedId, JSON.stringify(rows)],
   );
 }
@@ -272,9 +233,8 @@ async function removeMissingListings(
       WHERE total.count <= $3::bigint
     ), removed AS (
       ${deleteListings}
-    ), freshness AS (
-      SELECT NULL::timestamptz AS written_at, replaced_at FROM removed
-    ), tracked AS (${trackFreshness})
+      RETURNING 1
+    )
     SELECT total.count AS missing, (SELECT count(*) FROM removed) AS removed
     FROM total`,
     [feedId, scanNumber.toString(), maxRemovals],
@@ -298,13 +258,20 @@ async function readExisting(
   keys: string[],
   fixture = false,
 ) {
+  // A reset or older checkpoint may have committed pages without counts.
+  // A matching completion proves those pages were already accounted for.
+  const unfinishedPoll = `EXISTS (
+    SELECT 1 FROM idx.feed_sync_positions p
+    LEFT JOIN idx.feed_sync_outcomes o ON o.feed_id = p.feed_id
+      AND o.position_version = p.version AND o.code = 'complete'
+    WHERE p.feed_id = $1 AND o.feed_id IS NULL
+  )`;
   const { rows } = await client.query<
     | Stored
     | {
         source_key: null;
         applied_disclosures: AppliedDisclosures | null;
-        has_listings: boolean;
-        pending_freshness: boolean;
+        unfinished_poll: boolean;
       }
   >(
     `${
@@ -314,15 +281,14 @@ async function readExisting(
         ELSE to_char(m.source_revision AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
       END AS revision,
       CASE WHEN $3 OR l.entire_listing_display THEN l.withheld_fields END AS withheld,
-      NULL::jsonb AS applied_disclosures, false AS has_listings, false AS pending_freshness
+      NULL::jsonb AS applied_disclosures, false AS unfinished_poll
     FROM idx.source_mappings m LEFT JOIN idx.listings l ON l.id = m.listing_id
     WHERE m.feed_id = $1 AND m.source_key = ANY($2::text[])
     UNION ALL`
         : ""
     }
     SELECT NULL AS source_key, NULL AS revision, NULL AS withheld, applied_disclosures,
-      oldest_listing_ingested_at IS NOT NULL OR pending_listing_ingested_at IS NOT NULL AS has_listings,
-      pending_listing_ingested_at IS NOT NULL AS pending_freshness
+      ${keys.length ? "false" : unfinishedPoll} AS unfinished_poll
     FROM idx.feeds WHERE id = $1`,
     keys.length ? [feedId, keys, fixture] : [feedId],
   );
@@ -515,7 +481,6 @@ export async function applyListingPage(
         client,
         feedId,
         JSON.stringify(disclosures),
-        feed?.has_listings,
       );
     }
     const { approvedListingBlocks: blocks, approvedPageBlocks: pageBlocks } =
@@ -637,16 +602,10 @@ export async function applyListingPage(
     const applied = new Set(rows.map(({ index }) => index));
     if (futureRemovals.size) {
       const { rows: hidden } = await client.query<{ source_key: string }>(
-        `WITH removed AS (
-          DELETE FROM idx.listings l USING idx.source_mappings m
-          WHERE l.id = m.listing_id AND m.feed_id = $1
-            AND m.source_key = ANY($2::text[])
-          RETURNING m.source_key,
-            CASE WHEN l.entire_listing_display THEN l.ingested_at END AS replaced_at
-        ), freshness AS (
-          SELECT NULL::timestamptz AS written_at, replaced_at FROM removed
-        ), tracked AS (${trackFreshness})
-        SELECT source_key FROM removed`,
+        `DELETE FROM idx.listings l USING idx.source_mappings m
+        WHERE l.id = m.listing_id AND m.feed_id = $1
+          AND m.source_key = ANY($2::text[])
+        RETURNING m.source_key`,
         [feedId, [...futureRemovals.keys()]],
       );
       for (const { source_key } of hidden)
@@ -667,13 +626,17 @@ export async function applyListingPage(
             scanCheckpoint.recordsSeen > 0 ? scan.maxRemovals : null,
           )
         : undefined;
-    if (
-      !incrementalContinues &&
-      !scanCheckpoint?.active &&
-      (feed?.pending_freshness || applied.size > 0 || removal?.listingsRemoved)
-    ) {
-      await finishListingFreshness(client, feedId);
-    }
+    // Rejected records can also withdraw a listing. Carry both counts over
+    // page boundaries, even when the final page contains no records.
+    const mayHaveChanged =
+      (!incremental && !scan) ||
+      counts.accepted > 0 ||
+      counts.rejected > 0 ||
+      (scanCheckpoint?.recordsSeen ?? 0) > 0 ||
+      (removal?.listingsRemoved ?? 0) > 0 ||
+      feed?.unfinished_poll;
+    if (mayHaveChanged && !incrementalContinues && !scanCheckpoint?.active)
+      await updateListingFreshness(client, [feedId]);
     if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }

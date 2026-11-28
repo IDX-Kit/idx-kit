@@ -121,9 +121,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       oldestIngest: () => readOldestIngest(db, feedId),
       clearOldestIngest: () =>
         db.query(
-          `UPDATE idx.feeds SET
-            pending_listing_ingested_at = oldest_listing_ingested_at,
-            oldest_listing_ingested_at = NULL WHERE id = $1`,
+          "UPDATE idx.feeds SET oldest_listing_ingested_at = NULL WHERE id = $1",
           [feedId],
         ),
       async incrementalState() {
@@ -538,7 +536,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         assert.equal((await state.checkpoint()).active, false);
         const { stored, actual } = await state.oldestIngest();
         assert.ok(actual);
-        assert.equal(stored, actual);
+        assert.equal(stored, null);
         assert.deepEqual(await state.listings(), before);
       }
       assert.deepEqual(

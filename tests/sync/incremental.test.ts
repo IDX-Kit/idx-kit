@@ -1223,6 +1223,30 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
   }
 
   await t.test(
+    "an empty restart rescan accounts for a committed page before a rejected continuation",
+    async (t) => {
+      const state = await setup(t, "empty_restart");
+      const feed = await standIn(t, (_url, number) => {
+        if (number === 1) return page([first], "?cursor=expired");
+        if (number === 2) return { status: 410 };
+        return page([]);
+      });
+      assertRun(await state.run(feed), { code: "continuation_rejected" });
+      const partial = await state.oldestIngest();
+      assert.equal(partial.stored, null);
+      assert.ok(partial.actual);
+
+      assertRun(await state.run(feed), { code: "complete" });
+      assert.deepEqual(await state.oldestIngest(), {
+        stored: partial.actual,
+        actual: partial.actual,
+        conservative: true,
+      });
+      await assertFresh(state);
+    },
+  );
+
+  await t.test(
     "a runner with a stale position stops without applying its page",
     async (t) => {
       const state = await setup(t, "competing");
