@@ -382,7 +382,9 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
       assert.equal(repaired.revision, revision(2));
       assert.deepEqual(await state.incrementalState(), before);
 
-      await state.poll([{ ...record("second", 3), StandardStatus: "Withdrawn" }]);
+      await state.poll([
+        { ...record("second", 3), StandardStatus: "Withdrawn" },
+      ]);
       const [, withdrawn] = await state.listings();
       assert.equal(withdrawn.facts, null);
       assert.equal(withdrawn.revision, revision(3));

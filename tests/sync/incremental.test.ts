@@ -787,11 +787,15 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       };
       const feed = await standIn(t, (url, number) => {
         if (number === 1) return page([first]);
-        if (number === 2) return page([{ ...withdrawal, ListingKey: null }, third]);
+        if (number === 2)
+          return page([{ ...withdrawal, ListingKey: null }, third]);
         const mark = url.searchParams.get("$filter")?.split(" ").at(-1);
-        return page([withdrawal, third].filter(
-          ({ ModificationTimestamp }) => !mark || ModificationTimestamp >= mark,
-        ));
+        return page(
+          [withdrawal, third].filter(
+            ({ ModificationTimestamp }) =>
+              !mark || ModificationTimestamp >= mark,
+          ),
+        );
       });
       assertRun(await state.run(feed), { code: "complete" });
       await state.setOldFreshness();
@@ -800,30 +804,39 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
       assert.deepEqual(await state.run(feed), {
         code: "unplaceable_records",
         nextStep: retry,
-        counts: { accepted: 1, rejected: 1, rejectedByCode: { invalid_key: 1 } },
+        counts: {
+          accepted: 1,
+          rejected: 1,
+          rejectedByCode: { invalid_key: 1 },
+        },
       });
       assertRun(await state.status(), {
         lastOutcome: { code: "unplaceable_records", nextStep: "retry" },
       });
-      assert.deepEqual((await state.checkpoint()).position, complete(firstMark));
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(firstMark),
+      );
       assert.deepEqual(await state.freshness(), freshness);
-      assert.deepEqual((await state.listings()).map(({ revision }) => revision), [
-        firstMark,
-        thirdMark,
-      ]);
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [firstMark, thirdMark],
+      );
 
       assertRun(await state.run(feed), { code: "complete" });
-      assert.deepEqual((await state.listings()).map(({ revision }) => revision), [
-        null,
-        thirdMark,
-      ]);
-      assert.deepEqual((await state.checkpoint()).position, complete(thirdMark));
+      assert.deepEqual(
+        (await state.listings()).map(({ revision }) => revision),
+        [null, thirdMark],
+      );
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(thirdMark),
+      );
       await assertFresh(state);
-      assert.deepEqual(feed.calls.map(({ query }) => query), [
-        "",
-        filter(firstMark),
-        filter(firstMark),
-      ]);
+      assert.deepEqual(
+        feed.calls.map(({ query }) => query),
+        ["", filter(firstMark), filter(firstMark)],
+      );
     },
   );
 
@@ -1079,7 +1092,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         (await state.listings()).map(({ revision }) => revision),
         [null, null, thirdMark],
       );
-      assert.deepEqual((await state.checkpoint()).position, complete(secondMark));
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(secondMark),
+      );
       assert.deepEqual(await state.freshness(), freshness);
 
       assertRun(await state.run(feed), { code: "complete" });
@@ -1087,7 +1103,10 @@ test("incremental listing sync over HTTP", { timeout: 45_000 }, async (t) => {
         (await state.listings()).map(({ revision }) => revision),
         [null, null, thirdMark],
       );
-      assert.deepEqual((await state.checkpoint()).position, complete(thirdMark));
+      assert.deepEqual(
+        (await state.checkpoint()).position,
+        complete(thirdMark),
+      );
       await assertFresh(state);
     },
   );
