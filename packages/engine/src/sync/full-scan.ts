@@ -7,7 +7,11 @@ import {
 import { allRejectedMessage, emptyCounts } from "../db/feed-sync-outcomes.ts";
 import type { FeedNextStep, RecordCounts } from "../db/feed-sync-outcomes.ts";
 import { FeedPositionChanged } from "../db/feed-sync-positions.ts";
-import { applyListingPage, listingFeedTransaction } from "../db/listings.ts";
+import {
+  applyListingPage,
+  applyScanDisclosures,
+  listingFeedTransaction,
+} from "../db/listings.ts";
 import { listingChangesFor, nextStepFor, readFeedPages } from "./pages.ts";
 import type { StoppedRun, SyncFeed } from "./pages.ts";
 
@@ -79,18 +83,21 @@ export async function syncFullScan(
   }
 
   try {
-    let checkpoint = await readScanCheckpoint(client, feedId);
-    if (!checkpoint.active) {
-      checkpoint.scanNumber += 1n;
-      checkpoint.active = true;
-      checkpoint.recordsSeen = 0;
-      checkpoint.unreadableRecords = 0;
-      checkpoint.counts = emptyCounts;
-      await listingFeedTransaction(client, feedId, () =>
-        saveScanCheckpoint(client, feedId, checkpoint),
-      );
-      checkpoint.version += 1n;
-    }
+    let checkpoint = await listingFeedTransaction(client, feedId, async () => {
+      const start = await readScanCheckpoint(client, feedId);
+      if (!start.active) {
+        start.scanNumber += 1n;
+        start.active = true;
+        start.recordsSeen = 0;
+        start.unreadableRecords = 0;
+        start.counts = emptyCounts;
+      }
+      // A previous invocation must lose its checkpoint before writing any page
+      // with an earlier notice configuration.
+      await saveScanCheckpoint(client, feedId, start);
+      await applyScanDisclosures(client, feedId, disclosures);
+      return { ...start, version: start.version + 1n };
+    });
     counts = checkpoint.counts ?? emptyCounts;
     const mapChanges = listingChangesFor(feed);
     let wouldRemove = 0;

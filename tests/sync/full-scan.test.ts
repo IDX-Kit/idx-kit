@@ -208,7 +208,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         recordsSeen: 2,
         listingsRemoved: 1,
       });
-      assert.deepEqual([...offsets, statements()], [5, 12, 22]);
+      assert.deepEqual([...offsets, statements()], [6, 13, 22]);
       assert.deepEqual(feed.calls, [
         { path: propertyPath, query: "", authorized: true },
         { path: `${propertyPath}/next`, query: "?cursor=2", authorized: true },
@@ -339,7 +339,7 @@ test("full listing scans over HTTP", { timeout: 45_000 }, async (t) => {
         ["", "?cursor=2", "?cursor=2"],
       );
       assert.deepEqual(await state.checkpoint(), {
-        version: pending.version + 1n,
+        version: pending.version + 2n,
         scanNumber: pending.scanNumber,
         active: false,
         nextLink: null,

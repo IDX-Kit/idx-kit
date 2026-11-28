@@ -332,7 +332,7 @@ test(
       listingsRemoved: changed,
       counts: { accepted: volume - changed, rejected: 0, rejectedByCode: {} },
     });
-    assertStatements(offsets, statements, pages, 5, 0, 3);
+    assertStatements(offsets, statements, pages, 6, 0, 2);
     const repaired = await listings();
     assert.equal(repaired.length, volume);
     for (const [index, row] of repaired.entries()) {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isResoAddress } from "../connectors/reso.ts";
-import { disclosureSchema, sourceKeySchema } from "../domain/normalize.ts";
+import { listingDisclosures, sourceKeySchema } from "../domain/normalize.ts";
 
 const feedSettings = z
   .strictObject({
@@ -8,11 +8,7 @@ const feedSettings = z
     propertyUrl: z.url().transform((value) => new URL(value)),
     pageSize: z.int().min(1).max(200).optional(),
     synthetic: z.boolean(),
-    disclosures: z.strictObject({
-      approvedFeedBlocks: disclosureSchema.min(1),
-      approvedListingBlocks: disclosureSchema.min(1),
-      approvedPageBlocks: disclosureSchema.optional(),
-    }),
+    disclosures: listingDisclosures,
   })
   .refine(
     ({ propertyUrl, synthetic }) =>

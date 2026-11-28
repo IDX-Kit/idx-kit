@@ -1,7 +1,7 @@
 import type pg from "pg";
 import type { DisplayBlock } from "@idx-kit/client";
 import {
-  disclosureSchema,
+  listingDisclosures,
   listingStatus,
   normalize,
   sourceKeySchema,
@@ -47,11 +47,9 @@ export type ListingChange = {
 
 // Approved separately from records. These blocks contain feed or broker
 // notices and assets and never incorporate facts or photos from a property.
-export interface ListingPageDisclosures {
-  approvedFeedBlocks: DisplayBlock[];
-  approvedListingBlocks: DisplayBlock[];
-  approvedPageBlocks?: DisplayBlock[];
-}
+export type ListingPageDisclosures = ReturnType<
+  typeof listingDisclosures.parse
+>;
 
 interface PageRow {
   source_key: string;
@@ -102,6 +100,30 @@ export async function listingFeedTransaction<T>(
     await client.query("ROLLBACK");
     throw error;
   }
+}
+
+export async function applyScanDisclosures(
+  client: pg.Client,
+  feedId: string,
+  disclosures: ListingPageDisclosures,
+) {
+  const { approvedFeedBlocks, approvedListingBlocks, approvedPageBlocks = [] } =
+    listingDisclosures.parse(disclosures);
+  await client.query(
+    `WITH feed_notice AS (
+      UPDATE idx.feeds SET display_blocks = $2::jsonb WHERE id = $1
+    )
+    UPDATE idx.listings l SET display_blocks = $3::jsonb, page_blocks = $4::jsonb
+    FROM idx.source_mappings m
+    WHERE m.feed_id = $1 AND m.listing_id = l.id
+      AND (l.display_blocks, l.page_blocks) IS DISTINCT FROM ($3::jsonb, $4::jsonb)`,
+    [
+      feedId,
+      JSON.stringify(approvedFeedBlocks),
+      JSON.stringify(approvedListingBlocks),
+      JSON.stringify(approvedPageBlocks),
+    ],
+  );
 }
 
 export async function updateListingFreshness(
@@ -382,15 +404,11 @@ export async function applyListingPage(
 ) {
   if (changes.length > listingPageLimit)
     throw new Error("Listing page too large");
-  const feedBlocks = disclosureSchema
-    .min(1)
-    .parse(disclosures.approvedFeedBlocks);
-  const blocks = disclosureSchema
-    .min(1)
-    .parse(disclosures.approvedListingBlocks);
-  const pageBlocks = disclosureSchema.parse(
-    disclosures.approvedPageBlocks ?? [],
-  );
+  const {
+    approvedFeedBlocks: feedBlocks,
+    approvedListingBlocks: blocks,
+    approvedPageBlocks: pageBlocks = [],
+  } = listingDisclosures.parse(disclosures);
 
   const rejected: {
     index: number;
@@ -554,21 +572,14 @@ export async function applyListingPage(
             scanCheckpoint.recordsSeen > 0 ? scan.maxRemovals : null,
           )
         : undefined;
-    if (scanCheckpoint && !scanCheckpoint.active) {
-      // Apply the current notices even to listings absent from the scan or
-      // encountered in an earlier invocation. Only change the notice columns.
-      await client.query(
-        `UPDATE idx.listings l SET display_blocks = $2::jsonb, page_blocks = $3::jsonb
-        FROM idx.source_mappings m
-        WHERE m.feed_id = $1 AND m.listing_id = l.id
-          AND (l.display_blocks, l.page_blocks) IS DISTINCT FROM ($2::jsonb, $3::jsonb)`,
-        [feedId, JSON.stringify(blocks), JSON.stringify(pageBlocks)],
-      );
-    }
     // Sync pages use database ingest times. Writers that supply their own
     // ingest times recompute freshness before they finish.
     if (!incrementalContinues && !scanCheckpoint?.active)
-      await updateListingFreshness(client, [feedId], feedBlocks);
+      await updateListingFreshness(
+        client,
+        [feedId],
+        scan ? undefined : feedBlocks,
+      );
     if (renewFreshness) {
       await client.query("SELECT idx.renew_feed_freshness($1)", [feedId]);
     }

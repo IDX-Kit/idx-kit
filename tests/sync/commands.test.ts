@@ -307,7 +307,6 @@ test(
       async () => {
         const before = await request();
         const [original, missing, withheld] = before.data as Listing[];
-        assert.ok(missing);
         assert.deepEqual(
           original.display.blocks,
           config.disclosures.approvedListingBlocks,
@@ -316,11 +315,45 @@ test(
           (await request(`${search}/${withheld.id}`)).display.blocks,
           config.disclosures.approvedFeedBlocks,
         );
+        const movedNotice = {
+          ...config.disclosures.approvedFeedBlocks[0],
+          id: "moved_notice",
+          text: "Invented notice shared by every listing",
+        };
+        const newer = record("newer", 5, "400.00");
+        const withdrawn = record("withdrawn", 5, "500.00");
+        const withdrawal = {
+          ...withdrawn,
+          ModificationTimestamp: revision(6),
+          StandardStatus: "Withdrawn",
+        };
+        const previous = {
+          ...config.disclosures,
+          approvedPageBlocks: [movedNotice],
+        };
+        await writeFile(
+          feedFile,
+          stringify({ ...config, disclosures: previous }),
+        );
+        respond = () => page([first, second, third, newer, withdrawn]);
+        await run(["scan"]);
+        const old = await request();
+        const [, , , current, formerlyLive] = old.data as Listing[];
+        const withdrawnPath = `${search}/${formerlyLive.id}`;
+        assert.deepEqual((await request(withdrawnPath)).display.blocks, [
+          ...previous.approvedFeedBlocks,
+          movedNotice,
+        ]);
+        respond = () => page([withdrawal]);
+        await run(["incremental"]);
+        assert.equal((await api(withdrawnPath, 404)).code, "not_found");
+
         const feedBlocks = [
           {
             ...config.disclosures.approvedFeedBlocks[0],
             text: "Updated invented feed notice",
           },
+          movedNotice,
         ];
         const listingBlocks = [
           {
@@ -361,10 +394,67 @@ test(
           ListPrice: "999.00",
           InternetAddressDisplayYN: true,
         };
-        respond = () => page([edited, sameRevision, invalid]);
+        const older = {
+          ...newer,
+          ModificationTimestamp: "2026-11-02T00:00:00Z",
+          ListPrice: "999.00",
+        };
+        const replay = { ...withdrawn, ModificationTimestamp: revision(6) };
+        const remaining = [sameRevision, older, replay, invalid];
+        const expectedPage = [...feedBlocks, ...pageBlocks];
+        async function assertNotices() {
+          const after = await request();
+          const listings = after.data as Listing[];
+          assert.deepEqual(
+            listings.map((listing) => listing.price?.amount),
+            ["125.00", "200.00", "300.00", "400.00"],
+          );
+          assert.deepEqual(after.display.blocks, expectedPage);
+          for (const item of listings) {
+            const detail = await request(`${search}/${item.id}`);
+            assert.deepEqual(item.display.blocks, listingBlocks);
+            assert.deepEqual(detail.data, item);
+            assert.deepEqual(detail.display.blocks, expectedPage);
+          }
+          assert.equal(listings[0].id, original.id);
+          const updated = listings.find(({ id }) => id === withheld.id);
+          assert.ok(updated);
+          assert.deepEqual(updated.withheldFields, ["address"]);
+          assert.equal(updated.address, null);
+          assert.deepEqual(updated.images, []);
+          assert.equal(
+            updated.display.freshness.ingestedAt,
+            withheld.display.freshness.ingestedAt,
+          );
+          const latest = listings.find(({ id }) => id === current.id);
+          assert.ok(latest);
+          assert.equal(
+            latest.display.freshness.sourceUpdatedAt,
+            current.display.freshness.sourceUpdatedAt,
+          );
+          assert.equal(
+            latest.display.freshness.ingestedAt,
+            current.display.freshness.ingestedAt,
+          );
+          assert.equal((await api(withdrawnPath, 404)).code, "not_found");
+        }
+        respond = (url) =>
+          url.searchParams.has("cursor")
+            ? { status: 503 }
+            : page([edited], "?cursor=notices");
+        const interrupted = await run(["scan"], 3);
+        assert.equal(interrupted.code, "http_error");
+        assert.equal(interrupted.pagesRead, 1);
+        assert.equal((await run(["status"])).scanInProgress, true);
+        await assertNotices();
+
+        respond = (url) => {
+          assert.equal(url.searchParams.get("cursor"), "notices");
+          return page(remaining);
+        };
         const repaired = await run(["scan"]);
         const counts = {
-          accepted: 2,
+          accepted: 4,
           rejected: 1,
           rejectedByCode: { invalid_change: 1 },
         };
@@ -373,37 +463,19 @@ test(
           code: "complete",
           nextStep: { kind: "none" },
           pagesRead: 1,
-          recordsSeen: 3,
+          recordsSeen: 4,
           listingsRemoved: 0,
           counts,
         });
         const scanned = await run(["status"]);
-        assert.equal(scanned.scanNumber, "1");
+        assert.equal(scanned.scanNumber, "2");
         assert.equal(scanned.scanInProgress, false);
-        assert.equal(scanned.recordsSeen, 3);
+        assert.equal(scanned.recordsSeen, 5);
         assert.equal(scanned.unreadableRecords, 0);
         assert.equal(scanned.lastRun.kind, "scan");
         assert.deepEqual(scanned.lastRun.counts, counts);
-        const after = await request();
-        const listings = after.data as Listing[];
-        assert.deepEqual(
-          listings.map((listing) => listing.price?.amount),
-          ["125.00", "200.00", "300.00"],
-        );
-        const expectedPage = [...feedBlocks, ...pageBlocks];
-        assert.deepEqual(after.display.blocks, expectedPage);
-        for (const item of listings) {
-          const detail = await request(`${search}/${item.id}`);
-          assert.deepEqual(item.display.blocks, listingBlocks);
-          assert.deepEqual(detail.data, item);
-          assert.deepEqual(detail.display.blocks, expectedPage);
-        }
-        const updated = listings.find(({ id }) => id === withheld.id);
-        assert.ok(updated);
-        assert.deepEqual(updated.withheldFields, ["address"]);
-        assert.equal(updated.address, null);
-        assert.deepEqual(updated.images, []);
-        assert.deepEqual(updated.display.freshness, withheld.display.freshness);
+        await assertNotices();
+        respond = () => page([edited, ...remaining]);
         const blocked = await run(
           ["scan", "--remove-missing", "--max-removals", "0"],
           4,
